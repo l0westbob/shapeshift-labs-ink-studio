@@ -283,6 +283,6 @@ function describe(entry) {
 }
 
 module.exports = {
-  kit, studio, sceneSchema, open, close, sessions, specOf, revisionFor, worldAt, describe, makeEditor,
+  kit, studio, sceneSchema, open, close, sessions, specOf, revisionFor, worldAt, pose, descriptorOf, describe, makeEditor,
   environmentFor, problemsOf, errorsOf, HISTORY_LIMIT
 };

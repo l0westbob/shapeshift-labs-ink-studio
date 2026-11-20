@@ -12,7 +12,7 @@ module.exports = async function agentCli(argv) {
   const [sub, ...rest] = argv;
   if (sub !== 'mcp') for (const method of ['log', 'info', 'warn', 'debug']) console[method] = (...args) => console.error(...args);
   const registry = require('./registry.js');
-  require('./ops.js');
+  require('./ops/index.js');
   const print = value => process.stdout.write(JSON.stringify(value) + '\n');
   if (sub === 'list') {
     print(registry.list().map(op => ({ name: op.name, effects: op.effects, description: op.description, input: op.input })));

@@ -7,9 +7,13 @@ const { spawn, spawnSync } = require('node:child_process');
 
 const root = path.join(__dirname, '..');
 const registry = require('../agent/registry.js');
-require('../agent/ops.js');
+require('../agent/ops/index.js');
 const { applyPatch, compact, diff, revisionOf } = require('../agent/data.js');
 
+const TOOLS = [
+  'ink_docs', 'ink_discover', 'scene_validate', 'scene_open', 'scene_render', 'scene_measure', 'scene_edit', 'scene_save',
+  'scene_export', 'world_open', 'world_step', 'world_query', 'world_sim'
+];
 const example = path.join(root, 'examples', 'scene.json');
 const gem = JSON.parse(fs.readFileSync(example, 'utf8'));
 const call = (name, args, ctx) => registry.call(name, args, { root, ...ctx });
@@ -138,8 +142,7 @@ test('the agent CLI prints JSON and uses exit codes', () => {
   const run = (...args) => spawnSync(process.execPath, [cli, 'agent', ...args], { cwd: root, encoding: 'utf8' });
   const listed = run('list');
   assert.equal(listed.status, 0, listed.stderr);
-  assert.deepEqual(JSON.parse(listed.stdout).map(op => op.name),
-    ['scene_validate', 'scene_open', 'scene_render', 'scene_measure', 'scene_edit', 'scene_save']);
+  assert.deepEqual(JSON.parse(listed.stdout).map(op => op.name), TOOLS);
   const valid = run('call', 'scene_validate', JSON.stringify({ scene: { path: 'examples/scene.json' } }));
   assert.equal(valid.status, 0, valid.stderr);
   assert.equal(JSON.parse(valid.stdout).result.valid, true);
@@ -174,8 +177,9 @@ test('the MCP server lists tools and returns images as content', async t => {
   server.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
 
   const { tools } = (await rpc('tools/list', {})).result;
-  assert.equal(tools.length, 6);
+  assert.deepEqual(tools.map(tool => tool.name), TOOLS);
   assert.equal(tools.find(tool => tool.name === 'scene_save').annotations.destructiveHint, true);
+  assert.equal(tools.find(tool => tool.name === 'world_query').annotations.readOnlyHint, true);
 
   const opened = await rpc('tools/call', { name: 'scene_open', arguments: { scene: { path: 'examples/scene.json' } } });
   const { handle } = opened.result.structuredContent;

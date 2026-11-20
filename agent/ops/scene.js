@@ -3,14 +3,14 @@
    images are returned as { image: { mimeType, base64 } } beside the metadata so adapters can pass them on as content. */
 const fs = require('node:fs');
 const path = require('node:path');
-const { defineOp, OpError } = require('./registry.js');
-const { compact, diff, applyPatch, revisionOf } = require('./data.js');
-const Scenes = require('./scenes.js');
+const { defineOp, OpError } = require('../registry.js');
+const { compact, diff, applyPatch, revisionOf } = require('../data.js');
+const Scenes = require('../scenes.js');
 
-const R = () => require('../cli/render.js');
-const PNG = () => require('../cli/png.js');
-const Critic = () => require('../cli/critic.js');
-const Crisp = () => require('../cli/crisp.js');
+const R = () => require('../../cli/render.js');
+const PNG = () => require('../../cli/png.js');
+const Critic = () => require('../../cli/critic.js');
+const Crisp = () => require('../../cli/crisp.js');
 
 const vec3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 };
 const viewSchema = {
@@ -447,6 +447,8 @@ defineOp({
 
 defineOp({
   name: 'scene_save',
+  destructive: true,
+  idempotent: true,
   title: 'Save a diorama',
   effects: 'write',
   description: 'Write the current diorama JSON of an open scene to disk. Defaults to the file it was opened from. Returns the path and revision.',

@@ -13,7 +13,7 @@ const readline = require('node:readline');
 for (const method of ['log', 'info', 'warn', 'debug']) console[method] = (...args) => console.error(...args);
 
 const registry = require('./registry.js');
-require('./ops.js');
+require('./ops/index.js');
 const { version } = require('../package.json');
 
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -25,9 +25,11 @@ const ctx = {
 };
 
 const INSTRUCTIONS = [
-  'ink-studio sculpts signed-distance solids into pixel-art Gaussian splats and renders them on the CPU.',
-  'Loop: scene_validate a JSON diorama, scene_open it to get a handle, scene_render to look, scene_measure for numbers,',
-  'scene_edit with baseRevision (add render/measure to see the result in one call), scene_save to keep it.',
+  'ink-studio sculpts signed-distance solids into pixel-art Gaussian splats, renders them on the CPU and runs deterministic world simulations.',
+  'Start with ink_discover (overview, search, schema "diorama") and ink_docs.',
+  'Scene loop: scene_validate a JSON diorama, scene_open it to get a handle, scene_render to look, scene_measure for numbers,',
+  'scene_edit with baseRevision (add render/measure to see the result in one call), scene_save to keep it, scene_export for GLB or sprite atlases.',
+  'Worlds: world_open, world_step with actions, world_query, world_sim to fork, verify, diff and save; worlds only run forwards.',
   'Errors come back as { code, message, path, hint, details }; fix the input at path and retry.',
   'Note: "agents" inside scene data means simulated characters, not you.'
 ].join(' ');
@@ -41,8 +43,8 @@ function toolOf(op) {
     annotations: {
       title: op.title,
       readOnlyHint: op.effects !== 'write',
-      destructiveHint: op.name === 'scene_save',
-      idempotentHint: op.effects !== 'write' || op.name === 'scene_save',
+      destructiveHint: !!op.destructive,
+      idempotentHint: op.effects !== 'write' || !!op.idempotent,
       openWorldHint: false
     }
   };

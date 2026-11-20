@@ -224,6 +224,20 @@ Gemessen: `examples/scene.json` öffnen 15 ms, Render aus dem Cache 20 bis 30 ms
 
 Bewusst offen für Phase 2: Brush-Ops, Prefab-Instanzen, `--params`, Paint-Korrekturen, Look-Overrides und die übrigen CLI-Commands; außerdem eine Eval-Aufgabe, die den Loop mit einem echten Agenten misst.
 
+### Status Phase 2, erster Schnitt (Branch `agent-first/phase-2`)
+
+| Familie | Tools | Datei |
+| --- | --- | --- |
+| Discovery | `ink_discover` (Übersicht, Suche über Tools, Katalog und Doku, Tool-Schemas, Diorama-Format), `ink_docs` (Themen, Volltextsuche, seitenweise lesen, einzelne Abschnitte) | `agent/ops/discover.js` |
+| Export | `scene_export` (GLB, Sprite-Atlas mit Vorschau) | `agent/ops/export.js` |
+| World/Sim | `world_open`, `world_step`, `world_query`, `world_sim` (plan, fork, reset, save, verify, diff, close) mit Welten als Sessions im Speicher | `agent/ops/world.js`, `agent/worlds.js` |
+
+- 13 Tools insgesamt, Tool-Liste etwa 21 KB. Die Übersicht von `ink_discover` passt in unter 1 KB.
+- Das Diorama-Format ist jetzt maschinenlesbar: `KIT.diorama.fields` veröffentlicht die Tabellen, mit denen der Checker ohnehin prüft (einzige Kit-Änderung, `src/kit/kc-data.js`).
+- Welten laufen nur vorwärts; `world_step` lehnt ungültige Aktionen ab, bevor sich etwas bewegt.
+
+Noch offen in Phase 2: Look-Familie (`look inspect/sample/bake`), Animations-Reviews (`motion-review`, `pose-review`, `retarget`), Szenen-Abfragen auf gebackenen Splats (`look/sample`), Katalog aus der Registry generieren und die menschliche CLI auf die Registry umstellen.
+
 ### Quick Wins (unabhängig von der Roadmap)
 
 1. **Globales `--json`** im CLI-Parser plus ein `report()`-Helfer: sofort maschinenlesbare Ausgabe für `stats`, `validate`, `lint`, `crisp`, `check`.
