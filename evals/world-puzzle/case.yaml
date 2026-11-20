@@ -27,8 +27,9 @@ graders:
     type: regex
     target: { source: file, path: runs/gate.run.json }
     pattern: 'ink-studio/run'
-  # the saved recording itself must end in a win: its origin scenario is "running", only the end can say "win"
+  # the saved recording itself must end in a win: its origin scenario is "running", only the end can say "win".
+  # world_step writes compact JSON, the CLI (sim run --record) indented JSON, so whitespace is allowed
   - name: recording-won
     type: regex
     target: { source: file, path: runs/gate.run.json }
-    pattern: '"scenario":\{"status":"win"'
+    pattern: '"scenario"\s*:\s*\{\s*"status"\s*:\s*"win"'
