@@ -4,7 +4,7 @@ The package's browser entry selects WebGL 2. Bundlers that honor the `browser`
 field can use the package name. With native browser modules, import
 `webgl.mjs` by URL and serve its relative `src/webgl/` modules. Both entry
 points export `createRenderer` as a default and named import. Prepare the
-authoring toolkit with [the browser bundle](../README.md#embedding-and-custom-scene-collections).
+authoring toolkit with [the browser bundle](reference.md#embedding-and-custom-scene-collections).
 Node's `render()` and the `ink-studio` CLI provide CPU image export.
 
 ```js

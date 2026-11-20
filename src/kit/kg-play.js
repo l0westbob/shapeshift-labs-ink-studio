@@ -5,6 +5,17 @@
    These are the game's own; the lab's K.particles, K.debris and K.voxels do the same jobs for a stage. Making each pair one is still to do. */
 (function (K) {
   K.play = {};
+  /* the game's chance, seeded: an unseeded random source would draw different sparks and debris on every run, so a replay with the same
+     taps (--poke, scripted actions) could never reproduce a frame. xorshift32, one stream per pool. */
+  const chance = seed => {
+    let s = seed >>> 0 || 1;
+    return () => {
+      s ^= s << 13; s >>>= 0;
+      s ^= s >>> 17;
+      s ^= s << 5; s >>>= 0;
+      return s / 4294967296;
+    };
+  };
   // A pool of bright short-lived splats for everything that happens in a moment: sparks, flashes, rings, splashes.
   K.play.fx = function makeFx(B, N) {
     const { P } = B,
@@ -30,7 +41,7 @@
       next = (next + 1) % N;
       return p;
     };
-    const rnd = (a, b) => a + (b - a) * Math.random();
+    const random = chance(0x51f15eed), rnd = (a, b) => a + (b - a) * random();
     const api = {
       total: N,
       bind(world, start) {
@@ -281,6 +292,7 @@
   // falls, bounces and shrinks away by itself (the thing itself breaks into its own splats).
   // =====================================================================
   K.play.debris = function makeDebris(B, N) {
+    const random = chance(0xdeb415);
     for (let i = 0; i < N; i++) B.iso(0, -50, 0, 0.08, B.P[14], 3, {});
     let D = null,
       at = 0,
@@ -367,16 +379,16 @@
             dy = s[1] - c[1],
             dz = s[2] - c[2],
             l = Math.hypot(dx, dy, dz) || 1,
-            sp = power * (0.3 + 0.7 * Math.random());
+            sp = power * (0.3 + 0.7 * random());
           loose(
             i,
             s[0],
             s[1],
             s[2],
-            (dx / l) * sp + (Math.random() - 0.5) * 1.5,
-            Math.abs(dy / l) * sp * 0.5 + 1.5 + Math.random() * power * 0.7,
-            (dz / l) * sp + (Math.random() - 0.5) * 1.5,
-            0.9 + Math.random() * 1.3,
+            (dx / l) * sp + (random() - 0.5) * 1.5,
+            Math.abs(dy / l) * sp * 0.5 + 1.5 + random() * power * 0.7,
+            (dz / l) * sp + (random() - 0.5) * 1.5,
+            0.9 + random() * 1.3,
             floor
           );
         }
@@ -405,9 +417,9 @@
             s[0],
             s[1],
             s[2],
-            (Math.random() - 0.5) * 0.5,
-            -Math.random() * 0.6,
-            (Math.random() - 0.5) * 0.5,
+            (random() - 0.5) * 0.5,
+            -random() * 0.6,
+            (random() - 0.5) * 0.5,
             3.5,
             floor
           );
@@ -489,10 +501,10 @@
                 g.pivot[0] + x,
                 wy,
                 g.pivot[2] + z,
-                vx * 0.45 + (Math.random() - 0.5) * 3.2,
-                Math.abs(vy) * 0.22 + 0.6 + Math.random() * 3.2,
-                vz * 0.45 + (Math.random() - 0.5) * 3.2,
-                0.9 + Math.random() * 1.5,
+                vx * 0.45 + (random() - 0.5) * 3.2,
+                Math.abs(vy) * 0.22 + 0.6 + random() * 3.2,
+                vz * 0.45 + (random() - 0.5) * 3.2,
+                0.9 + random() * 1.5,
                 g.floor
               );
               continue;
@@ -543,10 +555,10 @@
             iso(o, SZ[i] * SZ[i]);
             ST[i] = 1;
             P[p + 1] = FL[i] + SZ[i];
-            P[p + 3] = (Math.random() - 0.5) * (2 + v * 0.5);
-            P[p + 5] = (Math.random() - 0.5) * (2 + v * 0.5);
-            P[p + 4] = v * (0.15 + Math.random() * 0.3) + 0.5;
-            P[p + 6] = P[p + 7] = 0.8 + Math.random() * 1.2;
+            P[p + 3] = (random() - 0.5) * (2 + v * 0.5);
+            P[p + 5] = (random() - 0.5) * (2 + v * 0.5);
+            P[p + 4] = v * (0.15 + random() * 0.3) + 0.5;
+            P[p + 6] = P[p + 7] = 0.8 + random() * 1.2;
           }
         }
         for (let i = 0; i < N; i++) {
@@ -600,7 +612,7 @@
       NZ = options.height ?? 288,
       origin = options.origin ?? [-80, -208],
       cellSize = options.cellSize ?? 1,
-      random = options.random ?? Math.random;
+      random = options.random ?? chance(options.seed ?? 0xec0);
     if (!Number.isSafeInteger(N) || N < 1 || !Number.isSafeInteger(NZ) || NZ < 1 || N * NZ > 100000 ||
       !Array.isArray(origin) || origin.length !== 2 || !origin.every(Number.isFinite) || !(cellSize > 0) || !Number.isFinite(cellSize) || typeof random !== 'function')
       throw new RangeError('Invalid ecology fire grid');
