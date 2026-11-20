@@ -2,6 +2,8 @@
 
 A JavaScript toolkit for sculpting signed-distance solids, baking them into pixel-art Gaussian splats, and making them move, react, break, grow and remember what happened to them. Use it from Node, drive it through the `ink-studio` command, or embed the source bundle in an Inkwell or browser application.
 
+AI agents: start with [AGENTS.md](AGENTS.md), which covers the MCP server and the JSON operations.
+
 The package includes geometry, materials, lighting, animation, character controls, particles, physics, procedural generation, and retained authoring. Write scenes in JavaScript or JSON, render images through the CPU-based Node and CLI tools, or draw into a canvas with the default WebGL 2 browser renderer. Browser hosts supply the editor UI and advance the scene.
 
 ## Contents

@@ -900,6 +900,7 @@ const CMD = {
         '    --input-space space --output-space space --input-range min,max --output-range min,max',
         '    --input-out-of-range preserve|clamp|error --output-out-of-range preserve|clamp|error --domain-policy clamp|error|extrapolate',
         '',
+        '  agent list | call <op> <json|-> | mcp   JSON operations and the MCP server for AI agents (see AGENTS.md)',
         '  scenes                      list every diorama',
         '  catalog [words]             what the toolkit can do, searchable',
         '  stats <id>                  splat counts, colours used, size, cost per frame, warnings',
@@ -2746,6 +2747,11 @@ const CMD = {
   }
 };
 async function run() {
+  if (cmd === 'agent') {
+    const code = await require('../agent/cli.js')(argv.slice(1));
+    if (code !== undefined) process.exitCode = code;
+    return;
+  }
   const mode = Shot.modeFor(cmd,pos);
   if (opt.recipe !== undefined)
     shot = Shot.createRecorder(opt.recipe,{mode,scene:pos[cmd === 'sim' ? 1 : 0],options:opt,root:CWD});
