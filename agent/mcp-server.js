@@ -30,6 +30,7 @@ const INSTRUCTIONS = [
   'Scene loop: scene_validate a JSON diorama, scene_open it to get a handle, scene_render to look, scene_measure for numbers,',
   'scene_edit with baseRevision (add render/measure to see the result in one call), scene_save to keep it, scene_export for GLB or sprite atlases.',
   'Worlds: world_open, world_step with actions, world_query, world_sim to fork, verify, diff and save; worlds only run forwards.',
+  'Everything else the CLI can do: scene_review, look, and ink_cli for any command.',
   'Errors come back as { code, message, path, hint, details }; fix the input at path and retry.',
   'Note: "agents" inside scene data means simulated characters, not you.'
 ].join(' ');
@@ -42,7 +43,7 @@ function toolOf(op) {
     inputSchema: op.input,
     annotations: {
       title: op.title,
-      readOnlyHint: op.effects !== 'write',
+      readOnlyHint: op.effects === 'read' || op.readOnly === true,
       destructiveHint: !!op.destructive,
       idempotentHint: op.effects !== 'write' || !!op.idempotent,
       openWorldHint: false

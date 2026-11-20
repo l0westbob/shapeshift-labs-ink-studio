@@ -3,11 +3,12 @@
 const { createHash } = require('node:crypto');
 const { OpError } = require('./registry.js');
 
-/* rounds every finite float to `digits` significant digits so reports do not spend tokens on 1.2999999999999998 */
+/* trims float noise so reports do not spend tokens on 1.2999999999999998: values of magnitude 1 or more keep their whole
+   integer part and digits - 1 decimals (1234.5678 -> 1234.568), smaller ones keep `digits` significant digits */
 function compact(value, digits = 4) {
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || Number.isInteger(value)) return value;
-    return Number(value.toPrecision(digits));
+    return Number(Math.abs(value) >= 1 ? value.toFixed(digits - 1) : value.toPrecision(digits));
   }
   if (Array.isArray(value)) return value.map(item => compact(item, digits));
   if (ArrayBuffer.isView(value)) return Array.from(value, item => compact(item, digits));

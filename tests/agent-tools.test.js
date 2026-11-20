@@ -191,7 +191,68 @@ test('classic measuring commands answer with agent JSON when given --json', () =
   const stats = run('stats', 'examples/scene.json');
   assert.equal(stats.status, 0, stats.stderr);
   assert.ok(JSON.parse(stats.stdout).result.stats.splats.total > 0);
-  const valid = run('validate', 'examples/scene.json');
-  assert.equal(JSON.parse(valid.stdout).result.valid, true);
-  assert.equal(run('validate', 'missing.json').status, 1);
+  const lint = run('lint', 'examples/scene.json');
+  assert.equal(typeof JSON.parse(lint.stdout).result.lint.orphans, 'number');
+  assert.equal(run('stats', 'missing.json').status, 1);
+  const classic = run('validate', 'examples/scene.json');
+  assert.equal(classic.status, 0, classic.stderr);
+  assert.equal(JSON.parse(classic.stdout).ok, undefined, 'validate keeps its own --json report');
+});
+
+test('review fixes: sessions, precision, large renders, keys, annotations, overwrite, roots, reports', async t => {
+  const { compact } = require('../agent/data.js');
+  assert.deepEqual(compact({ x: 1234.5678, y: 98765.4321, z: 0.000123456 }), { x: 1234.568, y: 98765.432, z: 0.0001235 });
+
+  const live = ok(await call('world_open', { world: { path: 'examples/world-puzzle-gate.json' } }));
+  const sessions = require('../agent/worlds.js').sessions.size;
+  for (let i = 0; i < 20; i++) ok(await call('world_query', { world: { path: 'examples/world-puzzle-gate.json' }, action: 'inspect' }));
+  assert.equal(require('../agent/worlds.js').sessions.size, sessions, 'one-shot queries take no session slot');
+  ok(await call('world_step', { world: { handle: live.handle }, steps: 1 }));
+
+  const big = ok(await call('scene_measure', { scene: { path: 'examples/scene.json' }, metrics: ['values'], size: { w: 2048, h: 2048 } }));
+  assert.ok(['FLAT', 'ONE_TONE', 'TWO_TONES', 'THREE_TONES'].includes(big.values.verdict));
+
+  const opened = ok(await call('scene_open', { scene: { path: 'examples/scene.json' }, bake: false }));
+  assert.ok(opened.tree.some(row => row.key === 'slot:1' && row.shape === 'ball'));
+  const missingKeys = fails(await call('scene_edit', { scene: { handle: opened.handle }, operations: [{ op: 'setMaterial', material: 'earth' }] }), 'INVALID_INPUT');
+  assert.equal(missingKeys.path, '/operations/0/keys');
+  const recoloured = ok(await call('scene_edit', { scene: { handle: opened.handle }, operations: [{ op: 'setMaterial', keys: ['slot:1'], material: 'earth' }] }));
+  assert.ok(recoloured.changes.length > 0);
+
+  const dir = tempDir(t), png = path.join(dir, 'keep.png');
+  fs.writeFileSync(png, 'reference');
+  fails(await call('scene_render', { scene: { handle: opened.handle }, out: png }), 'EXISTS');
+  ok(await call('scene_render', { scene: { handle: opened.handle }, out: png, overwrite: true }));
+  assert.notEqual(fs.readFileSync(png, 'utf8'), 'reference');
+
+  const meshSpec = {
+    id: 'totem-check', name: 'Totem', seed: 1, style: 'moss',
+    camera: { target: [0, 1, 0], dist: 8, pitch: 0.2, yaw: 0.4 },
+    solids: [{ kind: 'mesh', asset: 'assets/totem', size: 2, at: [0, 1, 0] }]
+  };
+  assert.equal(ok(await registry.call('scene_validate', { scene: { spec: meshSpec } }, { root: path.join(root, 'lab') })).valid, true);
+
+  const sheet = path.join(dir, 'sheet.png');
+  const made = ok(await call('ink_cli', { command: 'sheet', args: ['examples/scene.json', '--n', '2', '--out', sheet] }));
+  assert.ok(made.files.includes(sheet), 'files written through --out are reported');
+
+  const server = require('node:child_process').spawnSync(process.execPath, [path.join(root, 'cli', 'ink-studio.js'), 'agent', 'list'], { cwd: root, encoding: 'utf8' });
+  assert.equal(server.status, 0);
+});
+
+test('MCP annotations mark only genuinely read-only tools as read-only', async () => {
+  const source = fs.readFileSync(path.join(root, 'agent', 'mcp-server.js'), 'utf8');
+  assert.match(source, /readOnlyHint: op.effects === 'read' \|\| op.readOnly === true/);
+  const byName = Object.fromEntries(registry.list().map(op => [op.name, op]));
+  const readOnly = op => op.effects === 'read' || op.readOnly === true;
+  assert.equal(readOnly(byName.ink_cli), false);
+  assert.equal(readOnly(byName.scene_render), false);
+  assert.equal(readOnly(byName.scene_open), true);
+  assert.equal(readOnly(byName.world_open), true);
+});
+
+test('scene_review accepts reports printed to stdout (cloth-review)', async () => {
+  const review = ok(await registry.call('scene_review', { scene: { path: 'examples/cloth-review.js' }, kind: 'cloth-review' }, { root, allowCode: true }));
+  assert.equal(typeof review.report, 'object');
+  assert.ok(review.report.scene);
 });

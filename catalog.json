@@ -1538,7 +1538,7 @@
       "kind": "agent",
       "status": "ready",
       "title": "Measure a scene",
-      "what": "Render one view at native art resolution and return numeric quality metrics (no image).",
+      "what": "Render one view (same size and view options as scene_render) and return numeric quality metrics measured at art-pixel resolution, without an image.",
       "use": "MCP tool scene_measure or: ink-studio agent call scene_measure '<json>'",
       "where": "agent/ops",
       "tags": [

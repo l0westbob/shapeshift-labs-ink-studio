@@ -47,7 +47,7 @@ function codeAllowed(ctx) {
 }
 
 /* loads a prefab library and the mesh files a diorama names, resolved beside the file it came from (as the CLI does) */
-function environmentFor(spec, dir) {
+function environmentFor(spec, dir, root = process.cwd()) {
   const K = kit().KIT;
   let prefabs;
   if (spec.prefabLibrary !== undefined) {
@@ -68,7 +68,7 @@ function environmentFor(spec, dir) {
   }
   for (const solid of K.diorama.solids(expanded)) {
     if (solid.kind !== 'mesh' || typeof solid.asset !== 'string' || assets[solid.asset]) continue;
-    const base = dir ? path.resolve(dir, solid.asset) : path.resolve(solid.asset);
+    const base = path.resolve(dir ?? root, solid.asset);
     const file = ['', '.obj', '.glb', '.gltf'].map(ext => base + ext).find(f => fs.existsSync(f) && fs.statSync(f).isFile());
     if (file) assets[solid.asset] = studio().readMesh(file);
   }
@@ -96,9 +96,9 @@ function makeEditor(spec, env) {
   }
 }
 
-function openDiorama(spec, { file, seed } = {}) {
+function openDiorama(spec, { file, seed, root } = {}) {
   const dir = file ? path.dirname(file) : undefined;
-  const env = environmentFor(spec, dir);
+  const env = environmentFor(spec, dir, root);
   const problems = problemsOf(spec, env);
   if (errorsOf(problems).length) throw new OpError('INVALID_SCENE', 'The diorama has errors', { details: problems });
   const editor = makeEditor(spec, env);
@@ -114,7 +114,7 @@ function open(scene, ctx = {}) {
     return entry;
   }
   let entry;
-  if (key === 'spec') entry = openDiorama(scene.spec, { seed: scene.seed });
+  if (key === 'spec') entry = openDiorama(scene.spec, { seed: scene.seed, root: ctx.root });
   else if (key === 'builtin') {
     const descriptor = kit().SCENES.find(s => s.id === scene.builtin);
     if (!descriptor) throw new OpError('NOT_FOUND', 'No built-in scene "' + scene.builtin + '"', {

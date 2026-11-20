@@ -15,12 +15,13 @@ const CLI = path.join(__dirname, '..', '..', 'cli', 'ink-studio.js');
 const CODE_FILE = /\.(c?js|mjs)$/i;
 const codeAllowed = ctx => ctx.allowCode === true || process.env.INK_AGENT_ALLOW_CODE === '1';
 
-function listFiles(dir, out = new Map()) {
+/* files under dir modified at or after `since` (one walk, after the command) */
+function changedFiles(dir, since, out = []) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name);
-    if (entry.isDirectory()) listFiles(file, out);
-    else out.set(file, fs.statSync(file).mtimeMs);
+    if (entry.isDirectory()) changedFiles(file, since, out);
+    else if (fs.statSync(file).mtimeMs >= since) out.push(file);
   }
   return out;
 }
@@ -37,14 +38,22 @@ function runCli(command, args, ctx, { timeoutSeconds = 120, maxChars = 8000 } = 
       path: '/args/' + bad, hint: 'use a .json diorama or world, or start the server with INK_AGENT_ALLOW_CODE=1'
     });
   const root = ctx.root ?? process.cwd(), outDir = path.join(root, 'studio', 'out');
-  const before = listFiles(outDir), started = Date.now();
+  const started = Date.now() - 1;
   const child = spawnSync(process.execPath, [CLI, command, ...args], {
     cwd: root, encoding: 'utf8', timeout: timeoutSeconds * 1000, maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, ...(codeAllowed(ctx) ? { INK_AGENT_ALLOW_CODE: '1' } : {}) }
   });
   if (child.error?.code === 'ETIMEDOUT') throw new OpError('CLI_TIMEOUT', 'The command ran longer than ' + timeoutSeconds + ' s');
   if (child.error) throw new OpError('CLI_FAILED', child.error.message);
-  const files = [...listFiles(outDir)].filter(([file, mtime]) => before.get(file) !== mtime).map(([file]) => file);
+  const files = changedFiles(outDir, started);
+  const outFlag = args.indexOf('--out');
+  if (outFlag >= 0 && args[outFlag + 1]) {
+    const target = path.resolve(root, args[outFlag + 1]);
+    if (!files.includes(target) && fs.existsSync(target)) {
+      if (fs.statSync(target).isDirectory()) changedFiles(target, started, files);
+      else if (fs.statSync(target).mtimeMs >= started) files.push(target);
+    }
+  }
   let json;
   try {
     json = child.stdout.trim() ? JSON.parse(child.stdout) : undefined;
@@ -80,23 +89,34 @@ defineOp({
 
 /* --- scenes as CLI arguments ---------------------------------------------------------------------------------------- */
 
-/* a path the CLI can load for this scene; open dioramas are written beside their source so relative assets resolve */
+/* a path the CLI can load for this scene. Open dioramas go to a private temporary directory, never the project: their
+   prefab library and mesh assets are made absolute and their data inputs embedded, so nothing depends on the location */
 function sceneArgument(scene, ctx) {
   if (scene.builtin) return { arg: scene.builtin, cleanup() {} };
   if (scene.path && !scene.handle) return { arg: scene.path, cleanup() {} };
   const entry = Scenes.open(scene, { ...ctx, persist: !!scene.handle });
   if (entry.kind === 'builtin') return { arg: entry.descriptor.id, cleanup() {} };
   if (entry.kind === 'script') return { arg: entry.file, cleanup() {} };
-  const dir = entry.dir ?? os.tmpdir();
-  const file = path.join(dir, '.ink-agent-' + randomUUID().slice(0, 8) + '.json');
-  fs.writeFileSync(file, JSON.stringify(Scenes.specOf(entry)));
-  return { arg: file, cleanup: () => fs.rmSync(file, { force: true }) };
+  const K = Scenes.kit().KIT, base = entry.dir ?? ctx.root ?? process.cwd();
+  const spec = structuredClone(Scenes.specOf(entry));
+  if (typeof spec.prefabLibrary === 'string') spec.prefabLibrary = path.resolve(base, spec.prefabLibrary);
+  for (const solid of K.diorama.solids(spec))
+    if (solid.kind === 'mesh' && typeof solid.asset === 'string') solid.asset = path.resolve(base, solid.asset);
+  if (spec.dataInputs !== undefined && entry.file)
+    spec.dataInputs = require('../../cli/data-inputs.js').embed(K.dataInputs, spec.dataInputs, entry.file);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ink-agent-scene-'));
+  const file = path.join(dir, (spec.id || 'scene') + '.json');
+  fs.writeFileSync(file, JSON.stringify(spec));
+  return { arg: file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
 function reportRun(command, positional, args, ctx, { timeoutSeconds } = {}) {
   const report = path.join(os.tmpdir(), 'ink-agent-report-' + randomUUID() + '.json');
   try {
     const result = runCli(command, [...positional, ...args, '--out', report], ctx, { timeoutSeconds });
+    /* a few commands (cloth-review) print their report instead of honouring --out */
+    if (!fs.existsSync(report) && result.ok && result.json !== undefined)
+      return { exitCode: result.exitCode, durationMs: result.durationMs, report: result.json, files: result.files };
     if (!fs.existsSync(report)) {
       throw new OpError('CLI_FAILED', (result.stderr?.text ?? result.stdout?.text ?? 'no report was written').trim().split('\n').slice(-3).join(' '), {
         details: { exitCode: result.exitCode }

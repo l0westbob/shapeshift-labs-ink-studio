@@ -22,6 +22,8 @@ node cli/ink-studio.js agent list
 node cli/ink-studio.js agent call scene_render '{"scene":{"path":"examples/scene.json"},"t":1,"out":"studio/out/gem.png"}'
 ```
 
+The classic `stats`, `lint`, `crisp` and `values` commands print the same JSON as `scene_measure` when given `--json`.
+
 ## Tools
 
 | Tool | Effect | Use |
@@ -29,8 +31,9 @@ node cli/ink-studio.js agent call scene_render '{"scene":{"path":"examples/scene
 | `ink_discover` | read | Overview; keyword search across tools, catalog and docs; `describe` a tool's input schema; `schema: "diorama"` for every field, solid kind, motion, effect, modifier, role and style. |
 | `ink_docs` | read | List topics, full-text search, or read a topic page by page (`offset`, `maxChars`) or one `section`. |
 | `scene_validate` | read | Check a diorama without baking. Every problem has `path`, `problem` and often a `hint` ("did you mean ball?"). |
-| `scene_open` | read | Open a `path`, inline `spec` or `builtin` demo. Returns a `handle`, content `revision`, solid/part counts and palette roles. Baked worlds are cached per revision. |
-| `scene_render` | read | PNG as image content. `mode: "turn"` draws `frames` views on one sheet. `measure` adds metrics. `out` also writes the file. |
+| `scene_open` | read | Open a `path`, inline `spec` or `builtin` demo. Returns a `handle`, content `revision`, solid/part counts, palette roles and the scene `tree` with the keys edits take. Baked worlds are cached per revision. |
+| `scene_render` | write | PNG as image content. `mode: "turn"` draws `frames` views on one sheet. `measure` adds metrics. `out` also writes the file (outside `studio/out` an existing file needs `overwrite`). |
+| `scene_query` | read | Ask a baked scene: `select` look targets, `sample` the splat at a point (target, material, colour), look `output` or `provenance`. |
 | `scene_measure` | read | Numbers only: `stats` (splats, extent, palette use), `lint` (pixel-art faults vs reference), `crisp` (targets, `misses`, `pass`), `values` (tonal `verdict`). |
 | `scene_edit` | write | Atomic batch on an open diorama. `baseRevision` guards staleness, `dryRun` previews, `render`/`measure` return the result in the same call. |
 | `scene_save` | write | Write the current diorama JSON. Defaults to the source file; refuses to replace another file unless `overwrite`. |
@@ -39,6 +42,9 @@ node cli/ink-studio.js agent call scene_render '{"scene":{"path":"examples/scene
 | `world_step` | write | Schedule `actions` and advance by `ticks`, `steps` or `t`. Invalid actions are rejected before anything moves. Returns scenario status and new events. |
 | `world_query` | read | `inspect`, `spatial`, `select`, `probe`, `trace`, `export` on the current tick. |
 | `world_sim` | write | `plan`, `fork`, `reset`, `save` (checkpoint or recording), `verify`, `diff` (same tick, or `first: true` for the first divergent tick), `close`. |
+| `scene_review` | write | JSON reports of motion-review, clip-sequence, authored-contacts, motion-fx, animation-timeline, camera-rig, timeline, data-inputs and cloth-review. |
+| `look` | write | Looks (LUTs, colour stacks, palettes, asset packs): `inspect`, `sample`, `bake`, `import`, `export`. |
+| `ink_cli` | write | Any other CLI command (sheet, clip, passes, crisp, review, shimmer, compare, variants, paint, mesh, depth, snap, ...) as a JSON envelope with exit code, output and files written. `command: "help"` lists them. |
 
 Every scene-taking tool accepts `scene` as exactly one of `{ "handle" }`, `{ "path" }`, `{ "spec" }` or `{ "builtin" }`. Built-ins: `watcher`, `burn`, `idol`, `bench`, `stuff`, `cabinet`, `rehearsal` (render only, not editable). World tools take `world` as `{ "handle" }`, `{ "path" }` or `{ "spec" }`; worlds only run forwards, so `fork` before trying alternatives.
 

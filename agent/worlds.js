@@ -76,7 +76,9 @@ function open(source, ctx = {}, { seed, dt, record = true } = {}) {
   if ((seed !== undefined || dt !== undefined) && input.checkpoint)
     throw new OpError('INVALID_INPUT', 'A checkpoint or recording keeps its own seed and timestep', { path: '/seed' });
   if (seed !== undefined || dt !== undefined) input.world = { ...input.world, ...(seed !== undefined && { seed }), ...(dt !== undefined && { dt }) };
-  return remember({ input, file, record, run: createRun(input, { record }) });
+  const entry = { input, file, record, run: createRun(input, { record }) };
+  /* one-shot sources (ctx.persist false) never take a session slot, so they cannot evict live handles */
+  return ctx.persist === false ? entry : remember(entry);
 }
 
 function remember(entry) {

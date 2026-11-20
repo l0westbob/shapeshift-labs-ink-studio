@@ -20,6 +20,7 @@ const wrap = (code, fn) => {
 
 defineOp({
   name: 'world_open',
+  readOnly: true,
   title: 'Open a world simulation',
   effects: 'expensive',
   description: 'Open a deterministic fixed-tick world (an ink-studio/world manifest, checkpoint or run recording) and keep it running in memory. Returns a handle, tick, systems, scenario status and what can be queried: field and trace names and the action kinds accepted by world_step. Recording is on by default so the run can be verified and saved.',
@@ -116,7 +117,7 @@ defineOp({
     additionalProperties: false
   },
   run({ world, action, name, target, args = {}, spec, point, radius, where }, ctx) {
-    const entry = Worlds.open(world, ctx);
+    const entry = Worlds.open(world, { ...ctx, persist: !!world.handle });
     const query = entry.run.query();
     const needs = (value, field) => {
       if (value === undefined) throw new OpError('INVALID_INPUT', action + ' needs ' + field, { path: '/' + field });

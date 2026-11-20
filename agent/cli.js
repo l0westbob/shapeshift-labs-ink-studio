@@ -45,9 +45,10 @@ module.exports = async function agentCli(argv) {
   return 2;
 };
 
-/* `ink-studio stats|validate|lint|crisp|values <scene> --json`: the classic measuring commands answered by the agent ops,
-   so scripts get the same JSON an agent gets. Times default as in the classic commands (lint and crisp look at t = 2). */
-const LEGACY_JSON = ['stats', 'validate', 'lint', 'crisp', 'values'];
+/* `ink-studio stats|lint|crisp|values <scene> --json`: the classic measuring commands answered by the agent ops, so scripts
+   get the same JSON an agent gets. Times default as in the classic commands (lint and crisp look at t = 2). validate is not
+   mapped: it already has its own --json for worlds, looks and look bindings. */
+const LEGACY_JSON = ['stats', 'lint', 'crisp', 'values'];
 const DEFAULT_TIME = { stats: 0, lint: 2, crisp: 2, values: 0 };
 
 async function legacyJson(cmd, pos, opt) {
@@ -67,10 +68,6 @@ async function legacyJson(cmd, pos, opt) {
   }
   const outcomes = [];
   for (const id of ids) {
-    if (cmd === 'validate') {
-      outcomes.push(await registry.call('scene_validate', { scene: { path: id } }, ctx));
-      continue;
-    }
     const view = Object.fromEntries(['yaw', 'pitch', 'zoom'].map(k => [k, number(k)]).filter(([, v]) => v !== undefined));
     if (opt.target) view.target = String(opt.target).split(',').map(Number);
     if (opt.ortho) view.ortho = true;
@@ -81,8 +78,7 @@ async function legacyJson(cmd, pos, opt) {
     }, ctx));
   }
   process.stdout.write(JSON.stringify(outcomes.length === 1 ? outcomes[0] : outcomes) + '\n');
-  const failed = outcomes.some(o => !o.ok || (cmd === 'validate' && !o.result.valid));
-  return failed ? 1 : 0;
+  return outcomes.some(o => !o.ok) ? 1 : 0;
 }
 
 module.exports.LEGACY_JSON = LEGACY_JSON;

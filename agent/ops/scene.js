@@ -48,7 +48,8 @@ const renderProperties = {
   mode: { type: 'string', enum: ['single', 'turn'] },
   frames: { type: 'integer', minimum: 2, maximum: 16, description: 'Views for mode turn (default 8).' },
   scale: { type: 'integer', minimum: 1, maximum: 16, description: 'Integer upscale of art pixels. Default fits about 640 px.' },
-  out: { type: 'string', description: 'Also write the PNG to this path.' },
+  out: { type: 'string', description: 'Also write the PNG to this path. Existing files outside studio/out need overwrite.' },
+  overwrite: { type: 'boolean' },
   measure: metricsSchema
 };
 const renderOptionsSchema = { type: 'object', properties: renderProperties, additionalProperties: false };
@@ -143,7 +144,12 @@ function valuesOf(image, world) {
     lum.push(0.299 * r + 0.587 * g + 0.114 * b);
   }
   if (!lum.length) return { dark: 0, middle: 0, light: 0, low: 0, high: 0, verdict: 'EMPTY', message: 'Nothing but background is visible' };
-  const lo = Math.min(...lum), hi = Math.max(...lum), a = lo + (hi - lo) / 3, b = lo + ((hi - lo) * 2) / 3, share = [0, 0, 0];
+  let lo = Infinity, hi = -Infinity;
+  for (const v of lum) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const a = lo + (hi - lo) / 3, b = lo + ((hi - lo) * 2) / 3, share = [0, 0, 0];
   for (const v of lum) share[v < a ? 0 : v < b ? 1 : 2]++;
   const [dark, middle, light] = share.map(v => v / lum.length);
   const names = ['dark', 'middle', 'light'], shares = [dark, middle, light];
@@ -202,7 +208,7 @@ defineOp({
     } else throw new OpError('INVALID_INPUT', 'Validate takes a handle, path or spec', { path: '/scene' });
     let problems;
     try {
-      problems = Scenes.problemsOf(spec, Scenes.environmentFor(spec, dir));
+      problems = Scenes.problemsOf(spec, Scenes.environmentFor(spec, dir, ctx.root));
     } catch (error) {
       if (error instanceof OpError) return { valid: false, errors: [{ level: 'error', path: error.path ?? '', problem: error.message }], warnings: [] };
       throw error;
@@ -212,19 +218,47 @@ defineOp({
   }
 });
 
+/* the editor's tree as compact rows (depth-first), capped so very large scenes stay affordable */
+const TREE_LIMIT = 300;
+function treeOf(root) {
+  const rows = [];
+  let total = 0;
+  const walk = (node, depth) => {
+    for (const child of node.children ?? []) {
+      total++;
+      if (rows.length < TREE_LIMIT) {
+        const solid = child.solid ?? {};
+        rows.push({
+          key: child.key, kind: child.kind, depth, ...(child.name && { name: child.name }), ...(child.shape && { shape: child.shape }),
+          ...(typeof solid.mat === 'string' && { mat: solid.mat }), ...(solid.part && { part: solid.part }), ...(solid.at && { at: solid.at })
+        });
+      }
+      walk(child, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return { tree: rows, ...(total > rows.length && { treeTruncated: total - rows.length }) };
+}
+
 defineOp({
   name: 'scene_open',
+  readOnly: true,
   title: 'Open a scene',
   effects: 'expensive',
-  description: 'Open a diorama, built-in demo or (when allowed) JS scene and bake it once. Returns a handle for the other scene_* tools, a content revision, counts of solids/parts and the palette roles. Keep the handle; baked worlds are cached per revision.',
+  description: 'Open a diorama, built-in demo or (when allowed) JS scene and bake it once. Returns a handle for the other scene_* tools, a content revision, counts of solids/parts, the palette roles and, for dioramas, the scene tree with the keys scene_edit operations take (e.g. "slot:1", "part:gem"). Keep the handle; baked worlds are cached per revision. Call again with the handle to reread the tree after edits.',
   input: {
     type: 'object', required: ['scene'],
-    properties: { scene: Scenes.sceneSchema, bake: { type: 'boolean', description: 'Bake now to report splat stats (default true).' } },
+    properties: {
+      scene: Scenes.sceneSchema,
+      bake: { type: 'boolean', description: 'Bake now to report splat stats (default true).' },
+      tree: { type: 'boolean', description: 'Include the scene tree for dioramas (default true).' }
+    },
     additionalProperties: false
   },
-  run({ scene, bake = true }, ctx) {
+  run({ scene, bake = true, tree = true }, ctx) {
     const entry = Scenes.open(scene, ctx);
     const out = Scenes.describe(entry);
+    if (tree && entry.kind === 'diorama') Object.assign(out, treeOf(entry.editor.tree()));
     if (bake) {
       const world = Scenes.worldAt(entry, { t: 0 });
       out.splats = world.count;
@@ -248,7 +282,7 @@ defineOp({
   }
 });
 
-function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'single', frames = 8, scale, out, measure: metrics }, ctx) {
+function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'single', frames = 8, scale, out, overwrite = false, measure: metrics }, ctx) {
   const world = Scenes.worldAt(entry, { t });
   let image, meta;
   if (mode === 'turn') {
@@ -265,7 +299,11 @@ function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'si
   }
   const encoded = encodeImage(image, scale ?? autoScale(image.w, image.h));
   if (out) {
-    const file = path.resolve(ctx.root ?? process.cwd(), out);
+    const root = ctx.root ?? process.cwd(), file = path.resolve(root, out);
+    /* files under studio/out are disposable previews; anything else is only replaced on request */
+    const disposable = file.startsWith(path.join(root, 'studio', 'out') + path.sep);
+    if (fs.existsSync(file) && !overwrite && !disposable)
+      throw new OpError('EXISTS', 'A file already exists at ' + file, { path: '/out', hint: 'pass overwrite: true or write under studio/out' });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, Buffer.from(encoded.base64, 'base64'));
     meta.file = file;
@@ -277,9 +315,10 @@ function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'si
 
 defineOp({
   name: 'scene_measure',
+  readOnly: true,
   title: 'Measure a scene',
   effects: 'expensive',
-  description: 'Render one view at native art resolution and return numeric quality metrics (no image). Use as a feedback signal after edits: lint and crisp flag pixel-art faults, values checks tonal readability, stats reports splats and palette use.',
+  description: 'Render one view (same size and view options as scene_render) and return numeric quality metrics measured at art-pixel resolution, without an image. Use as a feedback signal after edits: lint and crisp flag pixel-art faults, values checks tonal readability, stats reports splats and palette use.',
   input: {
     type: 'object', required: ['scene'],
     properties: {
@@ -312,7 +351,7 @@ const editOpSchema = {
   type: 'object', required: ['op'],
   properties: {
     op: { type: 'string', enum: Object.keys(EDIT_OPS) },
-    keys: { type: 'array', items: { type: 'string' }, description: 'Scene tree keys, e.g. "slot:1" or "part:gem" (see scene_open/scene_inspect).' },
+    keys: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Scene tree keys, e.g. "slot:1" or "part:gem", from the tree scene_open returns. Required by setTransform, updateShape, setModifiers, updateModifier and setMaterial.' },
     patch: { type: 'object' }, modifiers: { type: 'array' }, id: { type: 'string' }, material: { type: ['string', 'object'] },
     name: { type: 'string' }, ramp: { type: 'array', items: { type: 'integer' } }, revision: { type: 'string' }
   },
@@ -325,6 +364,8 @@ function applyEditorOp(editor, op, index) {
     for (const field of fields)
       if (op[field] === undefined) throw new OpError('INVALID_INPUT', op.op + ' needs ' + field, { path: '/operations/' + index + '/' + field });
   };
+  /* without keys the editor would fall back to its selection, which a draft never has: the edit would silently do nothing */
+  if (op.op !== 'setRole') needs('keys');
   switch (op.op) {
     case 'setTransform': needs('patch'); return editor.setTransform(op.patch, keys);
     case 'updateShape': needs('patch'); return editor.updateShape(op.patch, keys);
