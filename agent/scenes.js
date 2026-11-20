@@ -12,6 +12,8 @@ let toolkit;
 const studio = () => require('../index.js');
 const kit = () => (toolkit ??= studio().load());
 const ArtDirection = () => require('../src/art-direction.js');
+const Pose = () => require('../cli/pose.js');
+const PACKAGE_ROOT = fs.realpathSync(path.join(__dirname, '..')) + path.sep;
 
 const HISTORY_LIMIT = 50;
 const SESSION_LIMIT = 32;
@@ -130,8 +132,9 @@ function open(scene, ctx = {}) {
           path: '/scene/path', hint: 'use a .json diorama, or start the server with INK_AGENT_ALLOW_CODE=1'
         });
       if (!fs.existsSync(file)) throw new OpError('NOT_FOUND', 'No file at ' + file, { path: '/scene/path' });
-      delete require.cache[file];
-      entry = { kind: 'script', file, descriptor: require(file)(kit()), seedOverride: scene.seed, warnings: [] };
+      const resolved = require.resolve(file);
+      forget(resolved);
+      entry = { kind: 'script', file, descriptor: require(resolved)(kit()), seedOverride: scene.seed, warnings: [] };
     } else throw new OpError('UNSUPPORTED', 'Scene paths must end in .json or .js', { path: '/scene/path' });
   }
   entry.handle = 'scn_' + randomUUID().slice(0, 8);
@@ -139,6 +142,17 @@ function open(scene, ctx = {}) {
   entry.used = Date.now();
   if (ctx.persist !== false) remember(entry);
   return entry;
+}
+
+/* drops a scene module and the project modules it loaded from Node's cache (keyed by real path), so reopening a JS scene
+   picks up edits; ink-studio itself and node_modules stay cached */
+function forget(id, seen = new Set()) {
+  const cached = require.cache[id];
+  if (!cached || seen.has(id)) return;
+  seen.add(id);
+  delete require.cache[id];
+  for (const child of cached.children)
+    if (!child.id.startsWith(PACKAGE_ROOT) && !child.id.includes(path.sep + 'node_modules' + path.sep)) forget(child.id, seen);
 }
 
 function remember(entry) {
@@ -201,7 +215,7 @@ function bake(entry, seed) {
 function worldAt(entry, { seed, t = 0 } = {}) {
   const key = revisionFor(entry) + ':' + (seed ?? entry.seedOverride ?? 'default');
   let world = entry.worlds.get(key);
-  if (!world || (world.anim?.stateful && t < world.clock - 1e-9)) {
+  if (!world || Pose().behind(world, t, directionOf(world))) {
     world = bake(entry, seed);
     entry.worlds.clear();
     entry.worlds.set(key, world);
@@ -210,44 +224,12 @@ function worldAt(entry, { seed, t = 0 } = {}) {
   return world;
 }
 
-/* the CLI's pose() without taps or command-line art direction */
+const directionOf = world => ArtDirection().prepare(world.look?.artDirection);
+
+/* the CLI's pose (cli/pose.js) without taps or command-line art direction */
 function pose(world, t) {
   if (!world.anim) return;
-  const AD = ArtDirection();
-  const direction = AD.prepare(world.look?.artDirection);
-  if (world.anim.motionSettings) world.anim.motionDirection = direction;
-  const sceneTime = AD.time(direction, t);
-  if (world.anim.stateful) {
-    const separateCloth = direction?.cadence.scene && direction.cadence.cloth !== undefined && world.anim.hasIndependentCloth?.();
-    const advanceScene = to => {
-      while (world.clock < to - 1e-9) {
-        const dt = Math.min(1 / 60, to - world.clock);
-        world.clock += dt;
-        if (separateCloth) world.anim.update(dt, world.clock, { separateCloth });
-        else world.anim.update(dt, world.clock);
-      }
-    };
-    if (separateCloth) {
-      let at = world.clothClock ?? world.clock;
-      while (at < t - 1e-9) {
-        const dt = Math.min(1 / 60, t - at);
-        at += dt;
-        advanceScene(AD.time(direction, at));
-        world.anim.advanceCloth(dt, at);
-      }
-      world.clothClock = t;
-    } else advanceScene(sceneTime);
-  } else world.anim.update(1 / 60, sceneTime);
-  world.clock = sceneTime;
-  if (world.anim.bones) {
-    if (!world.rest) world.rest = world.data;
-    world.data = kit().KIT.bones.posed({
-      data: world.rest,
-      anim: world.anim,
-      get posedBuf() { return world.posedBuf; },
-      set posedBuf(v) { world.posedBuf = v; }
-    });
-  }
+  Pose().pose(world, t, { direction: directionOf(world), kit: () => kit().KIT });
 }
 
 /* --- summaries ------------------------------------------------------------------------------------------------------ */

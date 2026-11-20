@@ -46,7 +46,7 @@ function toolOf(op) {
       title: op.title,
       readOnlyHint: op.effects === 'read' || op.readOnly === true,
       destructiveHint: !!op.destructive,
-      idempotentHint: op.effects !== 'write' || !!op.idempotent,
+      idempotentHint: op.idempotent ?? op.effects !== 'write',
       openWorldHint: false
     }
   };
@@ -85,7 +85,7 @@ async function handle(message) {
     return;
   }
   const isNotification = message.id === undefined;
-  const handler = handlers[message.method];
+  const handler = Object.hasOwn(handlers, message.method) ? handlers[message.method] : undefined;
   if (isNotification) return;
   if (!handler) return send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found: ' + message.method } });
   try {

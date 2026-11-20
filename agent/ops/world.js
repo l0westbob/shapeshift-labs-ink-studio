@@ -80,6 +80,16 @@ defineOp({
     if (target < before.tick) throw new OpError('INVALID_INPUT', 'The world is at tick ' + before.tick + ' and only runs forwards', {
       path: '/ticks', hint: 'use world_sim reset or a fork taken earlier'
     });
+    /* everything about save is checked before the world moves: an error after advancing would leave a handle stepped
+       although the call failed, and a retry would step it again */
+    let saveFile;
+    const saveKind = save?.kind ?? 'recording';
+    if (save) {
+      saveFile = path.resolve(ctx.root ?? process.cwd(), save.path);
+      if (!saveFile.endsWith('.json')) throw new OpError('INVALID_INPUT', 'Save to a .json path', { path: '/save/path' });
+      if (saveKind === 'recording' && !entry.record) throw new OpError('UNSUPPORTED', 'This world was opened without recording', { path: '/save/kind' });
+      Worlds.checkWritable(saveFile, save.overwrite === true, '/save/path');
+    }
     if (actions?.length) wrap('INVALID_ACTIONS', () => run.schedule(actions));
     const seen = new Set(before.history.map(event => event.id));
     try {
@@ -91,11 +101,8 @@ defineOp({
     const fresh = after.history.filter(event => !seen.has(event.id));
     let saved;
     if (save) {
-      const file = path.resolve(ctx.root ?? process.cwd(), save.path), kind = save.kind ?? 'recording';
-      if (!file.endsWith('.json')) throw new OpError('INVALID_INPUT', 'Save to a .json path', { path: '/save/path' });
-      if (kind === 'recording' && !entry.record) throw new OpError('UNSUPPORTED', 'This world was opened without recording', { path: '/save/kind' });
-      Worlds.writeJson(file, kind === 'recording' ? run.recording() : run.checkpoint(), save.overwrite === true);
-      saved = { kind, file };
+      Worlds.writeJson(saveFile, saveKind === 'recording' ? run.recording() : run.checkpoint(), save.overwrite === true, '/save/path');
+      saved = { kind: saveKind, file: saveFile };
     }
     const oneShot = !world.handle && !saved;
     return compact({

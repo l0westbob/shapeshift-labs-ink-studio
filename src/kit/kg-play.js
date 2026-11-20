@@ -5,17 +5,10 @@
    These are the game's own; the lab's K.particles, K.debris and K.voxels do the same jobs for a stage. Making each pair one is still to do. */
 (function (K) {
   K.play = {};
-  /* the game's chance, seeded: an unseeded random source would draw different sparks and debris on every run, so a replay with the same
-     taps (--poke, scripted actions) could never reproduce a frame. xorshift32, one stream per pool. */
-  const chance = seed => {
-    let s = seed >>> 0 || 1;
-    return () => {
-      s ^= s << 13; s >>>= 0;
-      s ^= s >>> 17;
-      s ^= s << 5; s >>>= 0;
-      return s / 4294967296;
-    };
-  };
+  /* the game's chance, seeded from the builder (the scene seed) with one stream per pool: an unseeded random source would draw
+     different sparks and debris on every run, so a replay with the same taps (--poke, scripted actions) could never reproduce a frame.
+     mulberry32 is the builder's own generator; the pools draw every frame, so they use it directly rather than budgeted Randomness streams. */
+  const chance = (B, salt) => mulberry32(((B?.seed ?? 0) ^ salt) >>> 0);
   // A pool of bright short-lived splats for everything that happens in a moment: sparks, flashes, rings, splashes.
   K.play.fx = function makeFx(B, N) {
     const { P } = B,
@@ -41,7 +34,7 @@
       next = (next + 1) % N;
       return p;
     };
-    const random = chance(0x51f15eed), rnd = (a, b) => a + (b - a) * random();
+    const random = chance(B, 0x51f15eed), rnd = (a, b) => a + (b - a) * random();
     const api = {
       total: N,
       bind(world, start) {
@@ -292,7 +285,7 @@
   // falls, bounces and shrinks away by itself (the thing itself breaks into its own splats).
   // =====================================================================
   K.play.debris = function makeDebris(B, N) {
-    const random = chance(0xdeb415);
+    const random = chance(B, 0xdeb415);
     for (let i = 0; i < N; i++) B.iso(0, -50, 0, 0.08, B.P[14], 3, {});
     let D = null,
       at = 0,
@@ -612,7 +605,7 @@
       NZ = options.height ?? 288,
       origin = options.origin ?? [-80, -208],
       cellSize = options.cellSize ?? 1,
-      random = options.random ?? chance(options.seed ?? 0xec0);
+      random = options.random ?? mulberry32((options.seed ?? 0xec0) >>> 0);
     if (!Number.isSafeInteger(N) || N < 1 || !Number.isSafeInteger(NZ) || NZ < 1 || N * NZ > 100000 ||
       !Array.isArray(origin) || origin.length !== 2 || !origin.every(Number.isFinite) || !(cellSize > 0) || !Number.isFinite(cellSize) || typeof random !== 'function')
       throw new RangeError('Invalid ecology fire grid');

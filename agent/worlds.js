@@ -108,8 +108,14 @@ function summary(entry) {
   };
 }
 
-function writeJson(file, value, overwrite) {
-  if (fs.existsSync(file) && !overwrite) throw new OpError('EXISTS', 'A file already exists at ' + file, { path: '/path', hint: 'pass overwrite: true' });
+/* refuses to replace an existing file without overwrite; pointer names the input field that holds the path */
+function checkWritable(file, overwrite, pointer = '/path') {
+  if (fs.existsSync(file) && !overwrite)
+    throw new OpError('EXISTS', 'A file already exists at ' + file, { path: pointer, hint: 'pass overwrite: true' });
+}
+
+function writeJson(file, value, overwrite, pointer) {
+  checkWritable(file, overwrite, pointer);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = file + '.' + randomUUID() + '.tmp';
   try {
@@ -120,4 +126,4 @@ function writeJson(file, value, overwrite) {
   }
 }
 
-module.exports = { worldSchema, classify, open, fork, reset, summary, sessions, writeJson, W, R };
+module.exports = { worldSchema, classify, open, fork, reset, summary, sessions, checkWritable, writeJson, W, R };

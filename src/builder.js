@@ -1169,6 +1169,7 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
   };
   return {
     detailBudget,
+    seed,
     shadowArt,
     shadowNext,
     count: () => n,

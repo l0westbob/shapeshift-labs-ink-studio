@@ -64,16 +64,20 @@ function applyPatch(doc, patch, index = 0) {
   const fail = (message, hint) => {
     throw new OpError('INVALID_PATCH', message, { path: '/operations/' + index, hint });
   };
+  /* only own properties are walked or replaced: an inherited key such as __proto__ or constructor would otherwise reach the
+     shared Object.prototype of the whole process */
   const locate = (pointer, create = false) => {
     const parts = parsePointer(pointer, index);
+    if (parts.includes('__proto__')) fail('"__proto__" is not allowed in ' + pointer);
     let parent = root, key = 'value';
     for (const part of parts) {
+      if (!Object.hasOwn(parent, key)) fail('Nothing at ' + pointer);
       parent = parent[key];
       key = part;
       if (parent === null || typeof parent !== 'object') fail('Nothing at ' + pointer);
       if (Array.isArray(parent) && key !== '-' && !/^(0|[1-9]\d*)$/.test(key)) fail('Array index expected in ' + pointer);
     }
-    if (!create && (key === '-' || !(key in parent))) fail('Nothing at ' + pointer);
+    if (!create && (key === '-' || !Object.hasOwn(parent, key))) fail('Nothing at ' + pointer);
     return { parent, key };
   };
   const take = pointer => {
