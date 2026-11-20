@@ -120,4 +120,4 @@ function writeJson(file, value, overwrite) {
   }
 }
 
-module.exports = { worldSchema, open, fork, reset, summary, sessions, writeJson, W, R };
+module.exports = { worldSchema, classify, open, fork, reset, summary, sessions, writeJson, W, R };

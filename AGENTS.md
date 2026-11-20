@@ -4,13 +4,29 @@ ink-studio sculpts signed-distance solids, bakes them into pixel-art Gaussian sp
 
 ## Connect
 
-In this checkout, `.mcp.json` registers the server for Claude Code. From another project:
+### As a Claude Code plugin
+
+The repository is both a plugin and a local marketplace (`.claude-plugin/`). The plugin bundles the MCP server, five skills (`scene-authoring`, `look-tuning`, `world-sim`, and the slash commands `/ink-studio:new-scene` and `/ink-studio:review`), the `ink-art-director` subagent, and a hook that validates diorama and world JSON whenever Claude writes one.
+
+```bash
+claude plugin marketplace add /absolute/path/to/ink-studio
+```
+
+```bash
+claude plugin install ink-studio@ink-studio-local
+```
+
+For a single session without installing: `claude --plugin-dir /absolute/path/to/ink-studio`. After editing the plugin, run `/reload-plugins` in a session.
+
+### As a plain MCP server
+
+Without the plugin, register just the server (use one or the other, or every tool appears twice):
 
 ```bash
 claude mcp add ink-studio -- node /absolute/path/to/ink-studio/agent/mcp-server.js
 ```
 
-Options: `--root DIR` resolves relative paths against DIR (default: working directory). `--allow-code` or `INK_AGENT_ALLOW_CODE=1` lets `scene_open` run JavaScript scene files, which execute arbitrary code. JSON dioramas never need it.
+Options: `--root DIR` resolves relative paths against DIR (default: `$CLAUDE_PROJECT_DIR`, else the working directory; absolute paths always work). `--allow-code` or `INK_AGENT_ALLOW_CODE=1` lets `scene_open` run JavaScript scene files, which execute arbitrary code. JSON dioramas never need it.
 
 Without MCP, every tool is a one-shot shell call that prints JSON (exit 0 ok, 1 op error, 2 usage):
 
