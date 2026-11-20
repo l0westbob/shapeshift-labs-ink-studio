@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { defineOp, OpError } = require('../registry.js');
-const { compact, diff, applyPatch, revisionOf } = require('../data.js');
+const { compact, diff, applyPatch, revisionOf, duplicateKeys } = require('../data.js');
 const Scenes = require('../scenes.js');
 
 const R = () => require('../../cli/render.js');
@@ -188,7 +188,7 @@ defineOp({
     additionalProperties: false
   },
   run({ scene }, ctx) {
-    let spec, dir;
+    let spec, dir, duplicates = [];
     if (scene.handle) {
       const entry = Scenes.open(scene, ctx);
       if (entry.kind !== 'diorama') return { valid: true, errors: [], warnings: [], note: 'Built-in and script scenes are code, not data' };
@@ -199,11 +199,13 @@ defineOp({
       const file = path.resolve(ctx.root ?? process.cwd(), scene.path);
       if (!file.endsWith('.json')) throw new OpError('UNSUPPORTED', 'Only .json dioramas can be validated as data', { path: '/scene/path' });
       if (!fs.existsSync(file)) throw new OpError('NOT_FOUND', 'No file at ' + file, { path: '/scene/path' });
+      const text = fs.readFileSync(file, 'utf8');
       try {
-        spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+        spec = JSON.parse(text);
       } catch (error) {
         return { valid: false, errors: [{ level: 'error', path: '', problem: 'not valid JSON: ' + error.message }], warnings: [] };
       }
+      duplicates = duplicateKeys(text);
       dir = path.dirname(file);
     } else throw new OpError('INVALID_INPUT', 'Validate takes a handle, path or spec', { path: '/scene' });
     let problems;
@@ -213,7 +215,7 @@ defineOp({
       if (error instanceof OpError) return { valid: false, errors: [{ level: 'error', path: error.path ?? '', problem: error.message }], warnings: [] };
       throw error;
     }
-    const errors = Scenes.errorsOf(problems);
+    const errors = [...duplicates, ...Scenes.errorsOf(problems)];
     return { valid: errors.length === 0, errors, warnings: problems.filter(p => p.level !== 'error') };
   }
 });
@@ -444,11 +446,12 @@ function draftEdits(entry, operations, root) {
    Editor operations need a valid scene, so a repair batch may only contain patches. */
 function repairFile(given, { operations, baseRevision, dryRun, render, metrics }, ctx) {
   const root = ctx.root ?? process.cwd(), file = path.resolve(root, given), dir = path.dirname(file);
-  const before = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const text = fs.readFileSync(file, 'utf8'), before = JSON.parse(text);
   const current = revisionOf(before);
   if (baseRevision !== undefined && baseRevision !== current)
     throw new OpError('STALE_REVISION', 'The file is at ' + current + ', not ' + baseRevision, { hint: 'reread it or drop baseRevision' });
-  const original = Scenes.problemsOf(before, Scenes.environmentFor(before, dir, root));
+  /* duplicate keys are already gone in the parsed value (the last one won); writing it back removes them from the file */
+  const original = [...duplicateKeys(text), ...Scenes.problemsOf(before, Scenes.environmentFor(before, dir, root))];
   const editorOp = operations.findIndex(op => op.op !== 'patch');
   if (editorOp >= 0)
     throw new OpError('INVALID_SCENE', 'The file does not validate yet; repair it with patch operations first', {

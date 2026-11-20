@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { OpError } = require('./registry.js');
-const { revisionOf } = require('./data.js');
+const { revisionOf, duplicateKeys } = require('./data.js');
 
 let toolkit;
 const studio = () => require('../index.js');
@@ -81,11 +81,17 @@ const problemsOf = (spec, env) => kit().KIT.diorama.check(spec, env);
 const errorsOf = problems => problems.filter(problem => problem.level === 'error');
 
 function readJson(file) {
+  let text, value;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    text = fs.readFileSync(file, 'utf8');
+    value = JSON.parse(text);
   } catch (error) {
     throw new OpError(error.code === 'ENOENT' ? 'NOT_FOUND' : 'INVALID_JSON', error.message, { path: '/scene/path' });
   }
+  /* a duplicate key parses silently (the last value wins), so the file says two things: treat it as an error to repair */
+  const duplicates = duplicateKeys(text);
+  if (duplicates.length) throw new OpError('INVALID_SCENE', 'The diorama has duplicate keys', { path: '/scene/path', details: duplicates });
+  return value;
 }
 
 /* --- sessions ------------------------------------------------------------------------------------------------------- */

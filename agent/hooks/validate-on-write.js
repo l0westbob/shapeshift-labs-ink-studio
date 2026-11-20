@@ -38,20 +38,28 @@ function classify(file) {
     return /"ink-studio\/world"|"solids"\s*:\s*\[\s*\{\s*"kind"/.test(text) ? { kind: 'broken', error: error.message } : null;
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (value.format === 'ink-studio/world') return { kind: 'world', value };
-  if (looksLikeDiorama(value)) return { kind: 'diorama', value };
+  if (value.format === 'ink-studio/world') return { kind: 'world', value, text };
+  if (looksLikeDiorama(value)) return { kind: 'diorama', value, text };
   return null;
 }
 
-/* problems in the file itself; exceptions from the tooling propagate to main() */
+/* problems in the file itself, or null when it turns out not to be ours; exceptions from the tooling propagate to main() */
 function problemsFor(file, found) {
   if (found.kind === 'broken') return ['not valid JSON: ' + found.error];
+  const content = contentProblems(file, found);
+  if (content === null) return null;
+  /* a key written twice parses silently (the last value wins), so the file still holds the mistake */
+  const duplicates = require('../data.js').duplicateKeys(found.text).map(d => (d.path || '(root)') + ': ' + d.problem);
+  return [...duplicates, ...content];
+}
+
+function contentProblems(file, found) {
   for (const method of ['log', 'info', 'warn', 'debug']) console[method] = () => {};
   const Scenes = require('../scenes.js');
   const { OpError } = require('../registry.js');
   const K = Scenes.kit().KIT;
   if (found.kind === 'diorama') {
-    if (typeof found.value.id !== 'string' && !found.value.solids.every(solid => Object.hasOwn(K.diorama.kinds, solid.kind))) return [];
+    if (typeof found.value.id !== 'string' && !found.value.solids.every(solid => Object.hasOwn(K.diorama.kinds, solid.kind))) return null;
     let env;
     try {
       env = Scenes.environmentFor(found.value, path.dirname(file));
@@ -92,7 +100,7 @@ function main() {
     process.stderr.write('ink-studio validation hook could not run: ' + error.message + '\n');
     return 1;
   }
-  if (!problems.length) return 0;
+  if (!problems?.length) return 0;
   process.stderr.write('ink-studio: ' + given + ' has ' + problems.length + ' problem(s):\n  ' + problems.slice(0, 20).join('\n  ') +
     (problems.length > 20 ? '\n  ... and ' + (problems.length - 20) + ' more' : '') +
     '\nFix them; ' + (found.kind === 'world' ? 'world_open' : 'scene_validate') + ' gives the full report.\n');

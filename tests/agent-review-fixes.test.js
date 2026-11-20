@@ -197,3 +197,38 @@ test('play pools follow the builder seed', () => {
   assert.deepEqual(sparks(3), sparks(3));
   assert.notDeepEqual(sparks(3), sparks(4));
 });
+
+test('duplicate keys are reported by validate, open and the hook, and a path edit removes them', async t => {
+  const { duplicateKeys } = require('../agent/data.js');
+  assert.deepEqual(duplicateKeys('{"a":1,"b":{"a":"x\\"a","a":2},"c":[{"k":1},{"k":2,"k":3}],"a":4}').map(d => d.path), ['b.a', 'c[1].k', 'a']);
+  assert.deepEqual(duplicateKeys(fs.readFileSync(path.join(root, 'examples', 'scene.json'), 'utf8')), []);
+
+  const dir = tempDir(t), file = path.join(dir, 'twice.json');
+  /* the typo stays in the file while a second "kind" makes it parse as a ball */
+  const text = JSON.stringify(example(), null, 2).replace('"kind": "ball",', '"kind": "bal",\n      "kind": "ball",');
+  assert.ok(text.includes('"bal"'));
+  fs.writeFileSync(file, text);
+
+  const report = ok(await call('scene_validate', { scene: { path: file } }));
+  assert.equal(report.valid, false);
+  assert.equal(report.errors[0].path, 'solids[1].kind');
+  assert.match(report.errors[0].problem, /duplicate key "kind"/);
+  const refused = fails(await call('scene_open', { scene: { path: file } }), 'INVALID_SCENE');
+  assert.equal(refused.details[0].path, 'solids[1].kind');
+
+  const hook = spawnSync(process.execPath, [path.join(root, 'agent', 'hooks', 'validate-on-write.js')], {
+    input: JSON.stringify({ tool_input: { file_path: file }, cwd: dir }), encoding: 'utf8'
+  });
+  assert.equal(hook.status, 2);
+  assert.match(hook.stderr, /duplicate key "kind"/);
+
+  const repaired = ok(await call('scene_edit', {
+    scene: { path: file }, operations: [{ op: 'patch', patch: { op: 'replace', path: '/solids/1/kind', value: 'ball' } }]
+  }));
+  assert.equal(repaired.repaired, true);
+  assert.ok(repaired.fixed.some(problem => /duplicate key/.test(problem.problem)));
+  const written = fs.readFileSync(file, 'utf8');
+  assert.equal(written.includes('"bal"'), false);
+  assert.deepEqual(duplicateKeys(written), []);
+  assert.equal(ok(await call('scene_validate', { scene: { path: file } })).valid, true);
+});

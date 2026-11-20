@@ -111,4 +111,44 @@ function applyPatch(doc, patch, index = 0) {
   return root.value;
 }
 
-module.exports = { compact, canonical, revisionOf, diff, applyPatch };
+/* keys that appear twice in one object of a JSON text. JSON.parse keeps only the last value, so a file such as
+   { "kind": "bal", ..., "kind": "ball" } parses as valid while still holding the mistake. Expects text JSON.parse accepts;
+   paths use the diorama checker's style (solids[2].kind). */
+function duplicateKeys(text, limit = 50) {
+  const found = [], stack = [];
+  const format = segments => segments.reduce((out, s) => (typeof s === 'number' ? out + '[' + s + ']' : (out ? out + '.' : '') + s), '');
+  const childSegments = () => {
+    const top = stack[stack.length - 1];
+    return top ? [...top.segments, top.type === 'object' ? top.key : top.index] : [];
+  };
+  let i = 0;
+  while (i < text.length && found.length < limit) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      const top = stack[stack.length - 1];
+      if (top?.type === 'object' && top.expectKey) {
+        const key = JSON.parse(text.slice(i, j + 1));
+        if (top.keys.has(key)) found.push({ level: 'error', path: format([...top.segments, key]), problem: 'duplicate key "' + key + '": JSON keeps only the last value', hint: 'delete the one you did not mean, or scene_edit the file by path with a patch that sets the intended value: it is rewritten without duplicates' });
+        top.keys.add(key);
+        top.key = key;
+        top.expectKey = false;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === '{') stack.push({ type: 'object', segments: childSegments(), keys: new Set(), expectKey: true });
+    else if (c === '[') stack.push({ type: 'array', segments: childSegments(), index: 0 });
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === ',') {
+      const top = stack[stack.length - 1];
+      if (top?.type === 'object') top.expectKey = true;
+      else if (top) top.index++;
+    }
+    i++;
+  }
+  return found;
+}
+
+module.exports = { compact, canonical, revisionOf, diff, applyPatch, duplicateKeys };
