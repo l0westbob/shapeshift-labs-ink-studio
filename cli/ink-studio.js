@@ -86,10 +86,12 @@ function meshScene(file) {
 /* a diorama written as data (see lab/data-shrine.json). --style puts it in another style; meshes it names are looked for beside the file */
 function dataScene(file, override, { installedPacks = false } = {}) {
   const K = lib().KIT,
-    spec = override ? { ...override } : JSON.parse(fs.readFileSync(path.resolve(file), 'utf8')),
-    dir = path.dirname(path.resolve(file)),
-    assets = {};
-  if (spec.dataInputs !== undefined)
+    source = override ?? JSON.parse(fs.readFileSync(path.resolve(file), 'utf8')),
+    bundles = K.authoring.projectBundles,
+    project = bundles && source?.format === bundles.format ? bundles.open(source) : undefined,
+    spec = project ? project.scene() : { ...source },
+    dir = path.dirname(path.resolve(file));
+  if (!project && spec.dataInputs !== undefined)
     spec.dataInputs = require('./data-inputs.js').embed(K.dataInputs, spec.dataInputs, file, shot?.dependency);
   if (opt.style) spec.style = opt.style;
   const area = areaLightsOption();
@@ -103,9 +105,13 @@ function dataScene(file, override, { installedPacks = false } = {}) {
     if (typeof preset !== 'string') die('--environment-preset expects a pack/preset ID or off');
     spec.environmentPreset = preset === 'off' ? false : preset;
   }
-  let prefabs, expanded;
+  let assets = {}, prefabs, expanded, problems, resolveSpriteAtlas;
   try {
-    if (spec.prefabLibrary !== undefined) {
+    if (project) {
+      const bindings = project.resolve(spec);
+      ({ assets, prefabs, resolveSpriteAtlas } = bindings.env);
+      problems = bindings.problems;
+    } else if (spec.prefabLibrary !== undefined) {
       if (typeof spec.prefabLibrary !== 'string' || !spec.prefabLibrary.length) throw new TypeError('Expected a prefabLibrary file path');
       const library = path.resolve(dir, spec.prefabLibrary);
       prefabs = JSON.parse(fs.readFileSync(library, 'utf8'));
@@ -116,7 +122,7 @@ function dataScene(file, override, { installedPacks = false } = {}) {
         }
       }
     }
-    expanded = K.authoring.scenePrefabs.expand(spec, { prefabs }).spec;
+    if (!project) expanded = K.authoring.scenePrefabs.expand(spec, { prefabs }).spec;
   } catch (error) {
     die(error.message);
   }
@@ -127,7 +133,7 @@ function dataScene(file, override, { installedPacks = false } = {}) {
         .find(q => fs.existsSync(q) && fs.statSync(q).isFile());
       if (f) assets[s.asset] = require('../index.js').readMesh(f);
     }
-  const problems = K.diorama.check(spec, { assets, prefabs });
+  problems ??= K.diorama.check(spec, { assets, prefabs });
   if (problems.length) console.error(K.diorama.report(problems));
   if (problems.some(p => p.level === 'error'))
     die('not built: ' + problems.filter(p => p.level === 'error').length + ' mistake(s) in ' + file);
@@ -135,9 +141,9 @@ function dataScene(file, override, { installedPacks = false } = {}) {
   if (cacheDirectory !== undefined && (typeof cacheDirectory !== 'string' || !cacheDirectory.length))
     die('--asset-cache expects a directory');
   const bakeCache = cacheDirectory && require('./bake-cache.js').open(path.resolve(cacheDirectory), require('../index.js'), K.authoring.bakeCache);
-  const descriptor=K.diorama.scene(spec,{assets,prefabs,bakeCache});
+  const descriptor=K.diorama.scene(spec,{assets,prefabs,bakeCache,resolveSpriteAtlas});
   const atlases=new Map();
-  return { ...descriptor, lookPreviewPacks:spec.assetPacks, build(seed, options = {}) {
+  return { ...descriptor, project: project?.metadata, lookPreviewPacks:spec.assetPacks, build(seed, options = {}) {
     const parameterTime = opt['parameter-time'] ?? (Number.isFinite(Number(opt.t)) ? opt.t : 0);
     const world=descriptor.build(seed, { ...options, parameterInputs: { time: Number(parameterTime), ...options.parameterInputs } });
     if (Array.isArray(world.spriteAtlases)) world.spriteAtlases=world.spriteAtlases.map(placement=>{
@@ -186,7 +192,7 @@ function build(id, seedOverride, { paint = true, parameterInputs } = {}) {
   // Load paint by scene ID so rendering the same file from another path finds its decals.
   const decalFile = path.join(paintDirectory(s.id), 'decals.json');
   shot?.dependency(decalFile);
-  const savedPaint = paint && (fs.existsSync(decalFile) ? readPaint(decalFile) : globalThis.INK_PAINT?.[s.id]);
+  const savedPaint = !s.project && paint && (fs.existsSync(decalFile) ? readPaint(decalFile) : globalThis.INK_PAINT?.[s.id]);
   globalThis.INK_DECAL_NEXT = savedPaint?.layers !== undefined || Array.isArray(savedPaint) ?
     savedPaint : savedPaint?.decals ?? null;
   const t0 = Date.now();
@@ -878,10 +884,24 @@ const CMD = {
         '  curve <family.json> [--distance n] [--text INK] [--out file.json]   sample reusable curve families',
         '  ornament <pattern.json> [--format pigment|relief|tiles] [--out file]   export a wallpaper or frieze pattern',
         '  palette plot <plot.json> [--space rgb|oklab] [--orbit degrees] [--format png|data]   render a palette in 3D',
+        '  palette extract <reference.png> [--size 32] [--alpha visible|opaque|all] [--out report.json]',
+        '  palette usage <scene> [--select JSON] [--rare-pixels 3] [--rare-share .001] [--out report.json]',
+        '  palette pairs <palette.json> [--sort distance|lightness] [--limit 12] [--scale 16] [--out directory]',
+        '  palette ramp-review [ramp.json] [--scene scene --role name] [--pixels JSON] [--out report.json]',
+        '  palette distributions <reference.png> [--scene scene | --render frame.png] [--out directory]',
+        '  palette error <scene> [--threshold .06] [--heatmap-max .20] [--region-limit 20] [--out directory]',
+        '  palette inspect <scene> --at x,y [--out report.json]   explain the palette choice at one art pixel',
         '  palette fit <fit.json> [--format png|data] [--tile]   fit two approved swatches and preview at native size',
+        '  palette dither-review <fit.json> [--out directory]   compare approved pairs and flag strong texture',
+        '  palette shimmer <scene> [--from 0 --to 3 --fps 12] [--camera-pan x,y,z --camera-orbit degrees] [--animate] [--out directory]',
+        '  palette readability <scene> [--select JSON | --plan file.json] [--directions N --times t1,t2] [--out directory]',
+        '  palette weather <scene> [--plan file.json | --select JSON --times t1,t2] [--out directory]',
+        '  palette stages <scene> [--select JSON] [--allowed JSON] [--out directory]   review paint, lighting, grade and resolve',
+        '  palette compare <scene|checkpoint> <palettes.json> [--out directory]   apply alternatives to one captured shot',
+        '  palette save-look <approved.json> [--pack pack.json] [--out pack.json]   save approved palette findings as a look',
         '  palette chart <chart.json> [--type chart] [--format png|data]   export an indexed swatch, bar or pair chart',
         '  palette lighting <source-or-draft.json> [--approve] [--out file.json]   suggest or save named lighting ramps',
-        '  palette field <field.json> [--w width --h height] [--format png|data]   render a palette field or report grayscale bands',
+        '  palette field <field.json> [--t seconds] [--w width --h height] [--format png|data]   render a palette field or report grayscale bands',
         '  palette <recipe.json> [--t seconds] [--out palette.json]   sample palette recipes, paths and animation',
         '  inspect <scene|run>         discover fields, actions, ports and entities',
         '  environment inspect <scene|run> --at x,y,z [--t seconds] [--out report.json]   explain sky and local weather',
@@ -987,6 +1007,11 @@ const CMD = {
         '  clip-sequence <id> [--handoff 0] [--out report.json]  inspect clip instances, retimed cues, and handoffs',
         '  animation-graph <graph.json> [--at seconds] [--inputs file.json] [--out report.json]  inspect poses and event responses',
         '  data-inputs <scene or catalog> [dataset] [--sample JSON --t seconds --rows --out report.json]  inspect typed source data',
+        '  randomness <recipe.json> [--samples 16 --out report.json]  inspect named authoring streams and distributions',
+        '  math-fields <field.json> [--point x,y,z --time n --integrate seconds --out report.json]  inspect procedural math fields',
+        '  render-graph <graph.json> [--w 900 --h 620 --out report.json]  inspect effect resolution and memory/work budgets',
+        '  material-controls <material.json> [--palette colors.json --out report.json]  inspect shared material controls',
+        '  light-emitters <lights.json> [--at seconds --out report.json]  inspect shaped lights and cookies',
         '  typography <type.json> [--font font.ttf --at seconds --out report.json]  inspect glyph layout and animation',
         '  camera-impulses <motion.json> [--at seconds --eye x,y,z --yaw radians --pitch radians --out report.json]  inspect camera motion',
         '  camera-rig <scene or world> [--at seconds --camera-shot ID --out report.json]  sample a shot and its clearance',
@@ -1007,6 +1032,8 @@ const CMD = {
         '    --w width --h height --still-scale 2 --t seconds --from 0 --to 2 --fps 12 --embed-config file.json',
         '  scene-replay <recording.json> --out output.png [--at seconds]   save a frame from a replay',
         '  scene-replay <recording.json> --embed --out embed.html [--embed-config file.json]   package a replay for the web',
+        '  project pack <scene.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]',
+        '  project inspect <bundle.json>   show the bundle version, scene path and retained files',
         '  environment-parity [--fixture observatory --out directory --chrome executable]  compare matched CLI and WebGL environment frames',
         '  passes <id> --channels environment --px1   export sky, fog transmittance, precipitation, reflections and foreground coverage',
         '  render|sheet|clip <id> or sim render <file> --passes environment   write environment passes beside the export',
@@ -1059,8 +1086,293 @@ const CMD = {
   },
   palette() {
     if (pos[0] === 'plot') return require('./palette-plot.js')(pos.slice(1), opt, lib(), outputFile);
-    if (pos[0] === 'fit') return require('./palette-fit.js')(pos.slice(1), opt, lib(), outputFile);
+    if (pos[0] === 'fit') return require('./palette-fit.js').fit(pos.slice(1), opt, lib(), outputFile);
+    if (pos[0] === 'dither-review') return require('./palette-fit.js').review(pos.slice(1),opt,lib(),outputFile);
+    if (pos[0] === 'save-look') {
+      if (pos.length !== 2 || Object.entries(opt).some(([key,value])=>!['pack','out'].includes(key) || typeof value !== 'string'))
+        die('Use palette save-look <approved.json> [--pack pack.json] [--out pack.json]');
+      const source = path.resolve(pos[1]), inputs = [];
+      function read(file) {
+        inputs.push(fs.statSync(file));
+        return JSON.parse(fs.readFileSync(file,'utf8'));
+      }
+      const approved = read(source);
+      for (const [field,key] of [['palette','reference'],['ramp','review'],['ramp','approved'],['dither','review']])
+        if (typeof approved?.[field]?.[key] === 'string')
+          approved[field][key] = read(path.resolve(path.dirname(source),approved[field][key]));
+      const pack = opt.pack === undefined ? undefined : JSON.parse(fs.readFileSync(path.resolve(opt.pack),'utf8'));
+      const result = lib().KIT.authoring.assetPacks.savePaletteLook(approved,pack);
+      const output = opt.out && outputFile('palette-look.json');
+      const existing = output && fs.statSync(output,{throwIfNoEntry:false});
+      if (existing && inputs.some(input=>input.dev===existing.dev && input.ino===existing.ino))
+        die('Write the pack separately from the approval and analysis reports');
+      return require('./look.js').write([JSON.stringify(result,null,2)+'\n'],output);
+    }
+    if (pos[0] === 'compare') {
+      if (pos.length !== 3 || ['out','t','cols','threshold','heatmap-max','region-limit'].some(key=>opt[key]===true))
+        die('Use palette compare <scene|checkpoint> <palettes.json> [--out directory]');
+      const [,scene,plan] = pos;
+      const palettes = JSON.parse(fs.readFileSync(path.resolve(plan),'utf8'));
+      const requested = num('t',0);
+      if (!Number.isFinite(requested)) die('Palette comparison time must be finite');
+      const snapshot = worldCLI().lookSnapshot(scene);
+      const world = snapshot ? require('./look-preview.js').override(snapshot,opt,lib()) : buildPreview(scene);
+      const t = snapshot?.lookSnapshot?.time ?? requested;
+      if (!snapshot) pose(world,t);
+      const {reference,alternatives,report,image} = require('./palette-compare.js').compareShotPalettes(world,view({
+        w:num('w',280),h:num('h',160),t,transparent:onOffOption('transparent'),palettes,columns:num('cols',3),
+        threshold:num('threshold'),heatmapMax:num('heatmap-max'),regionLimit:num('region-limit')
+      }));
+      const directory = outputFile('palette-comparison');
+      const files = {'comparison.png':image,'reference.png':reference};
+      for (const [i,{id,image,heatmap}] of alternatives.entries()) {
+        const prefix = String(i+1).padStart(2,'0')+'-'+id;
+        const artwork = prefix+'.png', error = prefix+'-error.png';
+        files[artwork] = image;
+        files[error] = heatmap;
+        report.alternatives[i].files = {artwork,error};
+      }
+      report.files = {comparison:'comparison.png',reference:'reference.png'};
+      const inputs = [scene,plan].map(file=>fs.statSync(path.resolve(file),{throwIfNoEntry:false})).filter(Boolean);
+      for (const name of [...Object.keys(files),'comparison.json']) {
+        const existing = fs.statSync(path.join(directory,name),{throwIfNoEntry:false});
+        if (existing && inputs.some(input=>input.dev===existing.dev && input.ino===existing.ino))
+          die('Choose palette comparison outputs separate from the inputs');
+      }
+      fs.mkdirSync(directory,{recursive:true});
+      for (const [name,{w,h,rgb,alpha}] of Object.entries(files)) PNG.write(path.join(directory,name),w,h,rgb,alpha);
+      fs.writeFileSync(path.join(directory,'comparison.json'),JSON.stringify(report,null,2)+'\n');
+      console.log('wrote matched palette comparison to',directory);
+      return;
+    }
+    if (pos[0] === 'stages') {
+      if (pos.length!==2 || ['select','allowed','hue-threshold','min-chroma','limit','t','out'].some(key=>opt[key]===true))
+        die('Use palette stages <scene> [--select JSON] [--allowed JSON] [--out directory]');
+      const t=num('t',0);
+      if (!Number.isFinite(t)) die('Palette stage time must be finite');
+      const world=buildPreview(pos[1]);
+      pose(world,t);
+      const {rasters,report,image}=require('./palette-stages.js').reviewPaletteStages(world,view({
+        w:num('w',240),h:num('h',150),t,transparent:onOffOption('transparent'),
+        select:opt.select===undefined ? undefined : JSON.parse(opt.select),
+        allowed:opt.allowed===undefined ? undefined : JSON.parse(opt.allowed),
+        hueThreshold:num('hue-threshold',22),minChroma:num('min-chroma',.025),limit:num('limit',12)
+      }));
+      const directory=outputFile('palette-stages'), files={comparison:'comparison.png',report:'stages.json'};
+      for (const [name,frame] of Object.entries(rasters)) if (frame) files[name]=name+'.png';
+      const input=fs.statSync(path.resolve(pos[1]),{throwIfNoEntry:false});
+      for (const name of Object.values(files)) {
+        const existing=fs.statSync(path.join(directory,name),{throwIfNoEntry:false});
+        if (existing && input && existing.dev===input.dev && existing.ino===input.ino)
+          die('Choose stage output files separate from the scene');
+      }
+      fs.mkdirSync(directory,{recursive:true});
+      for (const [key,frame] of Object.entries({...rasters,comparison:image})) {
+        if (frame) PNG.write(path.join(directory,files[key]),frame.w,frame.h,frame.rgb,frame.alpha);
+      }
+      fs.writeFileSync(path.join(directory,files.report),JSON.stringify({...report,files},null,2)+'\n');
+      console.log('wrote render-stage palette review to',directory);
+      return;
+    }
+    if (pos[0] === 'readability' || pos[0] === 'weather') {
+      const weather=pos[0]==='weather';
+      if (pos.length!==2 || ['plan','select','directions','pitches','t','times','w','h','cols','out']
+        .some(key=>opt[key]===true))
+        die('Use palette '+pos[0]+' <scene> [--select JSON | --plan file.json] [--directions N --times t1,t2] [--out directory]');
+      const world=buildPreview(pos[1]), settings=view({t:num('t',0),transparent:onOffOption('transparent')});
+      const authored=weather ? world.paletteWeatherReview : world.readabilityReview;
+      const source=opt.plan===undefined ? authored??{} : JSON.parse(fs.readFileSync(path.resolve(opt.plan),'utf8'));
+      if (!source || Object.getPrototypeOf(source)!==Object.prototype) die('Review plan needs a JSON object');
+      const plan={...source};
+      if (opt.select!==undefined) plan.subjects=[{id:'Subject',select:JSON.parse(opt.select)}];
+      if (opt.times!==undefined) {
+        plan.states=list('times').map(time=>({id:time+' s',time}));
+        if (weather && !plan.states.some(state=>state.id===plan.baseline)) delete plan.baseline;
+      }
+      if (opt.directions!==undefined || opt.pitches!==undefined) {
+        const angles=require('./sprite-atlas.js').exportViews(world,{directions:num('directions',8),yaw:settings.yaw,
+          pitch:settings.pitch,pitches:opt.pitches===undefined ? undefined : list('pitches')});
+        plan.views=angles.map(({yaw,pitch},i)=>({id:'View '+(i+1),yaw,pitch}));
+      }
+      const run=weather ? require('./palette-weather.js').reviewPaletteWeather :
+        require('./readability-review.js').reviewSubjectReadability;
+      const {image,report}=run(world,{
+        plan,view:settings,pose,width:num('w',160),height:num('h',96),columns:num('cols')
+      });
+      const directory=outputFile(weather ? 'palette-weather' : 'readability-review');
+      const files={comparison:'comparison.png',report:'review.json'};
+      const sources=[pos[1],opt.plan].filter(Boolean).map(name=>fs.statSync(path.resolve(name),{throwIfNoEntry:false}));
+      for (const name of Object.values(files)) {
+        const file=fs.statSync(path.join(directory,name),{throwIfNoEntry:false});
+        if (file && sources.some(source=>source && source.dev===file.dev && source.ino===file.ino))
+          die('Choose review output files separate from the scene and plan');
+      }
+      fs.mkdirSync(directory,{recursive:true});
+      PNG.write(path.join(directory,files.comparison),image.w,image.h,image.rgb);
+      fs.writeFileSync(path.join(directory,files.report),JSON.stringify({...report,files},null,2)+'\n');
+      console.log('wrote',weather ? 'palette weather review to' : 'subject readability review to',directory);
+      return;
+    }
+    if (pos[0] === 'shimmer') {
+      if (pos.length!==2 || ['from','to','fps','out','window','min-delta','min-coverage','w','h']
+        .some(key=>opt[key]===true) || opt.animate!==undefined && opt.animate!==true)
+        die('Use palette shimmer <scene> [--from 0 --to 3 --fps 12] [--animate] [--out directory]');
+      const world=buildPreview(pos[1]), fps=num('fps',12), directory=outputFile('palette-shimmer');
+      const playback=opt.animate && [];
+      const {image,report}=require('./palette-shimmer.js').reviewPaletteShimmer(world,{
+        from:num('from',0),to:num('to',3),fps,window:num('window',3),minDelta:num('min-delta',.025),
+        minCoverage:num('min-coverage',.8),width:num('w',160),height:num('h',96),
+        view:view({transparent:onOffOption('transparent')}),pose,camera:clipCamera(world)??undefined,
+        onFrame:playback ? frame=>playback.push(PNG.packFrame(frame)) : undefined
+      });
+      const files={comparison:'comparison.png',...(playback && {playback:'playback.png'})};
+      fs.mkdirSync(directory,{recursive:true});
+      PNG.write(path.join(directory,files.comparison),image.w,image.h,image.rgb);
+      if (playback) fs.writeFileSync(path.join(directory,files.playback),PNG.encodeAnimation(playback,fps));
+      fs.writeFileSync(path.join(directory,'review.json'),JSON.stringify({...report,files},null,2)+'\n');
+      console.log('wrote palette shimmer review to',directory);
+      return;
+    }
     if (pos[0] === 'chart') return require('./palette-chart.js')(pos.slice(1), opt, lib(), outputFile);
+    if (pos[0] === 'pairs') return require('./palette-pairs.js')(pos.slice(1),opt,lib(),outputFile);
+    if (pos[0] === 'inspect') {
+      if (pos.length !== 2 || typeof opt.at !== 'string' || !/^\d+\s*,\s*\d+$/.test(opt.at) ||
+          ['t','out'].some(key=>opt[key] === true))
+        die('Use palette inspect <scene> --at x,y [--out report.json]');
+      const t = num('t',0);
+      if (!Number.isFinite(t)) die('Palette pixel inspection time must be finite');
+      const world = buildPreview(pos[1]);
+      pose(world,t);
+      const report = require('./palette-pixel.js').inspectPalettePixel(world,
+        view({t,at:list('at'),transparent:onOffOption('transparent')}));
+      const json = JSON.stringify(report,null,2)+'\n';
+      if (!opt.out) return process.stdout.write(json);
+      const file = outputFile('palette-pixel.json');
+      if (file === path.resolve(pos[1])) die('Choose a report path separate from the scene');
+      fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.writeFileSync(file,json);
+      return;
+    }
+    if (pos[0] === 'error') {
+      if (pos.length !== 2 || ['threshold','heatmap-max','region-limit','t','out'].some(key=>opt[key] === true))
+        die('Use palette error <scene> [--threshold .06] [--heatmap-max .20] [--region-limit 20] [--out directory]');
+      const t = num('t',0);
+      if (!Number.isFinite(t)) die('Palette error review time must be finite');
+      const world = buildPreview(pos[1]);
+      pose(world,t);
+      const result = require('./palette-error.js').reviewQuantizationError(world,view({ t,
+        transparent:onOffOption('transparent'), threshold:num('threshold',.06),
+        heatmapMax:num('heatmap-max',.20),regionLimit:num('region-limit',20) }));
+      const directory = outputFile('palette-error');
+      const files = Object.fromEntries(['graded','resolved','heatmap'].map(key=>[key,key+'.png']));
+      fs.mkdirSync(directory,{recursive:true});
+      for (const [key,name] of Object.entries(files)) {
+        const {w,h,rgb,alpha} = result[key];
+        PNG.write(path.join(directory,name),w,h,rgb,alpha);
+      }
+      fs.writeFileSync(path.join(directory,'error.json'),JSON.stringify({...result.report,files},null,2)+'\n');
+      console.log('wrote palette error review to',directory);
+      return;
+    }
+    if (pos[0] === 'distributions') {
+      const scene=opt.scene, render=opt.render;
+      if (pos.length!==2 || Boolean(scene)===Boolean(render) ||
+          ['scene','render','settings','bins','alpha','out','t'].some(key=>opt[key]===true))
+        die('Use palette distributions <reference.png> [--scene scene | --render frame.png] [--out directory]');
+      const source=path.resolve(pos[1]), directory=outputFile('palette-distributions');
+      const files={report:path.join(directory,'distributions.json'),preview:path.join(directory,'comparison.png')};
+      const inputs=[source,render ?? scene].map(name=>fs.statSync(path.resolve(name),{bigint:true,throwIfNoEntry:false}));
+      for (const file of Object.values(files)) {
+        const prior=fs.statSync(file,{bigint:true,throwIfNoEntry:false});
+        if (prior && inputs.some(input=>input && input.dev===prior.dev && input.ino===prior.ino))
+          die('Choose output files separate from the reference and render inputs');
+      }
+      const settings=opt.settings===undefined ? {} : JSON.parse(fs.readFileSync(path.resolve(opt.settings),'utf8'));
+      if (!settings || typeof settings!=='object' || Array.isArray(settings)) die('Palette distribution settings need a JSON object');
+      const analysis={...settings,...(opt.bins!==undefined && {bins:num('bins')}),...(opt.alpha!==undefined && {alpha:opt.alpha})};
+      let frame=render, shot;
+      if (scene) {
+        const t=num('t',0);
+        if (!Number.isFinite(t)) die('Palette distribution time must be finite');
+        const world=buildPreview(scene);
+        pose(world,t);
+        frame=R.render(world,view({t,transparent:onOffOption('transparent')}));
+        shot={scene:world.id ?? scene,time:t,pixelSize:frame.px};
+      }
+      const {report,image}=require('./palette-distributions.js').comparePaletteDistributions(source,frame,analysis);
+      if (shot) report.studio.shot=shot;
+      report.preview={file:'comparison.png',width:image.w,height:image.h};
+      fs.mkdirSync(directory,{recursive:true});
+      PNG.write(files.preview,image.w,image.h,image.rgb);
+      fs.writeFileSync(files.report,JSON.stringify(report,null,2)+'\n');
+      console.log('wrote',files.preview,'and',files.report);
+      return;
+    }
+    if (pos[0] === 'ramp-review') {
+      const scene = opt.scene, role = opt.role;
+      if (pos.length>2 || (!pos[1] && (!scene || !role)) || (role && (!scene || pos[1])) ||
+          (opt.pixels !== undefined && !scene) ||
+          ['scene','role','pixels','positions','direction','max-deviation','max-gap','reversal-tolerance','out','t']
+            .some(key=>opt[key]===true))
+        die('Use palette ramp-review [ramp.json] [--scene scene --role name] [--pixels JSON] [--out report.json]');
+      const source = pos[1] && path.resolve(pos[1]);
+      const input = source ? JSON.parse(fs.readFileSync(source,'utf8')) : {};
+      const definition = Array.isArray(input) ? {stops:input} : input;
+      const settings = { ...definition, ...(opt.positions !== undefined && {positions:JSON.parse(opt.positions)}),
+        ...(opt.direction !== undefined && {direction:opt.direction}),
+        ...(opt['max-deviation'] !== undefined && {maxDeviation:num('max-deviation')}),
+        ...(opt['max-gap'] !== undefined && {maxGap:num('max-gap')}),
+        ...(opt['reversal-tolerance'] !== undefined && {reversalTolerance:num('reversal-tolerance')}) };
+      let report;
+      if (scene) {
+        const t = num('t',0);
+        if (!Number.isFinite(t)) die('Ramp review time must be finite');
+        const world = buildPreview(scene);
+        pose(world,t);
+        const pixels = opt.pixels === undefined ? undefined : JSON.parse(opt.pixels);
+        report = require('./ramp-review.js').reviewRampShot(world,view({ ...settings,role,pixels,t,
+          transparent:onOffOption('transparent') }));
+      } else report = lib().KIT.palette.reviewRamp(settings);
+      const json = JSON.stringify(report,null,2)+'\n';
+      if (!opt.out) return process.stdout.write(json);
+      const file = outputFile('ramp-review.json');
+      if (file === source || scene && file === path.resolve(scene)) die('Choose an output separate from the ramp and scene inputs');
+      fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.writeFileSync(file,json);
+      return;
+    }
+    if (pos[0] === 'usage') {
+      if (pos.length !== 2 || ['select','rare-pixels','rare-share','t','out'].some(key=>opt[key] === true))
+        die('Use palette usage <scene> [--select JSON] [--rare-pixels 3] [--rare-share .001] [--out report.json]');
+      const t = num('t',0);
+      if (!Number.isFinite(t)) die('Palette usage time must be finite');
+      const select = opt.select === undefined ? undefined : JSON.parse(opt.select);
+      const world = buildPreview(pos[1]);
+      pose(world,t);
+      const report = require('./palette-usage.js').paletteUsage(world,view({t,select,transparent:onOffOption('transparent'),
+        rarePixels:num('rare-pixels',3),rareShare:num('rare-share',.001)}));
+      const json = JSON.stringify(report,null,2)+'\n';
+      if (!opt.out) return process.stdout.write(json);
+      const file = outputFile('palette-usage.json');
+      fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.writeFileSync(file,json);
+      return;
+    }
+    if (pos[0] === 'extract') {
+      if (pos.length !== 2 || Object.entries(opt).some(([key,value])=>!['size','alpha','out'].includes(key) || value === true))
+        die('Use palette extract <reference.png> [--size 32] [--alpha visible|opaque|all] [--out report.json]');
+      const source = path.resolve(pos[1]);
+      const report = require('../index.js').readReferencePalette(source,{size:num('size',32),alpha:opt.alpha});
+      const json = JSON.stringify(report,null,2)+'\n';
+      if (!opt.out) return process.stdout.write(json);
+      const file = outputFile('reference-palette.json');
+      const input = fs.statSync(source), output = fs.statSync(file,{throwIfNoEntry:false});
+      if (output && input.dev === output.dev && input.ino === output.ino)
+        die('Write the palette report to a separate file from the reference image');
+      fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.writeFileSync(file,json);
+      return;
+    }
     if (pos[0] === 'lighting') {
       if (pos.length !== 2 || (opt.approve !== undefined && opt.approve !== true) || opt.out === true)
         die('Use palette lighting <source-or-draft.json> [--approve] [--out file.json]');
@@ -1075,8 +1387,8 @@ const CMD = {
       return;
     }
     if (pos[0] === 'field') {
-      if (pos.length !== 2 || ['w', 'h', 'saturation', 'view', 'out', 'format'].some(key => opt[key] === true))
-        die('Use palette field <field.json> [--saturation 0–1] [--view nearest|error|boundary] [--format png|data] [--w width --h height --out file]');
+      if (pos.length !== 2 || ['t', 'w', 'h', 'saturation', 'view', 'out', 'format'].some(key => opt[key] === true))
+        die('Use palette field <field.json> [--t seconds] [--saturation 0–1] [--view nearest|error|boundary] [--format png|data] [--w width --h height --out file]');
       const input = JSON.parse(fs.readFileSync(path.resolve(pos[1]), 'utf8'));
       if (!input || Array.isArray(input) || typeof input !== 'object') die('A palette field needs a JSON object');
       const { type = 'hue-brightness', ...definition } = input;
@@ -1092,9 +1404,12 @@ const CMD = {
       const polar = type === 'polar', api = lib().KIT.palette;
       const compile = type === 'hue-brightness' ? api.hueBrightness : api[type];
       const field = ramp ? api.ramp({type,...definition}) : chroma ? api.chromaField({type,...definition}) : compile(definition);
+      const time = num('t',0);
+      if (!Number.isFinite(time)) die('Palette field time must be finite');
+      const current = field.frame?.(time) ?? field;
       const format = opt.format ?? 'png', width = num('w', polar ? 128 : 192);
       if (format === 'data' && type === 'grayscale') {
-        const json = JSON.stringify(field.report(width),null,2)+'\n';
+        const json = JSON.stringify(current.report(width),null,2)+'\n';
         if (!opt.out) { process.stdout.write(json); return; }
         const file = outputFile('grayscale-ramp.json');
         fs.mkdirSync(path.dirname(file),{recursive:true});
@@ -1102,7 +1417,7 @@ const CMD = {
         return;
       }
       if (format !== 'png') die('Palette fields use PNG, or data for a grayscale report');
-      const image = field.raster(width, num('h', polar ? 128 : ramp ? 32 : 96));
+      const image = current.raster(width, num('h', polar ? 128 : ramp ? 32 : 96));
       const name = ramp ? type+'-ramp' : chroma ? type+'-field' : polar ? 'polar-colour' : type === 'coverage' ? 'palette-coverage' : 'hue-brightness';
       save(name+'.png',image,image.alpha);
       return;
@@ -1659,6 +1974,21 @@ const CMD = {
   timeline() {
     return worldCLI().inspectTimeline(pos[0]);
   },
+  'randomness'() {
+    return require('./randomness.js')(pos,opt,lib());
+  },
+  'math-fields'() {
+    return require('./math-fields.js')(pos,opt,lib());
+  },
+  'render-graph'() {
+    return require('./render-graph-plan.js')(pos,opt,lib());
+  },
+  'material-controls'() {
+    return require('./material-controls.js')(pos,opt,lib());
+  },
+  'light-emitters'() {
+    return require('./light-emitters.js')(pos,opt,lib());
+  },
   typography() {
     return require('./typography.js')(pos,opt,lib());
   },
@@ -1822,6 +2152,20 @@ const CMD = {
       require('./asset-files.js').write(file, frame.png);
     }
     console.log('wrote', file);
+  },
+  project() {
+    const [mode, input] = pos, api = require('./project-bundle.js');
+    if (pos.length !== 2 || !['pack', 'inspect'].includes(mode))
+      die('Use project pack <scene.json> --out <bundle.json> or project inspect <bundle.json>');
+    if (mode === 'inspect') {
+      const project = api.readProjectBundle(input), { format, version, attachments } = project.snapshot();
+      process.stdout.write(JSON.stringify({ format, version, ...project.metadata, files: project.files(), attachments }, null, 2) + '\n');
+      return;
+    }
+    if ([opt.root, opt.revision].includes(true)) die('--root and --revision need values');
+    const { file, project } = api.packProject(input, { out: opt.out, root: opt.root, revision: num('revision', 1),
+      assetPack: opt['asset-pack'], paint: opt.paint, attachments: opt.attachments });
+    console.log('wrote', file, project.files().length, 'file(s)');
   },
   /* the ramps a diorama is shaded on, most used first, and what kind each is: one hue darker and lighter, or turning as it darkens.
      For a one-hue ramp a turning one made from the same palette is offered (the diorama is not changed). */

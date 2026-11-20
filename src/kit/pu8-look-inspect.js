@@ -5,7 +5,7 @@
   const rgbLayer = type => ['colorCurve', 'colorLut', 'colorStack', 'projected'].includes(type);
   const swatch = value => typeof value === 'string' && /^#[\da-f]{6}$/i.test(value);
   const paletteReference = value => typeof value === 'number' || typeof value === 'string' && !swatch(value);
-  const paletteSwatches = policy => [...(policy?.palette ?? []), ...(policy?.reserved ?? []),
+  const paletteSwatches = policy => [...(policy?.palette ?? []), ...PixelLook.reserveEntries(policy?.reserved ?? []).map(row => row.color),
     ...(Array.isArray(policy?.dither?.pairs) ? policy.dither.pairs.flatMap(rule => rule?.colors ?? []) : [])];
   const lutInfo = lut => {
     const { data, ...info } = ColorLUT.normalize(lut);
@@ -45,6 +45,7 @@
     }
     for (const item of [remap, ...(stack?.steps ?? []).map(step => step.remap)]) if (item) {
       for (const value of [...(item.protect ?? []), ...(item.rules ?? []).map(rule => rule.from)]) add('swatch', value);
+      for (const { to } of item.rules ?? []) if (typeof to === 'string' && !swatch(to)) add('swatch', to);
     }
     if (palette?.palette === undefined && (palette?.dither || palette?.reserved)) add('scene-palette');
     for (const value of paletteSwatches(palette))
@@ -53,11 +54,12 @@
   }
 
   function definitionInfo(definition, params) {
-    const { assetId, stack, lut, palette, mask, driver, type, source, remap, curves, tone } = definition;
+    const { assetId, stack, lut, palette, mask, driver, type, source, remap, curves, tone, lightingRamp } = definition;
     return { ...(assetId && { asset: assetId }), ...(stack && { stack: stackInfo(stack) }),
       ...(lut && { lut: lutInfo(lut) }), ...(palette && { palette }), mask: maskInfo(mask),
       ...(type && { type }), ...(source && { source }), ...(remap && { remap }),
       ...(curves && { curves }), ...(tone && { tone }),
+      ...(lightingRamp && { lightingRamp }),
       ...(params && { parameters: params }), ...(driver && { inputs: driver.inputs }), dependencies: dependencies(definition) };
   }
 
@@ -119,9 +121,9 @@
           matchedTargets: matched.map(({ target, count }) => ({ ...target, count })) });
       });
     }
-    function staged(path, entries, eligible, surface) {
+    function staged(path, entries, eligible, surface, localContext = context) {
       rulesAt(path, entries, 64, (at, rule) => {
-        if (check(at, () => RenderStages.prepare([rule], context)))
+        if (check(at, () => RenderStages.prepare([rule], localContext)))
           add(at, rule.stage, rule, eligible, { explicit: true, surface });
       });
     }
@@ -179,14 +181,17 @@
     for (const [i, { settings }] of (world.surfaces ?? []).entries()) {
       const surface = i + 1, eligible = bySurface.get(surface) ?? [];
       const base = 'surfaces[' + i + ']';
-      staged(base + '.renderStages', settings.renderStages, eligible, surface);
-      const layers = Object.entries(settings.layers ?? {}).filter(([, layer]) => rgbLayer(layer?.type));
+      const roles = check(base + '.paletteRoles', () => PixelLook.bindRoles(world.pal, world.paletteRoles, settings.paletteRoles));
+      if (!roles) continue;
+      staged(base + '.renderStages', settings.renderStages, eligible, surface, { ...context, roles });
+      const layers = Object.entries(settings.layers ?? {}).filter(([id, layer]) => rgbLayer(layer?.type) ||
+        (id === 'lookAssetRamp' && settings.lookAssetId && layer?.lightingRamp));
       if (!layers.length && settings.paletteConstraint === undefined) continue;
       check(base, () => SurfaceLook.prepare(settings, world.pal, undefined, world.surfaceEffects, {
         paletteRoles: world.paletteRoles, blueNoise: context.blueNoise
       }));
       for (const [id, layer] of layers) add(base + '.layers.' + id, 'lit',
-        { ...layer, assetId: id === 'lookAsset' ? settings.lookAssetId : undefined }, eligible, { mode: 'surface', surface });
+        { ...layer, assetId: ['lookAsset','lookAssetRamp'].includes(id) ? settings.lookAssetId : undefined }, eligible, { mode: 'surface', surface });
       if (settings.paletteConstraint !== undefined) {
         const { stack, mask, assetId = settings.lookAssetId, ...palette } = settings.paletteConstraint;
         add(base + '.paletteConstraint', 'palette', { stack, mask, assetId, palette }, eligible, { mode: 'surface', surface });
@@ -208,18 +213,21 @@
       });
     }
     if (palette && !externalPalette) {
-      for (const name of ['palette', 'reserved']) if (palette[name] !== undefined &&
-        (!Array.isArray(palette[name]) || palette[name].length > 48 || palette[name].some(value =>
+      if (palette.palette !== undefined &&
+        (!Array.isArray(palette.palette) || palette.palette.length > 48 || Array.from(palette.palette).some(value =>
           !(typeof value === 'string' && value.trim() || Number.isSafeInteger(value) && value >= 0 ||
-            Array.isArray(value) && value.length === 3 && value.every(n => Number.isFinite(n) && n >= 0 && n <= 1)))))
-        throw new TypeError('Invalid native ' + name + ' swatches');
+            Array.isArray(value) && value.length === 3 && Array.from(value).every(n => Number.isFinite(n) && n >= 0 && n <= 1)))))
+        throw new TypeError('Invalid native palette swatches');
+      if (palette.reserved !== undefined) PixelLook.reserveEntries(palette.reserved);
       const contextDependent = !palette.palette || paletteSwatches(palette).some(paletteReference);
       PixelLook.preparePalette(contextDependent ? { ...palette, palette: ['#000000'], reserved: [] } : palette,
         { blueNoise: K.procedural.materials.blueNoise, deferDitherColors: contextDependent, validateOnly: true });
     }
     SplatEffects.prepareMask(mask, undefined, { validateOnly: true });
     const issues = [];
-    if (stage !== undefined && renderer === 'webgl')
+    if (definition.lightingRamp && renderer === 'webgl')
+      issues.push({ code: 'unsupported-renderer', message: 'webgl does not evaluate material lighting ramps' });
+    else if (stage !== undefined && renderer === 'webgl')
       issues.push({ code: 'unsupported-renderer', message: 'webgl does not evaluate explicit ' + stage + ' stages' });
     else if (mask && renderer === 'webgl')
       issues.push({ code: 'unsupported-renderer', message: 'webgl does not evaluate spatial look masks' });

@@ -35,12 +35,14 @@ const RenderStages = (() => {
     return { order, weight };
   }
 
-  function albedo(value, palette) {
+  function albedo(value, palette, roles) {
     if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return parseInt(value.slice(1), 16);
     if (Array.isArray(value) && value.length === 3 && Array.from(value).every(n => Number.isFinite(n) && n >= 0 && n <= 1))
       return pack(value);
     if (Number.isSafeInteger(value) && value >= 0 && Number.isSafeInteger(palette?.[value])) return palette[value];
-    throw new TypeError('Material albedo must be a palette index, #rrggbb or normalized RGB triple');
+    if (typeof value === 'string' && value && !value.startsWith('#') && palette)
+      return pixels.roleColor(value, palette, roles);
+    throw new TypeError('Material albedo must be a palette role, palette index, #rrggbb or normalized RGB triple');
   }
 
   function prepare(entries, options = {}) {
@@ -76,7 +78,7 @@ const RenderStages = (() => {
         ...(options.surface && { scope: 'surface' }),
         assetId: entry.assetId,
         stack: usePalette ? null : stacks.prepare({ ...entry.stack, amount: 1 }, {
-          resolveColor: value => unpack(albedo(value, options.palette))
+          resolveColor: value => unpack(albedo(value, options.palette, options.roles))
         }),
         palette: usePalette ? pixels.preparePalette(entry.palette, options) : null
       };
@@ -102,7 +104,8 @@ const RenderStages = (() => {
     const palettes = [...new Set(rules.flatMap(rule => rule.palette?.packed ?? []))];
     return Object.freeze({ matching, palettes, transform(target) {
       const layers = matching(target);
-      if (layers.length) return (rgb, visit) => apply(layers, rgb, undefined, visit).map(value => Math.max(0, Math.min(1, value)));
+      if (layers.length) return (rgb, visit, inspect) =>
+        apply(layers, rgb, undefined, visit, inspect).map(value => Math.max(0, Math.min(1, value)));
     } });
   }
 
@@ -113,7 +116,9 @@ const RenderStages = (() => {
         !world.surfaces?.some(({ settings }) => settings.renderStages !== undefined && settings.renderStages !== false)) return null;
     const context = { palette: world.pal, roles: world.paletteRoles, context: world.surfaceEffects, ...options };
     const scene = prepare(entries, context);
-    const surfaces = world.surfaces?.map(({ settings }) => prepare(settings.renderStages, { ...context, surface: true })) ?? [];
+    const surfaces = world.surfaces?.map(({ settings }) => settings.renderStages === undefined || settings.renderStages === false
+      ? [] : prepare(settings.renderStages, { ...context, roles: pixels.bindRoles(context.palette, context.roles, settings.paletteRoles),
+        surface: true })) ?? [];
     const rules = [...scene, ...surfaces.flat()];
     if (!rules.length && !paint) return null;
     const all = rules.filter(rule => !rule.disabled);
@@ -168,10 +173,11 @@ const RenderStages = (() => {
     };
   }
 
-  function evaluate(rules, rgb, sample, x, y, contributions, visit, anchorAt, placement) {
+  function evaluate(rules, rgb, sample, x, y, contributions, visit, anchorAt, placement, skipPalettes, inspect) {
     if (!rules) return rgb;
     let result = rgb;
     for (const rule of rules) {
+      if (skipPalettes && rule.palette) continue;
       const maskWeight = coverage(rule, sample);
       const amount = rule.weight * rule.stackAmount * (maskWeight ?? 0);
       const input = result;
@@ -183,7 +189,10 @@ const RenderStages = (() => {
         const [dx, dy] = anchor ? anchorAt ? anchorAt(anchor) :
           stability.sampleCoordinates(anchor, sample, x, y) : [x, y];
         const site = rule.palette.tuning && (placement?.() ?? { pixel: [x, y], sample });
-        transformed = result = rule.palette.swatches[rule.palette.index(input, dx, dy, dither, site)];
+        const trace = inspect && {};
+        const index = rule.palette.index(input, dx, dy, dither, site, trace);
+        transformed = result = rule.palette.swatches[index];
+        inspect?.(rule,input,index,trace,amount);
       } else if (applied) {
         transformed = rule.stack.sample(input);
         result = amount === 1 ? transformed : transformed.map((n, i) => input[i] + (n - input[i]) * amount);
@@ -196,8 +205,8 @@ const RenderStages = (() => {
     return result;
   }
 
-  function apply(rules, rgb, sample, visit) {
-    return evaluate(rules, rgb, sample, undefined, undefined, undefined, visit);
+  function apply(rules, rgb, sample, visit, inspect) {
+    return evaluate(rules, rgb, sample, undefined, undefined, undefined, visit, undefined, undefined, false, inspect);
   }
 
   function trace(rules, rgb, sample, pixel = [0, 0]) {
@@ -207,9 +216,9 @@ const RenderStages = (() => {
     return { rgb: output, contributions };
   }
 
-  function material(rules, shaded, reference, sample, contributions, visit, paintedAlbedo) {
+  function material(rules, shaded, reference, sample, contributions, visit, paintedAlbedo, inspect) {
     const base = reference === undefined ? shaded : unpack(reference);
-    const painted = evaluate(rules, base, sample, undefined, undefined, contributions, visit);
+    const painted = evaluate(rules, base, sample, undefined, undefined, contributions, visit, undefined, undefined, false, inspect);
     if (paintedAlbedo) for (let i=0;i<3;i++) paintedAlbedo[i] = painted[i];
     return reference === undefined ? painted : repaint(shaded,base,painted);
   }
@@ -231,7 +240,7 @@ const RenderStages = (() => {
     return evaluate(rules, rgb, sample, x, y);
   }
 
-  function finish(frame, plan, passes, time, visitPixel, audit, ditherAt, stable) {
+  function finish(frame, plan, passes, time, visitPixel, audit, ditherAt, stable, beforePalette, inspect, frameGrade) {
     const { w, h, rgb } = frame;
     const swatches = new Map(plan.outputPalettes.map((color, i) => [color, i]));
     const use = new Uint32Array(swatches.size);
@@ -240,6 +249,8 @@ const RenderStages = (() => {
       const rules = plan.at(owner);
       const offset = p * 3;
       if (!rules.frame && !rules.palette) {
+        if (beforePalette) beforePalette.set(rgb.subarray(offset, offset + 3), offset);
+        if (frameGrade) frameGrade.set(rgb.subarray(offset,offset+3),offset);
         const index = swatches.get(rgb[offset] * 65536 + rgb[offset + 1] * 256 + rgb[offset + 2]);
         if (index !== undefined) use[index]++;
         continue;
@@ -256,8 +267,15 @@ const RenderStages = (() => {
       const [dx,dy] = palette && ditherAt ? ditherAt(x,y) : [x,y];
       const anchorAt = plan.anchorSpaces?.size ? anchor => stability.ditherCoordinates(null, passes, p, x, y, anchor) : undefined;
       const placement = () => stability.placement(stable, passes, p, x, y, time);
-      const graded = evaluate(rules.frame, original, sample, dx, dy, undefined, visit, anchorAt, placement);
-      const color = evaluate(rules.palette, graded, sample, dx, dy, undefined, visit, anchorAt, placement);
+      const record = inspect?.pixel === p ? inspect.stage : undefined;
+      const graded = evaluate(rules.frame, original, sample, dx, dy, undefined, visit, anchorAt, placement, false, record);
+      if (frameGrade) for (let k=0;k<3;k++) frameGrade[offset+k]=byte(graded[k]);
+      if (beforePalette) {
+        const reference = rules.frame?.some(rule => rule.palette) ?
+          evaluate(rules.frame, original, sample, dx, dy, undefined, undefined, undefined, undefined, true) : graded;
+        for (let k = 0; k < 3; k++) beforePalette[offset + k] = byte(reference[k]);
+      }
+      const color = evaluate(rules.palette, graded, sample, dx, dy, undefined, visit, anchorAt, placement, false, record);
       if (audit) audit.pixel('frame', p, color[0], color[1], color[2]);
       const index = swatches.get(pack(color));
       if (index !== undefined) use[index]++;

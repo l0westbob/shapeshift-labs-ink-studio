@@ -70,7 +70,8 @@ function override(world, opt, kit) {
     const surfaces = world.surfaces?.map(({ settings, ...surface }) => {
       const { renderStages, paletteConstraint, layers, ...other } = settings;
       return { ...surface, settings: { ...other, ...(layers && {
-        layers: Object.fromEntries(Object.entries(layers).filter(([, layer]) => !colorLayer(layer)))
+        layers: Object.fromEntries(Object.entries(layers).filter(([id, layer]) =>
+          !colorLayer(layer) && (id !== 'lookAssetRamp' || !settings.lookAssetId)))
       }) } };
     });
     world.look = replaceSceneLook(world.look);

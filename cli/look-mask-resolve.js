@@ -3,8 +3,9 @@ const ArtStability = require('../src/art-stability.js');
 const { ditherFootprint } = require('./dither-footprint.js');
 const { sampleFrames } = require('./art-passes.js');
 const { surfacePoint } = require('./scene-optics.js');
+const { policyChoice } = require('./palette-pixel.js');
 
-function createMaskResolve(world, grid, overlay, policies, grade, visit) {
+function createMaskResolve(world, grid, overlay, policies, grade, visit, inspect) {
   const { w, h, time, x, y, z, depth, rayAt, span, ditherPixelStep } = grid;
   const sample = sampleFrames(world, time), frames = new Map();
   const scene = Array.from(world.pal, color => [color >> 16, color >> 8 & 255, color & 255].map(n => n / 255));
@@ -28,7 +29,11 @@ function createMaskResolve(world, grid, overlay, policies, grade, visit) {
     const out = (h - 1 - py) * w + px;
     weights[out] = amount;
     const [ax, ay] = policy.anchor ? ArtStability.sampleCoordinates(policy.anchor, site, px, h - 1 - py) : [dx, dy];
-    colors[out] = policy.packed[PixelLook.paletteIndex(policy, [r, g, b], ax, ay, { grade, scene, placement: { pixel: [px, h - 1 - py], inherited, sample: site } })];
+    const trace = inspect?.pixel === out ? {} : undefined, rgb = [r,g,b];
+    const slot = PixelLook.paletteIndex(policy, rgb, ax, ay, { grade, scene, trace,
+      placement: { pixel: [px, h - 1 - py], inherited, sample: site } });
+    colors[out] = policy.packed[slot];
+    if (trace) policyChoice(inspect.mask,policy,rgb,slot,{...trace,blended:amount<1},amount,{stage:'mask'});
   }
   return { record, output: { colors, weights } };
 }

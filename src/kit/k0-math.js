@@ -1,12 +1,15 @@
 // KIT: the lab's shared modules. Everything hangs off one name so nothing here can collide with the game's own code.
 // k0-math: vectors, 3x3 matrices, easing, keyed values, springs.
 const KIT = {};
+KIT.material = MaterialControls;
 KIT.detailBudgets = DetailBudgets;
 KIT.passQuality = PassQuality;
 KIT.renderContract = RenderContract;
 KIT.shadowArt = ShadowArt;
 KIT.splatFrames = SplatFrames;
 KIT.splatRelighting = SplatRelighting;
+KIT.areaLights = AreaLights;
+KIT.lightCookies = LightCookies;
 (function (K) {
   const V = (K.V = {
     add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],

@@ -111,6 +111,7 @@ function select(source, options, authoring, report) {
     if (Object.keys(look.params).length) note(report, 'parameterized', 'The look was evaluated with its selected parameter values.');
     for (const key of ['stage', 'mask', 'order', 'weight']) if (bound[key] !== undefined)
       note(report, 'look-' + key, 'The external format omits the look ' + key + '.');
+    if (bound.lightingRamp) note(report, 'material-lighting-ramp', 'The external format omits the material lighting ramp.');
   }
   return { ...bound, label: look.label };
 }
@@ -248,7 +249,7 @@ function toPalette(look, options, format, readReference, report) {
     const ref = reference?.rows.map(row => row.color);
     if (palette === undefined && !ref) throw new TypeError('A scene-dependent palette needs --swatches');
     const { entries, rounded } = palette === undefined ? { entries: ref, rounded: 0 } : Palette.colors(palette, { reference: ref });
-    const extra = reserved?.length ? Palette.colors(reserved, { reference: ref }) : { entries: [], rounded: 0 };
+    const extra = reserved?.length ? Palette.colors(PixelLook.reserveEntries(reserved).map(row => row.color), { reference: ref }) : { entries: [], rounded: 0 };
     for (const color of extra.entries) if (!entries.includes(color)) entries.push(color);
     if (look.stack) note(report, 'omitted-stack', 'The file contains the authored palette. Use --swatches to sample the color stack.');
     if (reserved?.length || dither !== undefined || source === 'graded' || match && match !== 'rgb')
@@ -383,6 +384,8 @@ function sample(file, options, kit) {
   const authoring = kit.KIT.authoring;
   const source = read(file, authoring.assetPacks);
   const look = select(source, options, authoring);
+  if (look.lightingRamp && !look.stack && !look.palette)
+    throw new TypeError('Sample a lighting ramp with a material lookAsset in a rendered scene');
   const reference = bakeReference(look.stack, options.swatches ? readReference(options.swatches, authoring.assetPacks) : undefined);
   return require('./look-sample.js')({ file, options, source: source.source, look, reference, kit, report, compile });
 }
@@ -411,4 +414,4 @@ async function bake(file, options, kit) {
   await write([JSON.stringify(result.bundle) + '\n'], options.out);
 }
 
-module.exports = { run, isSource, inspectSource, assertValid, report, sample, bake };
+module.exports = { run, isSource, inspectSource, assertValid, report, sample, bake, write };

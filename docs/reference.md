@@ -792,6 +792,8 @@ The CLI and Node `render()` use the CPU renderer. Use the [browser renderer](bro
 | `export-layers <scene>` | Export transparent color, depth, normals, object IDs, and material mattes on one grid. |
 | `export-scene <scene> --out directory` | Publish a high-resolution still, loop and PNG sequence, replay recording, and web embed. |
 | `scene-replay <recording> --out frame.png` | Sample a recording or regenerate its web embed with `--embed`. |
+| `project pack <scene.json> --out project.json` | Package an editable diorama and its dependencies for the editor, browser, and CLI. |
+| `project inspect <project.json>` | Show project revisions, toolkit version, and retained files. |
 | `atlas <scene> --directions 8` | Export an RGBA atlas with registered pivots and optional relighting maps. |
 | `pose-review <scene> --directions 8` | Render named poses and breakdowns as color and silhouette tiles at sprite resolution. |
 | `motion-review <scene> [--finding kind-or-id]` | Report motion findings, focus ranges, and evidence from a scene that exposes Motion Review. |
@@ -920,6 +922,8 @@ shows the core APIs and a runnable pool scene. The [depth import guide](depth-ma
 ## Embedding and custom scene collections
 
 Use [scene publishing](scene-publishing.md) to export a self-contained web player for rendered scene frames.
+
+Use a [portable project bundle](project-bundles.md) to carry an editable diorama and its local dependencies into Node, WebGL, or the CLI.
 
 The browser-facing toolkit sources are plain scripts concatenated in dependency order. Generate a bundle from Node:
 
@@ -1093,6 +1097,16 @@ Named targets can drive shared brackets, labels, glyph ripples, depth visibility
 
 Camera rigs support dependency-free dolly zoom, tracked orbit, keyed crane moves, subject-height framing, composition, focus-driven lens breathing and smooth handoff to free controls. Shared `CameraLens` math unifies browser/headless FOV and millimeter lenses. See [cinematic camera rigs](camera-rigs.md#cinematic-moves-and-live-control) and [Lantern passage](../examples/cinematic-camera.html).
 
+`KIT.lightEmitters` extends shaped area lights with lines, RGB/procedural cookies, animated sources and browser illumination of splats, textured surfaces and lit haze. The headless renderer reuses its existing area/spot systems; browser receiver and fog caches are reusable across camera movement. See [additional light emitters](light-emitters.md) and [The prism court](../examples/light-emitters.html).
+
 `Typography` / `KIT.typography` adds dependency-free TrueType and portable outlines, kerning, transported curve text, per-glyph animation, contour write-on, seeded scrambling, native SDF extrusion, live bitmap sprites and existing surface materialisation. See [typography](typography.md) and [The shape of words](../examples/typography.html). Inspect the same frame data with `ink-studio typography type.json --at .6`.
 
 `CameraImpulses` / `KIT.cameraImpulses` adds dependency-free directional translation/rotation, source-distance attenuation, propagation delay and layered handheld motion, with shared browser/headless pose application and compatibility with existing animation shake. See [directional camera impulses](camera-impulses.md) and [Midnight midway](../examples/directional-camera-impulses.html). Inspect portable motion with `ink-studio camera-impulses motion.json --at 1`.
+
+`KIT.material` supplies shared roughness, metalness, IOR, transmission and coating descriptors, live binding edits and an inspector, backed by the existing stylized finishes and optics. See [material controls](material-controls.md) and the [material atelier](../examples/material-controls.html).
+
+`KIT.renderGraph` adds scoped bloom, halation, depth outlines, restrained chromatic separation, block displacement, bounded pixel sorting and budgeted temporal feedback. Effects preserve full-resolution source images and accept object/depth masks. See [render effects and budgets](render-graph.md#bounded-film-and-signal-effects) and the interactive [Signal House](../examples/render-effects.html).
+
+`KIT.procedural.mathFields` supplies finite complex-plane, polar and logarithmic charts; analytic deformation/flow/mask adapters; and bounded fixed-step attractor integration. It shares existing field-expression, streamline and trace tooling. See [procedural math fields](math-fields.md) and the [strange garden](../examples/math-fields.html).
+
+`KIT.random` / `KIT.procedural.random` adds independent named streams, stable object/property keys, controlled distributions, correlated channels, coherent variation and replay checkpoints. See [randomness authoring](randomness.md) and the interactive [seeded courtyard](../examples/randomness.html).

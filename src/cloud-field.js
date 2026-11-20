@@ -7,6 +7,7 @@ const CloudField = (() => {
   const volume = typeof VolumeField === 'undefined' ? require('./volume-field.js') : VolumeField;
   const art = typeof ArtDirection === 'undefined' ? require('./art-direction.js') : ArtDirection;
   const detail = typeof CloudDetail === 'undefined' ? require('./cloud-detail.js') : CloudDetail;
+  const palettes = typeof AtmospherePalette === 'undefined' ? require('./atmosphere-palette.js') : AtmospherePalette;
   const clamp = n => Math.max(0,Math.min(1,n));
   const smooth = (lo,hi,n) => {
     const u = clamp((n-lo)/(hi-lo));
@@ -122,6 +123,7 @@ const CloudField = (() => {
     if (typeof repeat !== 'boolean' || typeof visible !== 'boolean') throw new TypeError('Cloud repeat and visible must be boolean');
     const rgb = colorRGB(color,'Cloud color');
     const style = prepareLight(lighting);
+    const paletteProgram = palettes.compile(source.paletteField, palettes.cloudDomains);
     number(thickness,0,1e5,'Cloud thickness');
     if (!Number.isInteger(steps) || steps<2 || steps>32) throw new RangeError('Cloud steps must be 2–32');
     const low=height-thickness*.5, high=height+thickness*.5;
@@ -183,6 +185,7 @@ const CloudField = (() => {
       return cache.get(softness);
     }
     function frame(time, shadows, light = [-.52, .64, .57], displacement, representation, flashAt, cutouts, edge) {
+      const paletteField = paletteProgram?.frame?.(time) ?? paletteProgram;
       const mode=representation ?? (lod || (geometry && lod!==false) ? 'auto' : 'off');
       if (!detail.modes.includes(mode)) throw new RangeError('Unknown cloud representation: ' + mode);
       const useDetail=mode!=='off';
@@ -223,13 +226,18 @@ const CloudField = (() => {
         return clamp(style.ambient + daylight*(style.strength*(.24+.76*relief)*(.48+.52*y) + style.rim*rim));
       };
       const rendered=visible && opacity>0;
-      const shift=[dx,0,dz];
+      const shift=[dx,0,dz], tint = [0,0,0];
+      function cloudColor(out, height, density, light, flash) {
+        const base = paletteField ? paletteField.apply(paletteField.source === 'altitude' ? height :
+          paletteField.source === 'density' ? density : light, rgb, out) : rgb;
+        for (let c=0;c<3;c++) out[c] = Math.min(1,(style ? mix(base[c],style.rgb[c],light) : base[c]) + (flash?.[c] ?? 0));
+      }
       const shade=(origin,ray,depth,optical,out) => {
         const x=origin[0]+ray[0]*depth, y=origin[1]+ray[1]*depth, z=origin[2]+ray[2]*depth;
         const rim=style ? Math.max(0,lx*ray[0]+ly*ray[1]+lz*ray[2])**12 : 0;
-        const brightness=style ? lit(x,z,clamp((y-low)/thickness),sample(cells,x,z),rim)*(.49+.51*Math.exp(-optical*.58)) : 0;
-        const flash=flashAt?.(x,y,z);
-        for (let c=0;c<3;c++) out[c]=Math.min(1,(style?mix(rgb[c],style.rgb[c],brightness):rgb[c])+(flash?.[c]??0));
+        const density = style || paletteField?.source === 'density' ? sample(cells,x,z) : 0;
+        const brightness=style ? lit(x,z,clamp((y-low)/thickness),density,rim)*(.49+.51*Math.exp(-optical*.58)) : 0;
+        cloudColor(out, y, density, brightness, flashAt?.(x,y,z));
       };
       function shapedView(source) {
         if (!edge) return source;
@@ -244,7 +252,7 @@ const CloudField = (() => {
         if (!result.card) return result;
         const lighting = style && { ...style, direction:[lx,ly,lz], daylight, probe, cells, width, rows,
           origin:[minX+dx,minZ+dz], cell:[sx,sz], low, thickness };
-        return { ...result, card:{ ...result.card, rgb, lighting } };
+        return { ...result, card:{ ...result.card, rgb, lighting, paletteField } };
       } : null;
       const reflections=(useDetail || geometry) && rendered ? shapedView(asset.view([0,0,0],null,'volume',shift,shade,opacity,cutouts)) : null;
       const reflectionSample=[0,0,0,1];
@@ -276,8 +284,8 @@ const CloudField = (() => {
           const weight=through*-Math.expm1(-4.8*density*body*occupied/thickness);
           const brightness=style ? lit(x,z,h,density,rim) : 0;
           const flash=flashAt?.(x,y,z);
-          for (let c=0;c<3;c++)
-            lightSum[c]+=weight*Math.min(1,(style?mix(rgb[c],style.rgb[c],brightness):rgb[c])+(flash?.[c]??0));
+          cloudColor(tint, y, density, brightness, flash);
+          for (let c=0;c<3;c++) lightSum[c] += weight * tint[c];
           through-=weight;
         }
         const a=1-through, amount=opacity*(edge ? edge(a) : a);
@@ -308,8 +316,8 @@ const CloudField = (() => {
         const flash = light?.(x,height,z);
         const rim = style ? Math.max(0,lx*direction[0]+ly*direction[1]+lz*direction[2])**12 : 0;
         const brightness = style ? lit(x,z,.5,coverage,rim) : 0;
-        for (let i=0;i<3;i++)
-          out[i]=mix(out[i],Math.min(1,(style?mix(rgb[i],style.rgb[i],brightness):rgb[i])+(flash?.[i]??0)),amount);
+        cloudColor(tint, height, coverage, brightness, flash);
+        for (let i=0;i<3;i++) out[i] = mix(out[i],tint[i],amount);
         return out;
       }
       return { visible: rendered, coverage:(x,z)=>sample(cells,x,z), paint, shadow, view };

@@ -38,7 +38,8 @@ function surfaceShading(world, options, camera) {
       { colorCurves: options.colorCurves !== false, colorLut: options.colorLut !== false, colorStack: options.colorStack !== false,
         paletteConstraints: options.paletteConstraints !== false && (options.lookMasks !== false || !settings.paletteConstraint?.mask),
         skipMasks: options.lookMasks === false, transmission: options.transmission !== false, detailKits:options.surfaceDetailKits!==false,
-        paletteRoles: world.paletteRoles, blueNoise, onPaletteClip: camera.onPaletteClip });
+        paletteRoles: world.paletteRoles, blueNoise, onPaletteClip: camera.onPaletteClip,
+        ditherSpaceOverride:options.ditherSpaceOverride });
     if (bevelDistance && material.needsDistance) material.bevelDistance = bevelDistance;
     return material;
   });
@@ -46,12 +47,16 @@ function surfaceShading(world, options, camera) {
     (camera.transmissionLamps?.() ?? []).map(light => ({ ...light, tint: linear(light.color) })) : [];
   const ids = new Map(), albedos = new Map();
   const palettes = [], constraints = [];
+  const paletteSlots = options.paletteUsageSelection && [];
   for (const material of materials) {
+    const slots = paletteSlots && [];
     for (const layer of material.layers) {
       const { effect } = layer;
-      if (!effect?.palette || SurfaceLook.basePaint(layer)) continue;
-      palettes.push(effect.palette);
-      ids.set(effect.palette, palettes.length);
+      const palette = effect?.paletteAt?.(time) ?? effect?.palette;
+      if (!palette || SurfaceLook.basePaint(layer)) continue;
+      palettes.push(palette);
+      ids.set(palette, palettes.length);
+      if (slots) slots.push(palettes.length);
     }
     if (material.paletteConstraint) {
       const policy = material.paletteConstraint;
@@ -59,7 +64,9 @@ function surfaceShading(world, options, camera) {
       policy.assetId ??= material.settings.lookAssetId;
       constraints[palettes.length] = policy;
       ids.set(policy.swatches, palettes.push(policy.swatches));
+      if (slots) slots.push(palettes.length);
     }
+    if (paletteSlots) paletteSlots.push(slots);
   }
   const planarMaterials = materials.map(
     material =>
@@ -116,7 +123,7 @@ function surfaceShading(world, options, camera) {
   const sampleSky = sky && ((direction, out) => sky(direction, out, sample.worldPosition));
   const sampleLocal = localReflection && ((layer, ray, axis) =>
     localReflection(layer.probe, sample.worldPosition, ray, layer.roughness, axis));
-  function shade(i, x, y, z, centerX, centerY, centerZ, r, g, b, sx, sy, visit, reflected, paintedAlbedo) {
+  function shade(i, x, y, z, centerX, centerY, centerZ, r, g, b, sx, sy, visit, reflected, paintedAlbedo, stagePaint) {
     const offset = i * STRIDE;
     const { position, normal, view } = sample;
     const prepared = materials[surfaceData[offset] - 1];
@@ -241,13 +248,13 @@ function surfaceShading(world, options, camera) {
     rgb[0] = r;
     rgb[1] = g;
     rgb[2] = b;
-    SurfaceLook.shade(prepared, sample, rgb, result, undefined, visit, camera.onSurfaceClip, reflected);
+    SurfaceLook.shade(prepared, sample, rgb, result, undefined, visit, camera.onSurfaceClip, reflected, stagePaint);
     if (ids.size) result[5] = ids.get(result[5]) || 0;
     return result;
   }
 
   return {
-    has, normalAt, surfaceNormal, planar, environment, shade, palettes, constraints,
+    has, normalAt, surfaceNormal, planar, environment, shade, palettes, constraints, paletteSlots,
     projected, bevel, local, thin, paintsBase: i => materials[surfaceData[i * STRIDE] - 1]?.paintsBase,
     finishBeforeFog: i => materials[surfaceData[i * STRIDE] - 1]?.finishBeforeFog,
     reveals: i => materials[surfaceData[i * STRIDE] - 1]?.reveals

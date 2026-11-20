@@ -1,5 +1,6 @@
 const PixelLook = require('../src/pixel-look.js');
 const ArtStability = require('../src/art-stability.js');
+const { policyChoice } = require('./palette-pixel.js');
 
 function contributionLook(palettes, policies, targets, targetOffset, fallback, scene, grade) {
   const slot = (i, layer) => targets?.[i] ? targetOffset + targets[i] : layer || fallback;
@@ -9,29 +10,37 @@ function contributionLook(palettes, policies, targets, targetOffset, fallback, s
     const policy = policies?.[slot(i, layer) - 1], explicit = policy?.anchor;
     return Boolean(policy && (policy.mask || policy.tuning?.regions.length || spatial(explicit ?? anchor)));
   }
-  function shade(i, layer, rgb, x, y, sample, dither, visit, inherited) {
+  function shade(i, layer, rgb, x, y, sample, dither, visit, inherited, claim) {
     const id = slot(i, layer);
     if (!id) return rgb;
     const policy = policies?.[id - 1];
-    if (!policy) return palettes[id - 1][PixelLook.nearest(rgb, palettes[id - 1], false)];
-    const amount = policy.mask ? sample ? policy.mask(sample) : 0 : 1;
-    if (amount && visit) visit(policy, policy.mask ? amount : null, amount);
-    const options = { scene, grade, useDither: dither };
-    const index = plan => {
-      const [dx, dy] = ArtStability.sampleCoordinates(plan.anchor ?? inherited, sample, x, y);
-      return PixelLook.paletteIndex(plan, rgb, dx, dy, plan.tuning ?
-        { ...options, placement: { pixel: [x, y], inherited, sample } } : options);
+    const choose = (id, plan, weight) => {
+      const trace = claim?.[4] && {}, swatches = plan?.swatches ?? palettes[id - 1];
+      let index;
+      if (plan) {
+        const [dx, dy] = ArtStability.sampleCoordinates(plan.anchor ?? inherited, sample, x, y);
+        index = PixelLook.paletteIndex(plan, rgb, dx, dy, { scene, grade, useDither:dither, trace,
+          placement:plan.tuning && { pixel:[x,y],inherited,sample } });
+      } else index = PixelLook.nearest(rgb, swatches, false);
+      if (trace) policyChoice(claim[4],plan,rgb,index,{...trace,blended:weight<1},weight,{stage:'lit',colors:plan?.packed ??
+        swatches.map(rgb=>rgb.reduce((n,v)=>n*256+Math.round(v*255),0))});
+      return swatches[index];
     };
-    if (amount === 1) return policy.swatches[index(policy)];
+    const amount = policy?.mask ? sample ? policy.mask(sample) : 0 : 1;
+    if (amount && policy && visit) visit(policy, policy.mask ? amount : null, amount);
+    if (amount === 1) {
+      if (claim) claim[0] = id;
+      return choose(id,policy,1);
+    }
 
     // A soft mask reveals the underlying material or default look in the same fragment.
     const under = underSlot(layer);
+    if (claim) claim[0] = amount > .5 ? id : under ?? 0;
     const underlying = policies?.[under - 1];
     if (!amount && underlying && visit) visit(underlying, null, 1);
-    const base = underlying ? underlying.swatches[index(underlying)] : under ?
-      palettes[under - 1][PixelLook.nearest(rgb, palettes[under - 1], false)] : rgb;
+    const base = under ? choose(under,underlying,1-amount) : rgb;
     if (!amount) return base;
-    return policy.swatches[index(policy)].map((value, channel) => base[channel] + (value - base[channel]) * amount);
+    return choose(id,policy,amount).map((value, channel) => base[channel] + (value - base[channel]) * amount);
   }
   return { shade, applies: slot, needsSample };
 }

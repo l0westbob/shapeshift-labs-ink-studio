@@ -1,7 +1,7 @@
 // Shared draw and resolve shaders extracted from Inkwell Rebirth's WebGL renderer.
 // Hosts provide the ASCII shader hooks and Ink Studio's shared PixelLook GLSL.
 import { waterGLSL } from './water-optics.mjs';
-import { environmentMediaGLSL } from './environment-shaders.mjs';
+import { environmentMediaGLSL,environmentMediaSource } from './environment-shaders.mjs';
 import { coverageSource, policyUniforms, maskUniforms, maskVaryings, maskFragment, maskVertex, ownerMaskWrite } from './contribution-shaders.mjs';
 
 // Reconstruct the sample on its pixel ray from a camera-space axial distance.
@@ -28,7 +28,7 @@ vec4 relightAt(int row) { return texelFetch(u_relight, ivec2(row & 511, row >> 9
 export function splatShaderSources(ascii, sampleCoverage, {
   water = false, airPockets = false, layered = false, atlas = false, portal = false, instances = false,
   contributions = false, masked = false, textured = false, layeredGlass = false, coverageRules, materialStyles = false,
-  environment = false, relighting = false, optical = false, stableDetail, cutaway, airflow
+  environment = false, emitterFog=false, relighting = false, optical = false, stableDetail, cutaway, airflow
 } = {}) {
   const coverageStride = coverageRules?.coverageStride ?? 4;
   const continuousMode = coverageRules?.continuousCoverage ?? 1, softMode = coverageRules?.softCoverage ?? 2;
@@ -383,7 +383,7 @@ float glassDepth(vec4 sampleDepth) {
   return dot(floor(sampleDepth.rgb*255.0+0.5),vec3(1.0,256.0,65536.0)) / 16777215.0;
 }` : ''}
 ${water || portal || environment || cutaway ? 'uniform vec2 u_viewport;' : ''}
-${environment ? environmentMediaGLSL + 'flat in float v_envAxial;' : ''}
+${environment ? environmentMediaSource(emitterFog) + 'flat in float v_envAxial;' : ''}
 ${portal || cutaway ? axialPosition : ''}
 ${coverageSource(coverageRules)}
 ${contributions || masked ? `${policyUniforms}flat in int v_policySlot;` : ''}
@@ -450,7 +450,8 @@ ${ascii ? ascii.fsMain : ''}  float power = -0.5 * (v_conic.x * v_d.x * v_d.x + 
     float k = v_ix + 1.0;
     o = vec4(mod(k, 256.0), mod(floor(k / 256.0), 256.0), floor(k / 65536.0), 255.0) / 255.0;
     od = vec4(0.0); ${masked ? `if (v_policySlot > 0) {${ownerMaskWrite}}` : ''}
-    oa = vec4(0.0); return; }
+    float graphDepth = round(clamp(${cutaway ? 'sectionDepth' : 'v_depth'}, 0.0, 1.0) * 16777215.0);
+    oa = vec4(mod(graphDepth,256.0), mod(floor(graphDepth/256.0),256.0), floor(graphDepth/65536.0),255.0)/255.0; return; }
   bool solid = u_crisp > 0.5 && v_color.a >= 1.0 && v_coverage != ${softMode};
   float a = continuous ? surfaceAlpha :
     (solid && u_hard > 0.5 ? (g > 0.5 ? 1.0 : 0.0) : contributionAlpha(power,v_color.a,solid));
@@ -545,6 +546,10 @@ float paletteLabDistance(vec4 a, vec4 b, int mode, float hue) {
   }
   return distance;
 }
+bool paletteAccess(int slot, int row, int base) {
+  int bits = int(texelFetch(u_constraintRows, ivec2(base + slot / 24, row), 0).a);
+  return (bits & (1 << (slot % 24))) != 0;
+}
 vec3 paletteRow(int slot, vec3 inputColor, ivec2 p) {
   int row = slot - 1;
   vec4 settings = texelFetch(u_constraintRows, ivec2(0, row), 0);
@@ -569,7 +574,7 @@ vec3 paletteRow(int slot, vec3 inputColor, ivec2 p) {
   int mode = int(texelFetch(u_constraintRows, ivec2(4, row), 0).a);
   vec4 inputLab = mode == 0 ? vec4(0.0) : paletteLab(inputColor);
   float hue = mode == 4 ? .49*smoothstep(.02,.06,inputLab.w) : 0.0;
-  float firstDistance = 1e9, secondDistance = 1e9;
+  float firstDistance = 1e9;
   int bestSlot = 0;
   vec3 best = vec3(0.0), second = vec3(0.0);
   vec4 firstLab = vec4(0.0), secondLab = vec4(0.0);
@@ -580,23 +585,21 @@ vec3 paletteRow(int slot, vec3 inputColor, ivec2 p) {
       vec3 code = floor(swatch * 255.0 + 0.5);
       if (all(equal(bytes, code))) { return swatch; }
       if (all(equal(gradedBytes, code))) { gradedReserve = swatch; hasGradedReserve = true; }
-      continue;
+      if (!paletteAccess(i, row, 8)) continue;
     }
     vec3 d = inputColor - swatch;
     vec4 swatchLab = mode == 0 ? vec4(0.0) : texelFetch(u_constraintRows,ivec2(u_constraintLab+i,row),0);
     float distance = mode == 0 ? dot(weight,d*d) : paletteLabDistance(inputLab,swatchLab,mode,hue);
     if (distance < firstDistance) {
-      second = best; secondDistance = firstDistance; secondLab = firstLab;
       best = swatch; firstDistance = distance; firstLab = swatchLab; bestSlot = i;
-    } else if (distance < secondDistance) {
-      second = swatch; secondDistance = distance; secondLab = swatchLab;
     }
   }
   if (hasGradedReserve) { return gradedReserve; }
   vec3 color = best;
   float amount = texelFetch(u_constraintRows, ivec2(1, row), 0).a;
   float gain = texelFetch(u_constraintRows, ivec2(7, row), 0).a;
-  if (count < 2 || amount == 0.0 || gain <= 0.0) return color;
+  if (total < 2 || amount == 0.0 || gain <= 0.0 ||
+      (bestSlot >= count && !paletteAccess(bestSlot, row, 10))) return color;
   ivec2 size = ivec2(settings.zw);
   float scale = texelFetch(u_constraintRows, ivec2(6, row), 0).a;
   ivec2 grid = ivec2(floor(vec2(p) / scale));
@@ -604,33 +607,35 @@ vec3 paletteRow(int slot, vec3 inputColor, ivec2 p) {
   float rank = texelFetch(u_constraintRows, ivec2(49 + cell / 4, row), 0)[cell & 3] / gain;
   if (rank >= .5) return color;
   int pairCount = int(texelFetch(u_constraintRows,ivec2(5,row),0).a)-1;
-  if (pairCount >= 0) {
-    int partner = -1;
-    secondDistance = 1e9;
-    float lightness = mode == 0 ? -1.0 : clamp(inputLab.x,0.0,1.0);
-    for (int i=0;i<256;i++) {
-      if (i >= pairCount) break;
-      vec4 pair = texelFetch(u_constraintRows,ivec2(u_constraintPairs+i,row),0);
+  int partner = -1;
+  float secondDistance = 1e9;
+  float lightness = mode == 0 ? -1.0 : clamp(inputLab.x,0.0,1.0);
+  int entries = pairCount >= 0 ? pairCount : total;
+  for (int i = 0; i < 256; i++) {
+    if (i >= entries) break;
+    int candidate = i;
+    if (pairCount >= 0) {
+      vec4 pair = texelFetch(u_constraintRows, ivec2(u_constraintPairs + i, row), 0);
       ivec2 slots = ivec2(pair.xy);
-      int candidate = slots.x == bestSlot ? slots.y : slots.y == bestSlot ? slots.x : -1;
+      candidate = slots.x == bestSlot ? slots.y : slots.y == bestSlot ? slots.x : -1;
       if (candidate < 0) continue;
       if (pair.z >= 0.0) {
-        if (lightness < 0.0) lightness = clamp(paletteLab(inputColor).x,0.0,1.0);
+        if (lightness < 0.0) lightness = clamp(paletteLab(inputColor).x, 0.0, 1.0);
         if (lightness < pair.z || lightness > pair.w) continue;
       }
-      vec3 rgb = texelFetch(u_constraintRows,ivec2(candidate+1,row),0).rgb;
-      vec4 lab = mode == 0 ? vec4(0.0) : texelFetch(u_constraintRows,ivec2(u_constraintLab+candidate,row),0);
-      vec3 d = inputColor-rgb;
-      float distance = mode == 0 ? dot(weight,d*d) : paletteLabDistance(inputLab,lab,mode,hue);
-      if (distance < secondDistance || distance == secondDistance && candidate < partner) {
-        partner = candidate;
-        second = rgb;
-        secondLab = lab;
-        secondDistance = distance;
-      }
+    } else if (candidate == bestSlot || (candidate >= count && !paletteAccess(candidate, row, 10))) continue;
+    vec3 rgb = texelFetch(u_constraintRows, ivec2(candidate + 1, row), 0).rgb;
+    vec4 lab = mode == 0 ? vec4(0.0) : texelFetch(u_constraintRows, ivec2(u_constraintLab + candidate, row), 0);
+    vec3 d = inputColor - rgb;
+    float distance = mode == 0 ? dot(weight, d*d) : paletteLabDistance(inputLab, lab, mode, hue);
+    if (distance < secondDistance || distance == secondDistance && candidate < partner) {
+      partner = candidate;
+      second = rgb;
+      secondLab = lab;
+      secondDistance = distance;
     }
-    if (partner < 0) return color;
   }
+  if (partner < 0) return color;
   float threshold = .5+(rank-.5)*amount;
   if (mode != 0) {
     float reach = paletteLabDistance(firstLab,secondLab,mode,hue);
@@ -681,7 +686,7 @@ bool constrainPalette(ivec2 p, vec3 inputColor, out vec3 color) {
 
 export function pixelShaderSources(PixelLook, { water = false, airPockets = false, layered = false, atlas = false,
   paletteConstraints = false, masked = false, contributions = false, layeredGlass = false, materialStyles = false,
-  environment = false, relighting = false, packedTone = false, cutaway } = {}) {
+  environment = false, emitterFog=false, relighting = false, packedTone = false, cutaway } = {}) {
   const waterPixelGLSL = `
 uniform highp sampler2D u_waterMask;
 ivec2 waterPixel(ivec2 p) {
@@ -700,7 +705,7 @@ void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position
 precision highp float;
 ${paletteConstraints || materialStyles || relighting ? 'precision highp int;' : ''}
 uniform sampler2D u_scene, u_depth, u_crispScene, u_crispDepth;
-${environment ? environmentMediaGLSL : ''}
+${environment ? environmentMediaSource(emitterFog) : ''}
 uniform bool u_paintOn;
 ${relighting ? relightTable + 'uniform vec3 u_relightFog; uniform vec2 u_relightFogRange;' : ''}
 uniform vec3 u_line;
@@ -1350,7 +1355,7 @@ layout(location=1) out vec4 cover;
 ${axialPosition}
 ${cutaway ?? ''}
 ${water ? waterGLSL(airPockets, layered, atlas) : ''}
-${environment ? environmentMediaGLSL : ''}
+${environment ? environmentMediaSource(emitterFog) : ''}
 ${water || environment || relighting ? `
 uniform vec3 u_waterSpritePalette[64];
 uniform vec4 u_rmp4[128], u_rmpN4[16];

@@ -16,7 +16,7 @@ Use the CLI preview for the original CPU-rendered export. The imported world can
 - **Perspective projection** uses `--projection perspective`. Supply `--fx`, `--fy`, `--cx` and `--cy` in pixels when you know the camera intrinsics, or set the vertical `--fov` in degrees. The calibrated coordinates are in camera space with X right, Y up, Z negative in front of the camera. The preview camera automatically frames the result for inspection. Use the source calibration when reprojecting the export into its original camera.
 - **Edges and holes** use transparent pixels in a depth PNG, an optional `mask` array in JSON or the API, or `--alpha-mask` to use transparency in the optional colour image. An explicit `--max-jump` caps the allowed depth difference across adjacent mesh samples. The default estimates a threshold from nearby depth differences. Increase `--stride` to sample a large raster more sparsely.
 
-PNG inputs must be non-interlaced. Grayscale stored in RGB is supported. For data stored in a specific PNG channel, choose `--channel r`, `g`, `b`, or `a`. RGB images can be decoded into byte arrays outside the CLI and passed to the API, including a browser's `ImageData`.
+PNG inputs support standard and Adam7 interlaced images, including grayscale stored in RGB. For data stored in a specific PNG channel, choose `--channel r`, `g`, `b`, or `a`. RGB images can be decoded into byte arrays outside the CLI and passed to the API, including a browser's `ImageData`.
 
 ## Use the outputs
 

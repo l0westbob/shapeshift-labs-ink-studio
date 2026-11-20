@@ -18,7 +18,8 @@ module.exports = ({ KIT }) => {
     id: 'explicit-render-stages', name: 'Relay workshop', seed: source.seed,
     build(seed, { controls } = {}) {
       const stage = controls?.stage ?? 'material';
-      if (!['material', 'lit', 'frame', 'palette'].includes(stage)) throw new Error('Choose material, lit, frame or palette');
+      if (!['material', 'lit', 'frame', 'palette', 'review'].includes(stage))
+        throw new Error('Choose material, lit, frame, palette or review');
       const scene = JSON.parse(JSON.stringify(source));
       scene.id = 'explicit-render-stages';
       scene.seed = seed;
@@ -28,7 +29,12 @@ module.exports = ({ KIT }) => {
         scene.finish.look.targets = [{ select: { entity: 'sea-glaze' }, asset, stage }];
       } else {
         scene.finish.look.asset = { asset, stage: 'frame' };
-        if (stage === 'palette') scene.finish.look.renderStages = [{ stage, palette }];
+        if (stage === 'palette' || stage === 'review') scene.finish.look.renderStages = [{ stage:'palette', palette }];
+        if (stage === 'review') scene.finish.look.renderStages.unshift({
+          stage:'material', select:{entity:'sea-glaze'},
+          stack:{name:'Warm enamel',steps:[{type:'channelMix',
+            matrix:[[.92,0,0],[0,.67,0],[0,0,.49]],offset:[.045,0,.01]}]}
+        });
       }
       for (const relay of scene.solids.filter(solid => solid.mat?.lookAsset)) {
         relay.mat = {

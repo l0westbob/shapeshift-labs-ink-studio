@@ -132,7 +132,7 @@ const ArtInk = (() => {
     return best;
   }
 
-  function apply(frame, passes, settings, palette, signals, { world, depthOffset = 0 } = {}) {
+  function apply(frame, passes, settings, palette, signals, { world, depthOffset = 0, inspect } = {}) {
     const { w, h, rgb } = frame;
     const { depth, normal, objectId, materialId, materials, emission, splatId } = passes;
     const mask = new Uint8Array(w * h);
@@ -185,7 +185,9 @@ const ArtInk = (() => {
       const emitting = emit >= settings.emissionThreshold && emit > 0;
       const reserved = (emitting && ramps.get('emission')) || ramps.get(signal || style.palette);
       if (reserved) {
-        color = reserved[closest(reserved, r, g, b)];
+        const index = closest(reserved, r, g, b);
+        color = reserved[index];
+        if (inspect?.pixel === p) inspect.ink(reserved,index,[r,g,b],emitting && ramps.has('emission') ? 'emission' : signal ?? style.palette,1);
         mask[p] = 4;
       } else {
         const distance = depth[p]-depthOffset;
@@ -209,6 +211,7 @@ const ArtInk = (() => {
             }
           }
           const weight = silhouette || boundary || crease;
+          if (inspect?.pixel === p && (explicit !== undefined || steps)) inspect.ink([color],0,[r,g,b],type,weight);
           if (weight < 1) color = Math.round(r+((color>>16)-r)*weight)*65536 +
             Math.round(g+((color>>8&255)-g)*weight)*256 + Math.round(b+((color&255)-b)*weight);
           if (color !== ((r << 16) | (g << 8) | b)) mask[p] = type === 'silhouette' ? 1 : type === 'crease' ? 2 : 3;

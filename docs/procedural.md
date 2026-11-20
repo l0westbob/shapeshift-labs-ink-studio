@@ -74,6 +74,8 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `sampling.eliminate(points, options)`, `sampling.lloyd(points, options)`, `sampling.patch(spec)`, `sampling.geodesicSpacing(points, links, options)` | Progressive point subsets, centroidal layout, stratified surface sampling and surface-neighbor separation |
 | `sampling.phyllotaxis.sphere(options)`, `sampling.phyllotaxis.surface(chart, options)` | [Golden-angle placement](surface-phyllotaxis.md) with stable IDs, tangent frames, and area-weighted density |
 | `surfaceGrowth.trace(options)` | Seeded, bounded branching paths over caller-supplied surfaces, with a link query for seams and obstacles |
+| `surface.curvature.chart(carrier, options)`, `surface.curvature.implicit(field, options)` | [Curvature-line ornament](curvature-lines.md) with signed principal curvature, surface-aligned paths, and arc frames |
+| `surface.mobius(options)`, `surface.kleinBottle(options)`, `surface.helicoid(options)`, `surface.catenoid(options)` | [Non-orientable and minimal surfaces](topological-surfaces.md) with mesh UVs, lifted frames, and seam-aware paint and motion |
 | `materialBands(spec)` | Nonoverlapping intervals with material and pattern metadata, plus optional spatial projection and period |
 | `masks.stroke(spec)`, `masks.compose(specs, options)` | Tapered and feathered swept discs, ordered addition and erasure, signed distance and visible source ownership |
 | `surfaceMasks.compile(strokes, {size, periodic})` | Ordered surface brush coverage in retained UVs with measured width and optional seam wrapping |
@@ -111,6 +113,8 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `biomeWorld.create(options)` | Headless chunk realization with sampled terrain and cave collision, traversal, placements, splats, and local rebuilds |
 | `routes.visibility(start, end, obstacles)`, `routes.spline(route, options)`, `routes.travelTime(sources, options)` | Polygon visibility paths, clearance-tested corner fitting and fast-marching travel-time fields |
 | `geometry.delaunay(points, options)`, `geometry.triangulatePolygon(rings)`, `routes.network(points)`, `routes.steiner(points, edges, terminals)` | Constrained planar triangulation, graph layouts with optional loops, and shared branch networks |
+| `routes.adaptiveTransport(options)` | [Adaptive transport networks](adaptive-transport.md) with pressure-driven flow, capacity growth, and damage rerouting |
+| `interlace.weave(options)`, `interlace.braid(options)` | [Weaving and braiding](weaving-braiding.md) with stable strands, over–under crossings, and thickness checks |
 | `routes.tensor(components)`, `routes.followTensor(field, seeds)`, `routes.growStreets(seeds, options)`, `routes.parcels(outline)`, `routes.medial(rings)` | Directional street systems, connected seeded roads, frontage lots and medial paths |
 | `routes.layout(route, options)` | Fit bounded intervals on a polyline, catenary, or compatible curve. Place caller-chosen pieces using gapped endpoints and midpoint frames |
 | `routes.fitStairApproach(options)` | Fit a short stair flight from an exposed landing to a sampled carrier surface. |
@@ -138,6 +142,8 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `attractors.trace(options)` | [Lorenz, Rössler, Clifford, and de Jong orbits](orbit-attractors.md) as time-sampled paths, speeds, and bounded visit density |
 | `ifs.compile(recipe)`, `ifs.preset(name)` | Seeded [iterated function systems and fractal flames](iterated-function-systems.md) for packed points and colored density grids |
 | `complexPlane.compile(options)` | [Mandelbrot, Julia, and Newton fields](complex-plane-fields.md) with independent escape, basin, orbit-trap, and domain coloring outputs |
+| `fields.spectral` | [Spectral and standing-wave fields](spectral-fields.md) with Fourier terms, membrane modes, nodal paths, and PCM analysis |
+| `fields.potential(options)` | [Boundary-driven potential fields](boundary-potential-fields.md) with masked Laplace solves, fixed pins, gradients, and contours |
 | `fields.simplex(options)`, `fields.periodic(options)`, `fields.compile(expression, options)` | Seeded analytic noise and serializable field composition for SDFs, materials and placement |
 | `grammar.expand(scope, rules, options)`, `grammar.children(layout)` | Bounded shape grammar with named partitions, fitted repeats, pinned spans, sockets and retained child specs |
 | `grammar.rewriteGrid(rows, rules)`, `grammar.rewriteGraph(graph, rules)` | Seeded weighted pattern replacement on scalar grids and directed graphs |
@@ -150,6 +156,8 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `growth.lsystem(axiom, rules, options)`, `growth.turtle(tokens, options)`, `growth.venation(outline, options)`, `growth.roots(starts, options)`, `growth.pipe(nodes, options)` | Growth grammars, SDF branch runs, venation, obstacle-aware roots and pipe taper |
 | `growth.aggregate(options)`, `growth.grayScottGrid(options)`, `growth.grayScottSurface(points, links, options)`, `growth.dispersal(options)`, `growth.succession(options)` | Grid and surface patterns, seed dispersal and habitat competition |
 | `growth.grayScott.create(options)` | [Live Gray–Scott brushing](reaction-diffusion-brushing.md) with painted rates, linked UV seams, and flow advection |
+| `growth.differential.curve(options)`, `growth.differential.shell(options)` | [Differential growth](differential-growth.md) with varying rest lengths, fixed pins, and local separation |
+| `growth.competitive(options)` | [Competing growth fronts](competitive-growth.md) with directional rates, masked propagation, and timed material seams |
 | `forms.superquadric(spec)`, `forms.loft(sections)`, `forms.skeleton(nodes)`, `forms.periodic(spec)`, `forms.shell(host, options)` | Bounded analytic forms and locally variable shells for the sculptor |
 | `measureSculptBounds(build)` | Measure a finite rest-pose recipe without generating splats |
 | `forms.fractal(spec)` | [Bounded quaternion Julia, Mandelbulb, and Menger fold forms](fractal-forms.md) for implicit geometry and adaptive splat bakes |
@@ -160,6 +168,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `construct.profile(rings)`, `construct.offset(profile, distance)`, `construct.extrude(profile, options)`, `construct.weightedRoof(rings, options)` | Signed footprints, planar offsets, extrusions and roof wavefronts with per-edge pitches |
 | `geometry.distanceTransform(mask, options)`, `materials.outline(mask, options)` | Exact Euclidean distances over pixel or voxel centers, including anisotropic spacing and inside/outside masks |
 | `materials.triplanar(sample, options)`, `materials.tangent(sample, options)`, `materials.threshold(field, options)`, `materials.ramp(colors, options)` | Surface-aligned patterns, pixel-footprint filtering and perceptual palettes |
+| `materials.gratings(options)` | [Moiré and grating composition](moire-gratings.md) with animated line, dot, and polar layers and oriented pixel footprints |
 | `materials.quilt(swatch, options)`, `materials.patchMatch(source, target, options)`, `materials.synthesize(source, target, options)`, `materials.blueNoise(options)` | Swatch quilting, exemplar matching and fill, and periodic blue-noise ranks |
 | `materials.paintMixer(layers)` | Ordered paint and erasure over scalar coverage masks. Sample provenance weights or select one material with a stable caller-supplied rank. |
 | `geometry.dualContour(field, bounds, options)`, `geometry.surfaceNets(field, bounds, options)` | Cell-local surface samples, optional indexed preview triangles and tagged mesh output |
@@ -168,8 +177,13 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `sampleVisibility.create(count)`, `splatOrder.compile(indices, depthAt)` | Packed visibility updates and reusable depth buckets for retained samples |
 | `splatCodec.encode(data, count, options)`, `splatCodec.decode(bytes, options)` | Compact, ordered native splat rows for offline delivery |
 | `motion.streamline(field, start, options)`, `motion.obstacleWake(sdf, options)`, `motion.loopTrajectory(points, options)`, `motion.surfaceAdvection(chart, seeds, options)` | Field integration, wake and curl sampling, closed tracks and UV-attached motion |
+| `KIT.fieldViews.lic(field, options)` | [Vector-field painting](vector-field-painting.md) with aligned grain, obstacle masks, and traveling convolution kernels |
 | `motion.stableFluid(options)`, `motion.shallowWater(options)` | Persistent density and velocity grids, and conservative terrain-aligned water |
+| `motion.coupledFluid(options)` | [Bidirectional field–particle coupling](field-particle-coupling.md) for flow, dye, and drag feedback |
+| `motion.scalarWave(options)` | [Wave propagation through geometry](scalar-wave.md) with reflecting walls, absorbing edges, and retained pressure frames |
+| `motion.trailAgents(options)`, `KIT.deposition.grid(options)` | [Trail-sensing agents](trail-sensing-agents.md) with shared field feedback, diffuse trails, and route cuts |
 | `motion.surfaceWeather(options)`, `motion.materialStateGraph(machine, entities, options)` | Persistent wetness and thermal fields, and event-driven material changes |
+| `motion.phaseChange(options)` | [Coupled phase changes](coupled-phase-changes.md) with reaction-driven finishes, relief, and emissions |
 | `motion.transportSplats(source, target, options)` | Balanced mass correspondences and barycentric splat targets |
 | `contours.march(field, options)` | Bounded marching-squares paths at a scalar level |
 
@@ -3695,3 +3709,9 @@ stage order. The host is responsible for composing its own render passes.
 Set `INK_TEST_CHROME` to the Chrome executable and run
 `node --test tests/captured-light.test.js` to verify the GLSL against the CPU
 reference using WebGL2 transform feedback.
+
+
+For complex-plane transforms, polar/logarithmic material coordinates, bounded attractor integration and reveal masks, see [procedural math fields](math-fields.md). `fields.compile` accepts `coordinateMap` and `mathMask` nodes with analytic spatial/time derivatives.
+
+
+[Randomness authoring](randomness.md) adds named streams and stable keyed samples through `K.random` / `K.procedural.random`, with distributions, correlated channels and coherent fields. Existing numeric-seed APIs can use `stream.seed32`; existing global random sequences remain unchanged.

@@ -33,12 +33,12 @@ function bundlePath(newest) {
 }
 const files = () =>
   [
-    'src/typography-truetype.js', 'src/typography.js', 'src/frame-budget.js', 'src/target-inspection.js', 'src/drawing-primitives.js', 'src/view-annotations.js', 'src/frame-composite.js', 'src/ink-veil.js', 'src/textured-surface.js', 'src/sprite-surface.js', 'src/camera-atlas.js', 'src/sprite-cels.js', 'src/atlas-sprites.js', 'src/target-selectors.js', 'src/camera-lens.js', 'src/camera-impulses.js', 'src/camera-staging.js', 'src/splat-provenance.js',
+    'src/randomness.js', 'src/math-fields.js', 'src/typography-truetype.js', 'src/typography.js', 'src/frame-budget.js', 'src/target-inspection.js', 'src/drawing-primitives.js', 'src/view-annotations.js', 'src/frame-composite.js', 'src/ink-veil.js', 'src/textured-surface.js', 'src/sprite-surface.js', 'src/camera-atlas.js', 'src/sprite-cels.js', 'src/atlas-sprites.js', 'src/target-selectors.js', 'src/camera-lens.js', 'src/camera-impulses.js', 'src/camera-staging.js', 'src/splat-provenance.js',
     'src/art-passes.js', 'src/art-direction.js', 'src/art-ink.js', 'src/art-effects.js', 'src/art-stability.js', 'src/stable-detail.js', 'src/edge-filter.js', 'src/material-pixel-style.js',
-    'src/color-space.js', 'src/paint-corrections.js', 'src/color-curves.js', 'src/color-lut.js', 'src/color-stack.js', 'src/pixel-look.js', 'src/palette-fields.js', 'src/reflection-plane.js', 'src/airflow.js', 'src/wind-field.js', 'src/light-schedule.js', 'src/area-lights.js', 'src/emissive-finishes.js',
+    'src/color-space.js', 'src/paint-corrections.js', 'src/color-curves.js', 'src/color-lut.js', 'src/color-stack.js', 'src/pixel-look.js', 'src/palette-fields.js', 'src/palette-extract.js', 'src/palette-distributions.js', 'src/reflection-plane.js', 'src/airflow.js', 'src/wind-field.js', 'src/light-schedule.js', 'src/geometric-caustics.js', 'src/light-cookies.js', 'src/area-lights.js', 'src/emissive-finishes.js',
     'src/route-visibility.js', 'src/sample-coverage.js', 'src/contribution-rules.js', 'src/sample-visibility.js', 'src/swept-disc.js', 'src/splat-order.js', 'src/cutaway.js', 'src/splat-codec.js', 'src/ripple-field.js',
-    'src/volume-field.js', 'src/field-bands.js', 'src/geometry-density.js', 'src/volume-cutouts.js', 'src/cloud-recipes.js', 'src/cloud-detail.js', 'src/cloud-field.js', 'src/lightning.js', 'src/volume-light.js', 'src/celestial-tracks.js', 'src/sky-environment.js', 'src/environment-frame.js', 'src/weather-front.js', 'src/weather-binding.js', 'src/optical-materials.js', 'src/atmosphere-depth-bands.js', 'src/scene-optics.js', 'src/scene-exposure.js', 'src/splat-effects.js',
-    'src/look-inputs.js', 'src/render-graph.js', 'src/render-stages.js', 'src/render-contract.js', 'src/effect-palettes.js', 'src/silhouette-protection.js', 'src/pass-quality.js', 'src/detail-budgets.js', 'src/shadow-art.js', 'src/reflection-probes.js', 'src/contact-shadows.js', 'src/bounce-probes.js', 'src/horizon-bands.js', 'src/surface-detail-kits.js', 'src/surface-look.js', 'src/splat-frames.js', 'src/splat-relighting.js', 'src/sdf-assist.js', 'src/sculpt-sampling.js', 'src/builder.js', 'src/sculpt.js'
+    'src/volume-field.js', 'src/field-bands.js', 'src/atmosphere-palette.js', 'src/geometry-density.js', 'src/volume-cutouts.js', 'src/cloud-recipes.js', 'src/cloud-detail.js', 'src/cloud-field.js', 'src/lightning.js', 'src/volume-light.js', 'src/celestial-tracks.js', 'src/sky-environment.js', 'src/environment-frame.js', 'src/weather-front.js', 'src/weather-binding.js', 'src/optical-materials.js', 'src/atmosphere-depth-bands.js', 'src/scene-optics.js', 'src/scene-exposure.js', 'src/splat-effects.js',
+    'src/look-inputs.js', 'src/render-effects.js', 'src/render-graph.js', 'src/render-stages.js', 'src/render-contract.js', 'src/effect-palettes.js', 'src/silhouette-protection.js', 'src/pass-quality.js', 'src/detail-budgets.js', 'src/shadow-art.js', 'src/reflection-probes.js', 'src/contact-shadows.js', 'src/bounce-probes.js', 'src/horizon-bands.js', 'src/surface-detail-kits.js', 'src/surface-look.js', 'src/material-controls.js', 'src/splat-frames.js', 'src/splat-relighting.js', 'src/sdf-assist.js', 'src/sculpt-sampling.js', 'src/builder.js', 'src/sculpt.js'
   ]
     .map(f => path.join(__dirname, f))
     .concat(
@@ -51,7 +51,7 @@ const files = () =>
 const demoFiles = () => [path.join(__dirname, 'demos', 'labscenes.js')];
 // the names the bundle defines at top level (add them to your own module.exports)
 const EXPORTS =
-  'Typography, CameraLens, CameraImpulses, makeBuilder, makeSculpt, basis, flame, motes, pondMat, lilies, courses, PALETTES, PAL_HEX, KIT, FrameBudget, InkVeil, TexturedSurface, SpriteSurface, TargetSelectors, SplatProvenance, ColorSpace, PaintCorrections, ColorCurves, ColorLUT, ColorStack, PixelLook, PaletteFields, LookInputs, RenderStages, ContributionRules, SurfaceDetailKits, SurfaceLook, SceneOptics, ReflectionProbes, SceneExposure, SkyEnvironment, EnvironmentFrame, CelestialTracks, CloudField, Lightning, VOX, SplatEffects, ArtPasses, ArtDirection, ArtInk, EffectPalettes, SilhouetteProtection, DetailBudgets, ContactShadows, BounceProbes, AreaLights, EmissiveFinishes, HorizonBands, ArtStability, StableDetail, EdgeFilter, ArtEffects, VolumeField, VolumeLight';
+  'Typography, Randomness, MathFields, MaterialControls, CameraLens, CameraImpulses, makeBuilder, makeSculpt, basis, flame, motes, pondMat, lilies, courses, PALETTES, PAL_HEX, KIT, FrameBudget, InkVeil, TexturedSurface, SpriteSurface, TargetSelectors, SplatProvenance, ColorSpace, PaintCorrections, ColorCurves, ColorLUT, ColorStack, PixelLook, PaletteFields, LookInputs, RenderStages, ContributionRules, SurfaceDetailKits, SurfaceLook, SceneOptics, ReflectionProbes, SceneExposure, SkyEnvironment, AtmospherePalette, EnvironmentFrame, CelestialTracks, CloudField, Lightning, VOX, SplatEffects, ArtPasses, ArtDirection, ArtInk, EffectPalettes, SilhouetteProtection, DetailBudgets, ContactShadows, BounceProbes, LightCookies, AreaLights, EmissiveFinishes, HorizonBands, ArtStability, StableDetail, EdgeFilter, ArtEffects, VolumeField, VolumeLight';
 module.exports = {
   files,
   demoFiles,
@@ -118,19 +118,32 @@ module.exports = {
       new Uint8Array(fs.readFileSync(file)), { ...options, decodeImage });
   },
   readDataInputs(file) {
-    const api = module.exports.load().KIT.dataInputs;
-    const { dataInputs } = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const { KIT } = module.exports.load(), api = KIT.dataInputs;
+    const input = JSON.parse(fs.readFileSync(file, 'utf8')), bundles = KIT.authoring.projectBundles;
+    const { dataInputs } = input?.format === bundles.format ? bundles.open(input).scene() : input;
     if (dataInputs === undefined) throw new TypeError('Expected a dataInputs catalog in ' + file);
     return api.prepare(require('./cli/data-inputs.js').embed(api, dataInputs, file));
   },
   exportGlb: require('./cli/export-glb.js'),
   ...require('./cli/gltf-asset.js'),
   render: require('./cli/render.js').render,
+  paletteUsage: require('./cli/palette-usage.js').paletteUsage,
+  reviewRampShot: require('./cli/ramp-review.js').reviewRampShot,
+  comparePaletteDistributions: require('./cli/palette-distributions.js').comparePaletteDistributions,
+  measureQuantizationError: require('./cli/palette-error.js').measureQuantizationError,
+  reviewQuantizationError: require('./cli/palette-error.js').reviewQuantizationError,
+  inspectPalettePixel: require('./cli/palette-pixel.js').inspectPalettePixel,
+  reviewPaletteShimmer: require('./cli/palette-shimmer.js').reviewPaletteShimmer,
+  reviewSubjectReadability: require('./cli/readability-review.js').reviewSubjectReadability,
+  reviewPaletteWeather: require('./cli/palette-weather.js').reviewPaletteWeather,
+  reviewPaletteStages: require('./cli/palette-stages.js').reviewPaletteStages,
+  compareShotPalettes: require('./cli/palette-compare.js').compareShotPalettes,
   exportLayers: require('./cli/export-layers.js').exportLayers,
   exportScene: require('./cli/scene-export.js').exportScene,
   readSceneReplay: require('./cli/scene-replay.js').readSceneReplay,
   sampleSceneReplay: require('./cli/scene-replay.js').sampleSceneReplay,
   writeSceneEmbed: require('./cli/scene-replay.js').writeSceneEmbed,
+  ...require('./cli/project-bundle.js'),
   describeRenderFrame: (world, frame) => require('./src/render-contract.js').describe(world, frame),
   createCameraAtlas(options) {
     return module.exports.load().KIT.cameraAtlas.raster(options, (world, frame) => {
@@ -154,6 +167,9 @@ module.exports = {
   previewTimeline: require('./cli/animation-timeline.js').previewTimeline,
   readRasterAsset(file) {
     return require('./cli/raster-asset.js').readRasterAsset(file, module.exports.load().KIT.procedural.graph.raster);
+  },
+  readReferencePalette(file, options) {
+    return require('./src/palette-extract.js').extract(require('./cli/png.js').paletteSource(file), options);
   },
   writeRasterAsset: require('./cli/raster-asset.js').writeRasterAsset,
   createSceneEditor(source, options) {

@@ -144,11 +144,26 @@
     const pack = manifest(input), looks = pack.looks?.slice() ?? [];
     const index = looks.findIndex(look => look.id === id);
     if (index === -1) throw Error('Unknown look asset: ' + id);
-    if (!object(changes) || Object.keys(changes).some(key => !['label', 'params', 'stack', 'palette', 'mask', 'stage', 'paletteStage', 'order', 'weight'].includes(key)))
+    if (!object(changes) || Object.keys(changes).some(key => !['label', 'params', 'stack', 'palette', 'lightingRamp', 'mask', 'stage', 'paletteStage', 'order', 'weight'].includes(key)))
       throw Error('Look revision needs editable look fields');
     looks[index] = A.looks.definition(clone({ ...looks[index], ...changes }), pack.id);
     if (canonical(looks[index]) === canonical(pack.looks[index])) return pack;
     return manifest({ ...pack, revision: pack.revision + 1, looks });
+  }
+
+  function savePaletteLook(definition, input) {
+    const pack = input === undefined ? null : manifest(input);
+    const id = definition?.id;
+    const packId = typeof id === 'string' ? id.split('/')[0] : undefined;
+    if (pack && pack.id !== packId) throw Error('Palette look must belong to pack ' + pack.id);
+    const previous = pack?.looks?.find(look => look.id === id);
+    const look = A.looks.paletteFinding(definition, previous);
+    if (!pack) return manifest({ format, version:1, id:packId, revision:1, title:look.label, looks:[look] });
+    if (previous) {
+      const { id, ...changes } = look;
+      return reviseLook(pack, id, changes);
+    }
+    return manifest({ ...pack, revision:pack.revision+1, looks:[...(pack.looks ?? []),look] });
   }
 
   function reviseEnvironment(input, id, changes) {
@@ -232,5 +247,5 @@
     for (const id of environments.keys()) A.environments.bind(id,catalog);
     return catalog;
   }
-  A.assetPacks = Object.freeze({ create, manifest, bundle, merge, reviseFamily, reviseLook, reviseEnvironment });
+  A.assetPacks = Object.freeze({ create, manifest, bundle, merge, reviseFamily, reviseLook, reviseEnvironment, savePaletteLook });
 })(KIT);

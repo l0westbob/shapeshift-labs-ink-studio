@@ -2204,6 +2204,76 @@
       "generated": true
     },
     {
+      "id": "cli.randomness",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio randomness",
+      "what": "See ink-studio help.",
+      "use": "ink-studio randomness <recipe.json> [--samples 16 --out report.json]  inspect named authoring streams and distributions",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.math-fields",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio math-fields",
+      "what": "See ink-studio help.",
+      "use": "ink-studio math-fields <field.json> [--point x,y,z --time n --integrate seconds --out report.json]  inspect procedural math fields",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.render-graph",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio render-graph",
+      "what": "See ink-studio help.",
+      "use": "ink-studio render-graph <graph.json> [--w 900 --h 620 --out report.json]  inspect effect resolution and memory/work budgets",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.material-controls",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio material-controls",
+      "what": "See ink-studio help.",
+      "use": "ink-studio material-controls <material.json> [--palette colors.json --out report.json]  inspect shared material controls",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.light-emitters",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio light-emitters",
+      "what": "See ink-studio help.",
+      "use": "ink-studio light-emitters <lights.json> [--at seconds --out report.json]  inspect shaped lights and cookies",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
       "id": "cli.typography",
       "kind": "cli",
       "status": "ready",
@@ -2378,6 +2448,20 @@
       "title": "Save a frame from a replay",
       "what": "save a frame from a replay",
       "use": "ink-studio scene-replay <recording.json> --out output.png [--at seconds]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.project",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio project",
+      "what": "See ink-studio help.",
+      "use": "ink-studio project pack <scene.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",

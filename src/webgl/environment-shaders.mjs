@@ -19,8 +19,26 @@ vec4 envRow(int index) {
 }
 `;
 
-export const environmentMediaGLSL = rays + data + `
+export function environmentMediaSource(lighting=false){ return rays + data + (lighting?`uniform highp sampler3D u_eFogField;uniform vec3 u_eFogMin,u_eFogExtent,u_eFogSize;vec3 eFogLight(vec3 p){vec3 uv=(clamp((p-u_eFogMin)/u_eFogExtent,vec3(0),vec3(1))*(u_eFogSize-1.0)+.5)/u_eFogSize;return texture(u_eFogField,uv).rgb;}`:'') + `
 uniform int u_envFogCount, u_envCardSize;
+uniform int u_envPaletteFog, u_envPaletteStart, u_envPaletteCard;
+vec3 envPalette(vec3 base, int index, vec4 signals) {
+  if (index < 0) return base;
+  vec4 field = envRow(index);
+  if (field.x < 0.5) return base;
+  vec4 transfer = envRow(index+1);
+  float value = clamp((signals[int(field.y)]-field.z)/field.w,0.0,1.0);
+  int first = int(transfer.x), count = int(transfer.y);
+  if (field.x < 1.5) {
+    for (int i=32; i>=0; i--) {
+      if (i >= count) continue;
+      vec4 stop = envRow(first+i);
+      if (value >= stop.w) return mix(base,stop.rgb,transfer.z);
+    }
+    return base;
+  }
+  return mix(base,envRow(first+int(floor(value*float(count-1)+0.5))).rgb,transfer.z);
+}
 uniform highp sampler2D u_envCard, u_envCloudLight;
 uniform float u_envBands, u_envCloudHardness;
 float envBand(float value) {
@@ -56,7 +74,7 @@ bool envFogInterval(vec3 origin, vec3 ray, float stop, int index, out vec2 hit) 
   return envSlab(hit,p,d,0.0,second.w) &&
     envRadial(hit,1.0-d*d,dot(offset,ray)-p*d,dot(offset,offset)-p*p-range.z*range.z);
 }
-vec4 envFog(vec3 origin, vec3 ray, float stop) {
+vec4 envFog(vec3 origin, vec3 ray, float stop, float setback) {
   const int budget = ${2*fogLimit};
   vec2 events[budget];
   int n = 0;
@@ -79,17 +97,60 @@ vec4 envFog(vec3 origin, vec3 ray, float stop) {
     events[j] = value;
   }
   vec4 result = vec4(0,0,0,1), medium = vec4(0);
+  ${lighting?'vec3 luminous=vec3(0);':''}
   float last = 0.0;
+  int fieldMask = 0;
+  float rateFloor = n > 0 ? (events[n-1].x-events[0].x)/64.0 : 0.0;
   for (int i=0; i<budget; i++) {
     if (i >= n) break;
     vec2 event = events[i];
     if (medium.a > 1e-10 && event.x > last) {
+      if (fieldMask != 0) {
+        float stepSize = event.x-last;
+        for (int v=0; v<${fogLimit}; v++) {
+          if ((fieldMask & (1 << v)) != 0) stepSize = min(stepSize,envRow(u_envPaletteStart+v*2+1).w);
+        }
+        stepSize = max(stepSize, max(rateFloor,1e-5));
+        for (int j=0; j<64; j++) {
+          float from = last+float(j)*stepSize;
+          if (from >= event.x) break;
+          float distance = min(stepSize,event.x-from), depth = from+distance*0.5;
+          vec3 point = origin+ray*depth, color = medium.rgb;
+          ${lighting?'vec3 litColor=luminous;':''}
+          for (int v=0; v<${fogLimit}; v++) {
+            if ((fieldMask & (1 << v)) == 0) continue;
+            vec4 source = envRow(v*4+2);
+            vec3 tint = envPalette(source.rgb,u_envPaletteStart+v*2,vec4(max(0.0,depth-setback),point.y,0.0,0.0));
+            vec3 change = (tint-source.rgb)*source.a;
+            color += change;
+            ${lighting?'if(envRow(v*4+3).w>.5)litColor+=change;':''}
+          }
+          ${lighting?'if(dot(litColor,vec3(1))>0.0)color+=litColor*(eFogLight(point)-1.0);':''}
+          float alpha = 1.0-exp(-medium.a*distance);
+          result.rgb += result.a*alpha*color/medium.a;
+          result.a *= 1.0-alpha;
+        }
+      } else {
+      ${lighting?`if(dot(luminous,vec3(1))>0.0){
+        float ds=(event.x-last)/4.0,alpha=1.0-exp(-medium.a*ds);
+        for(int j=0;j<4;j++){vec3 p=origin+ray*(last+(float(j)+.5)*ds);vec3 light=eFogLight(p);
+          result.rgb+=result.a*alpha*(medium.rgb-luminous+luminous*light)/medium.a;result.a*=1.0-alpha;}
+      }else{`:''}
       float alpha = 1.0-exp(-medium.a*(event.x-last));
       result.rgb += result.a * alpha * medium.rgb / medium.a;
       result.a *= 1.0-alpha;
+      ${lighting?'}':''}
+      }
     }
-    vec4 volume = envRow(4*(int(abs(event.y))-1)+2);
+    int volumeIndex = int(abs(event.y))-1;
+    if (u_envPaletteFog != 0 && envRow(u_envPaletteStart+volumeIndex*2).x > 0.5) {
+      int bit = 1 << volumeIndex;
+      if (event.y > 0.0) fieldMask |= bit;
+      else fieldMask &= ~bit;
+    }
+    vec4 volume = envRow(4*volumeIndex+2);
     medium += sign(event.y)*vec4(volume.rgb*volume.a,volume.a);
+    ${lighting?'if(envRow(4*(int(abs(event.y))-1)+3).w>.5)luminous+=sign(event.y)*volume.rgb*volume.a;':''}
     last = event.x;
   }
   if (u_envBands > 1.0 && result.a < 1.0) {
@@ -134,18 +195,20 @@ vec4 envCard(vec3 origin, vec3 ray, float start, float stop) {
   if (hardness > 0.5) coverage = clamp(0.5+(coverage-0.5)*(1.0+(hardness-0.5)*13.0),0.0,1.0);
   else if (hardness < 0.5) coverage = mix(coverage,acos(1.0-2.0*coverage)/3.14159265359,1.0-2.0*hardness);
   float alpha = u_envCloudHeight.z*coverage;
-  vec3 color = u_envCloudRGB;
+  vec3 at = origin + ray * (0.5*(clip.x+clip.y));
+  float brightness = 0.0, density = coverage;
   if (u_envCloudHeight.w > 0.0) {
-    vec3 at = origin + ray * (0.5*(clip.x+clip.y));
     float y = clamp((at.y-u_envCloudHeight.x)/u_envCloudHeight.y,0.0,1.0);
-    float density = envCone(at.xz);
+    density = envCone(at.xz);
     float rim = pow(max(0.0,dot(u_envCloudSun,ray)),12.0);
     float up = envCone(at.xz+u_envCloudSun.xz*u_envCloudHeight.w);
     float relief = clamp(0.52 + 1.45*(density-up),0.0,1.0);
     float light = clamp(u_envCloudStyle.x + u_envCloudStyle.w *
       (u_envCloudStyle.y*(0.24+0.76*relief)*(0.48+0.52*y)+u_envCloudStyle.z*rim),0.0,1.0);
-    color = mix(color,u_envCloudLightRGB,light*(0.49+0.51*exp(-mass*0.58)));
+    brightness = light*(0.49+0.51*exp(-mass*0.58));
   }
+  vec3 color = envPalette(u_envCloudRGB,u_envPaletteCard,vec4(0.0,at.y,density,brightness));
+  color = mix(color,u_envCloudLightRGB,brightness);
   return vec4(alpha*color,1.0-alpha);
 }
 vec3 envMedia(vec3 color, vec2 pixel, vec2 size, float axialDepth) {
@@ -162,12 +225,14 @@ vec3 envMedia(vec3 color, vec2 pixel, vec2 size, float axialDepth) {
     color = card.rgb + card.a*color;
   }
   if (u_envFogCount > 0) {
-    vec4 fog = envFog(origin,ray,stop);
+    vec4 fog = envFog(origin,ray,stop,u_envCamera.w/axial);
     color = fog.rgb + fog.a*color;
   }
   return color;
 }
-`;
+`;}
+export const environmentMediaGLSL=environmentMediaSource();
+
 
 const sky = `
 uniform int u_envHasSky, u_envSkySplats, u_envSkyStart, u_envBackdropSampled;
@@ -201,9 +266,10 @@ vec3 envBackdrop(vec2 pixel, vec2 size) {
 `;
 
 export const environmentBackgroundGLSL = environmentMediaGLSL + sky;
-export const environmentBackgroundShader = layeredGlass => `#version 300 es
+export const environmentBackgroundSource=(lighting=false)=>environmentMediaSource(lighting)+sky;
+export const environmentBackgroundShader = (layeredGlass,lighting=false) => `#version 300 es
 precision highp float; precision highp int;
-${environmentBackgroundGLSL}
+${environmentMediaSource(lighting)+sky}
 uniform vec2 u_envViewport;
 layout(location=0) out vec4 scene;
 layout(location=1) out vec4 depth;

@@ -105,12 +105,12 @@ module.exports = function bake({ file, options, source, authoring, select, nativ
   const { step, context, error } = reference ? paletteBake(authored.stack, reference, compile) :
     lutBake(authored.stack, options, sampleCube, standaloneLUT);
   const label = authored.label.slice(0, 93) + ' (bake)';
-  const { palette, mask, stage, order, weight } = authored;
+  const { palette, lightingRamp, mask, stage, order, weight } = authored;
   const stack = ColorStack.normalize({ name: label, steps: [step],
     baked: { source: authored.stack, ...context, error } });
   const compiledManifest = assetPacks.manifest({ format: 'ink-studio/asset-pack', version: 1, revision: 1,
     id: compiledPack, title: label, looks: [{ id: compiled, label, stack,
-      ...(palette && { palette }), ...(mask !== undefined && { mask }),
+      ...(palette && { palette }), ...(lightingRamp && { lightingRamp }), ...(mask !== undefined && { mask }),
       ...(stage !== undefined && { stage }), ...(order !== undefined && { order }), ...(weight !== undefined && { weight }) }] });
   return {
     bundle: assetPacks.bundle([...packs, compiledManifest]),

@@ -11,22 +11,23 @@ const ArtStability = (() => {
     return { dither, spacing, origin: point.slice() };
   }
 
-  function prepare(definition, override) {
-    if (override === false || (override === undefined && !definition)) return null;
+  function prepare(definition, override, ditherSpaceOverride) {
+    if (ditherSpaceOverride === undefined && (override === false || (override === undefined && !definition))) return null;
     function read(value) {
       if (value === true) return { snap: true };
       if (value === undefined || value === false || value === null) return {};
       if (typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Expected pixel stability settings');
       return value;
     }
-    const settings = { ...read(definition), ...read(override) };
+    const settings = { ...read(override === false ? undefined : definition), ...read(override) };
     const { snap = false, anchor = origin, resolve = 'native', threshold = .4, protect = [], targets = [] } = settings;
     if (typeof snap !== 'boolean' || !vector(anchor) ||
         !['native', 'coverage', 'clusters'].includes(resolve) || !Number.isFinite(threshold) || threshold <= 0 || threshold > 1 ||
         !Array.isArray(protect) || !Array.from(protect).every(value => typeof value === 'string' || Number.isSafeInteger(value)) ||
         !Array.isArray(targets) || targets.length > 64)
       throw new RangeError('Invalid pixel stability settings');
-    const main = pattern(settings);
+    const space = ditherSpaceOverride === undefined ? {} : { dither:ditherSpaceOverride };
+    const main = pattern({ ...settings, ...space });
     const named = value => typeof value === 'string' && value.trim() || Number.isSafeInteger(value);
     const rules = Array.from(targets, row => {
       if (!row || Object.getPrototypeOf(row) !== Object.prototype ||
@@ -36,7 +37,7 @@ const ArtStability = (() => {
       if (object === undefined && material === undefined ||
           object !== undefined && !named(object) || material !== undefined && !named(material))
         throw new TypeError('A dither target needs an object or material name');
-      return { ...pattern({ ...main, ...row }), object, material };
+      return { ...pattern({ ...main, ...row, ...space }), object, material };
     });
     const anchorSpaces = new Set([main.dither, ...rules.map(rule => rule.dither)]);
     anchorSpaces.delete('screen');
@@ -109,7 +110,7 @@ const ArtStability = (() => {
       (material > 0 && settings.protect.has(String(passes.materials[material] ?? material)));
   }
 
-  function resolve(native, samples, settings, palette, pixelLook, dither, { local, grade, tone } = {}) {
+  function resolve(native, samples, settings, palette, pixelLook, dither, { local, grade, tone, inspect } = {}) {
     const { w, h, color, passes } = native, sw = samples.w;
     const rgb = new Uint8Array(w * h * 3), use = new Uint32Array(local?.output.packed.length ?? palette.length);
     const coverage = new Float32Array(w * h), detail = new Uint8Array(w * h);
@@ -125,19 +126,22 @@ const ArtStability = (() => {
       const p = y * w + x, s = (y * sw + x) * 2, q = p * 3;
       const c = ((h - 1 - y) * w + x) * 3;
       const [dx, dy] = ditherCoordinates(settings, passes, p, x, y);
-      const bias = (pixelLook.bayerRank(dx, dy) - .5) * dither;
+      const rank = pixelLook.bayerRank(dx,dy), bias = (rank - .5) * dither;
+      const trace = inspect?.pixel === p ? {} : undefined;
       const localId = local?.at[(h - 1 - y) * w + x];
       if (localId && (detail[p] || coverage[p] >= settings.threshold)) {
         const nativeShade = [color[c] / 255, color[c + 1] / 255, color[c + 2] / 255];
         const anchor = local.constraints?.[localId - 1]?.anchor;
         const [lx, ly] = anchor ? ditherCoordinates(null, passes, p, x, y, anchor) : [dx, dy];
-        const index = pixelLook.localIndex(local, localId, nativeShade, lx, ly, !detail[p], x, y);
+        const index = pixelLook.localIndex(local, localId, nativeShade, lx, ly, !detail[p], x, y, trace);
+        if (trace) inspect.local(local,localId,nativeShade,trace);
         use[index]++;
         const packed = local.output.packed[index];
         rgb[q] = packed >> 16; rgb[q + 1] = (packed >> 8) & 255; rgb[q + 2] = packed & 255;
         continue;
       }
       let threshold = settings.threshold, chosen = 0;
+      let selectedShade;
       if (settings.resolve === 'clusters' && coverage[p] > 0 && coverage[p] < 1) {
         const neighbor = (x > 0 && coverage[p - 1] >= threshold) || (x + 1 < w && coverage[p + 1] >= threshold) ||
           (y > 0 && coverage[p - w] >= threshold) || (y + 1 < h && coverage[p + w] >= threshold);
@@ -145,6 +149,7 @@ const ArtStability = (() => {
       }
       if (detail[p] || coverage[p] >= threshold) {
         const votes = new Map();
+        const voteChoices = trace && new Map();
         if (coverage[p] < .98 && !detail[p]) {
           for (const j of [s, s + 1, s + sw, s + sw + 1]) {
             const weight = samples.passes.coverage[j];
@@ -156,18 +161,34 @@ const ArtStability = (() => {
               const foreground = samples.alpha ? value : (value - bg * (1 - a)) / a;
               return Math.max(0, Math.min(1, foreground + bias));
             });
-            const index = tone ? pixelLook.toneIndex(tone, ...shade, dx, dy) : pixelLook.nearest(shade, palette, true);
+            const vote = trace && {};
+            const index = tone ? pixelLook.toneIndex(tone, ...shade, dx, dy, vote) : pixelLook.nearest(shade, palette, true);
             votes.set(index, (votes.get(index) || 0) + weight);
+            voteChoices?.set(index,{shade,trace:vote});
           }
         }
         const shade = [color[c] / 255, color[c + 1] / 255, color[c + 2] / 255];
-        chosen = tone ? pixelLook.toneIndex(tone, ...shade, dx, dy) :
+        chosen = tone ? pixelLook.toneIndex(tone, ...shade, dx, dy, trace) :
           pixelLook.nearest(shade.map(value => value + bias), palette, !detail[p]);
+        const nativeChoice = chosen;
+        selectedShade = shade;
         let best = votes.get(chosen) || 0;
         for (const [index, weight] of votes) if (weight > best) {
           chosen = index;
           best = weight;
         }
+        if (trace && chosen !== nativeChoice) {
+          const vote = voteChoices.get(chosen);
+          selectedShade = vote.shade;
+          trace.dither = vote.trace.dither;
+          trace.method = 'coverage-vote';
+        }
+        if (trace && !tone && dither) trace.dither = {mode:'ordered-bias',pattern:'bayer',
+          coordinates:[dx,dy],rank,strength:dither,bias};
+      } else if (trace) trace.method = 'coverage-background';
+      if (trace) {
+        inspect.scene(selectedShade ?? [color[c] / 255,color[c + 1] / 255,color[c + 2] / 255],
+          inspect.colors,chosen,trace.method,trace);
       }
       use[chosen]++;
       for (let k = 0; k < 3; k++) rgb[q + k] = Math.round((grade ? grade[chosen * 3 + k] : palette[chosen][k]) * 255);

@@ -100,28 +100,22 @@ function writeIndexed(file, w, h, slots, palette) {
   out.push(chunk('IDAT',scanlines(w,h,pixels,1)),chunk('IEND',Buffer.alloc(0)));
   fs.writeFileSync(file,Buffer.concat(out));
 }
-function raster(file) {
+function decode(file, capturePalette) {
   const b = Buffer.isBuffer(file) ? file : fs.readFileSync(file);
-  if (b.length < 33 || b.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('Not a PNG file');
-  let p = 8,
-    w = 0,
-    h = 0,
-    bits,
-    color,
-    table,
-    transparency;
+  if (b.length < 33 || !b.subarray(0, 8).equals(signature)) throw new Error('Not a PNG file');
+  let p = 8, w = 0, h = 0, bits, color, interlace, table, transparency;
   const parts = [];
   while (p + 12 <= b.length) {
-    const len = b.readUInt32BE(p),
-      type = b.toString('ascii', p + 4, p + 8),
-      d = b.subarray(p + 8, p + 8 + len);
+    const len = b.readUInt32BE(p), type = b.toString('ascii', p + 4, p + 8);
     if (p + 12 + len > b.length) throw new Error('Truncated PNG chunk');
+    const d = b.subarray(p + 8, p + 8 + len);
     if (type === 'IHDR') {
-      if (len !== 13 || d[10] || d[11] || d[12]) throw new Error('PNG must be non-interlaced with standard filtering and compression');
+      if (len !== 13 || d[10] || d[11] || d[12] > 1) throw new Error('PNG must use standard filtering, compression and interlacing');
       w = d.readUInt32BE(0);
       h = d.readUInt32BE(4);
       bits = d[8];
       color = d[9];
+      interlace = d[12];
     } else if (type === 'PLTE') table = d;
     else if (type === 'tRNS') transparency = d;
     else if (type === 'IDAT') parts.push(d);
@@ -130,68 +124,76 @@ function raster(file) {
   }
   const ch = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[color];
   const allowed = color === 0 ? [1, 2, 4, 8, 16] : color === 3 ? [1, 2, 4, 8] : [8, 16];
-  if (!w || !h || w * h > 16777216 || !ch || !allowed.includes(bits) || (color === 3 && !table))
+  if (!w || !h || w * h > 16777216 || !ch || !allowed.includes(bits))
     throw new Error('Unsupported PNG dimensions or colour format');
-  const rowBytes = Math.ceil(w * ch * bits / 8),
-    bpp = Math.ceil(ch * bits / 8),
-    st = rowBytes + 1,
-    raw = zlib.inflateSync(Buffer.concat(parts), { maxOutputLength: h * st }),
-    out = bits === 16 ? new Uint16Array(w * h * 4) : new Uint8Array(w * h * 4),
-    row = new Uint8Array(rowBytes),
-    prev = new Uint8Array(rowBytes),
-    max = color === 3 ? 255 : (1 << bits) - 1;
-  if (raw.length !== h * st) throw new Error('Invalid PNG scanline length');
-  const sample = i => bits === 16 ? row[2 * i] * 256 + row[2 * i + 1]
-    : bits === 8 ? row[i]
-    : (row[(i * bits) >> 3] >> (8 - bits - (i * bits & 7))) & max;
+  const entries = table?.length / 3;
+  if (color === 3 && (!Number.isInteger(entries) || entries < 1 || entries > 2 ** bits || transparency?.length > entries))
+    throw new Error('Invalid indexed PNG palette');
+  const counts = capturePalette && color === 3 ? new Uint32Array(entries) : null;
+  const out = counts ? null : bits === 16 ? new Uint16Array(w * h * 4) : new Uint8Array(w * h * 4);
+  const sampleMask = (1 << bits) - 1, max = color === 3 ? 255 : sampleMask;
+  const bpp = Math.ceil(ch * bits / 8);
+  const passLayouts = interlace ? [[0,0,8,8],[4,0,8,8],[0,4,4,8],[2,0,4,4],[0,2,2,4],[1,0,2,2],[0,1,1,2]] : [[0,0,1,1]];
+  const passes = passLayouts.map(([x,y,dx,dy]) => ({
+    x, y, dx, dy, width: Math.max(0, Math.ceil((w-x)/dx)), height: Math.max(0, Math.ceil((h-y)/dy))
+  })).filter(pass => pass.width && pass.height);
+  const scanlineSize = passes.reduce((n, {width,height}) => n + height * (1 + Math.ceil(width * ch * bits / 8)), 0);
+  const raw = zlib.inflateSync(Buffer.concat(parts), { maxOutputLength: scanlineSize });
+  if (raw.length !== scanlineSize) throw new Error('Invalid PNG scanline length');
+
   const transparent = i => transparency && transparency.length >= 2 * (i + 1) ? transparency.readUInt16BE(2 * i) : -1;
-  for (let y = 0; y < h; y++) {
-    const f = raw[y * st];
-    if (f > 4) throw new Error('Invalid PNG filter');
-    for (let i = 0; i < rowBytes; i++) {
-      const x = raw[y * st + 1 + i],
-        a = i >= bpp ? row[i - bpp] : 0,
-        u = prev[i],
-        c = i >= bpp ? prev[i - bpp] : 0;
-      let v = x;
-      if (f === 1) v = x + a;
-      else if (f === 2) v = x + u;
-      else if (f === 3) v = x + ((a + u) >> 1);
-      else if (f === 4) {
-        const q = a + u - c,
-          pa = Math.abs(q - a),
-          pb = Math.abs(q - u),
-          pc = Math.abs(q - c);
-        v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? u : c);
+  const tr = transparent(0), tg = transparent(1), tb = transparent(2);
+  let cursor = 0;
+  for (const pass of passes) {
+    const {width,height,dx,dy} = pass, rowBytes = Math.ceil(width * ch * bits / 8);
+    const row = new Uint8Array(rowBytes), prev = new Uint8Array(rowBytes);
+    const sample = i => bits === 16 ? row[2 * i] * 256 + row[2 * i + 1]
+      : bits === 8 ? row[i]
+      : (row[(i * bits) >> 3] >> (8 - bits - (i * bits & 7))) & sampleMask;
+    for (let y = 0; y < height; y++) {
+      const filter = raw[cursor++];
+      if (filter > 4) throw new Error('Invalid PNG filter');
+      for (let i = 0; i < rowBytes; i++) {
+        const x = raw[cursor++], a = i >= bpp ? row[i - bpp] : 0,
+          u = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+        let v = x;
+        if (filter === 1) v = x + a;
+        else if (filter === 2) v = x + u;
+        else if (filter === 3) v = x + ((a + u) >> 1);
+        else if (filter === 4) {
+          const q = a + u - c, pa = Math.abs(q - a), pb = Math.abs(q - u), pc = Math.abs(q - c);
+          v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? u : c);
+        }
+        row[i] = v & 255;
       }
-      row[i] = v & 255;
-    }
-    for (let x = 0; x < w; x++) {
-      const dst = (y * w + x) * 4, src = x * ch;
-      if (color === 3) {
-        const index = sample(src);
-        if (index * 3 + 2 >= table.length) throw new Error('PNG references a colour outside its palette');
-        out[dst] = table[index * 3];
-        out[dst + 1] = table[index * 3 + 1];
-        out[dst + 2] = table[index * 3 + 2];
-        out[dst + 3] = transparency?.[index] ?? 255;
-      } else if (color === 0 || color === 4) {
-        const gray = sample(src);
-        out[dst] = out[dst + 1] = out[dst + 2] = gray;
-        out[dst + 3] = color === 4 ? sample(src + 1) : gray === transparent(0) ? 0 : max;
-      } else {
-        const r = sample(src), g = sample(src + 1), b = sample(src + 2);
-        out[dst] = r;
-        out[dst + 1] = g;
-        out[dst + 2] = b;
-        out[dst + 3] = color === 6 ? sample(src + 3)
-          : r === transparent(0) && g === transparent(1) && b === transparent(2) ? 0 : max;
+      for (let x = 0; x < width; x++) {
+        const dst = ((pass.y + y*dy)*w + pass.x + x*dx)*4, src = x*ch;
+        if (color === 3) {
+          const index = sample(src);
+          if (index >= entries) throw new Error('PNG references a colour outside its palette');
+          if (counts) counts[index]++;
+          else {
+            out[dst] = table[index*3]; out[dst+1] = table[index*3+1]; out[dst+2] = table[index*3+2];
+            out[dst+3] = transparency?.[index] ?? 255;
+          }
+        } else if (color === 0 || color === 4) {
+          const gray = sample(src);
+          out[dst] = out[dst+1] = out[dst+2] = gray;
+          out[dst+3] = color === 4 ? sample(src+1) : gray === tr ? 0 : max;
+        } else {
+          const r = sample(src), g = sample(src+1), bl = sample(src+2);
+          out[dst] = r; out[dst+1] = g; out[dst+2] = bl;
+          out[dst+3] = color === 6 ? sample(src+3) : r === tr && g === tg && bl === tb ? 0 : max;
+        }
       }
+      prev.set(row);
     }
-    prev.set(row);
   }
-  return { w, h, data: out, max };
+  if (counts) return { w, h, bitDepth: bits, indexed: { table, transparency, counts } };
+  return { w, h, data: out, max, ...(capturePalette && { bitDepth: bits }) };
 }
+function raster(file) { return decode(file, false); }
+function paletteSource(file) { return decode(file, true); }
 function read(file) {
   const { w, h, data, max } = raster(file);
   const rgb = new Uint8Array(w * h * 3);
@@ -237,4 +239,4 @@ function encodeAnimation(frames, fps) {
 function animate(file, frames, fps) {
   fs.writeFileSync(file, encodeAnimation(frames.map(packFrame), fps));
 }
-module.exports = { encode, encodeGray, write, writeIndexed, read, raster, animate, packFrame, encodeFrame, encodeAnimation };
+module.exports = { encode, encodeGray, write, writeIndexed, read, raster, paletteSource, animate, packFrame, encodeFrame, encodeAnimation };

@@ -224,7 +224,8 @@ function traceMedia(volumes, segments, origin, direction, stop, result, sample, 
 function mediaSampler(volumes, water, rayAt, width, horizon, options, aerial) {
   const size = options.fogTransmittance ? 9 : options.effectCoverage ? 8 : 6;
   const rays = [], sample = [0, 0, 0, 1], result = new Float64Array(size);
-  const fields = volumes.some(volume => volume.type === 'field' || volume.densityField || volume.depthBand?.sample);
+  const fields = volumes.some(volume => volume.type === 'field' || volume.densityField || volume.depthBand?.sample || volume.paletteField) ||
+    (options.media?.paletteLocals && volumes.some(volume => volume.lit));
   const tile = fields && options.jitter !== 'off' ? volumeNoise(options.seed) : null;
   const samples = fields ? options.samples : 1;
   const query = { ...options, reflectionCurrent:water?.mediumAt, jitter: .5 };
@@ -303,10 +304,11 @@ function mediaSampler(volumes, water, rayAt, width, horizon, options, aerial) {
 
 function applyAtmosphere(volumes, col, depths, rayAt, W, H, horizon, quality, time, media, capture, history, viewKey, fogScales) {
   const light = [0, 0, 0, 1], sample = [0, 0, 0, 1];
-  const fields = volumes.some(volume => volume.type === 'field' || volume.densityField || volume.depthBand?.sample);
+  const fields = volumes.some(volume => volume.type === 'field' || volume.densityField || volume.depthBand?.sample || volume.paletteField) ||
+    (media?.paletteLocals && volumes.some(volume => volume.lit));
   const query = { ...quality, time, media };
   // Reusing a density history would leave trails on animated lights and clear pockets.
-  const transient = quality.flash || quality.cutouts?.fog || fogScales;
+  const transient = quality.flash || quality.cutouts?.fog || fogScales || volumes.some(volume => volume.paletteField);
   if (transient) history?.clear();
   const temporal = fields && !transient && !quality.cloudShadow && !volumes.some(v => v.densityField || v.depthBand?.sample) &&
     !media?.animatedLocals && quality.jitter === 'spatiotemporal' && history;
@@ -319,6 +321,7 @@ function applyAtmosphere(volumes, col, depths, rayAt, W, H, horizon, quality, ti
   const fog = capture ? new Float32Array(W * H) : null;
   function solve(x, y, depth) {
     const { origin, direction, axial } = rayAt(x + .5, y + .5);
+    query.axial = axial;
     if (fogScales) query.fogScale = fogScales[y*W+x];
     const stop = (Number.isFinite(depth) ? depth : horizon) / axial;
     const phase = tile ? ((tile.ranks[y % tile.height * tile.width + x % tile.width] + .5) / tile.ranks.length + phaseShift) % 1 : .5;
