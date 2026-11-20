@@ -40,6 +40,17 @@ A diorama is JSON: `id` (lowercase, digits, dashes), `name`, `seed`, `style` (`s
 - Moving, rotating and scaling existing solids use `setTransform` with `keys`; changing geometry uses `updateShape`; materials use `setMaterial`; palette ramps use `setRole`.
 - A batch is atomic: if any operation or the final validation fails, nothing changes and the error names the operation (`/operations/N`).
 - `revert` with an earlier `revision` undoes a batch within the session.
+- A file that does not validate cannot be opened, but `scene_edit` with its `path` repairs it: send only `patch` operations; just the result has to validate.
+
+## When the ink-studio MCP tools are missing
+
+Some organizations allow only managed MCP servers, so the `scene_*` tools may not be available. Every tool also runs from the shell with the same JSON input and output:
+
+```bash
+ink-agent call scene_validate '{"scene":{"path":"/abs/path/scenes/well.json"}}'
+```
+
+Handles do not survive between shell calls, so work with paths: write the diorama with your file tools (a hook validates it on every write), call `scene_edit` with `{"scene":{"path":...}}` to edit and save it in place, and pass `out` to `scene_render` and then Read the PNG to see it. `ink-agent list` prints every tool with its input schema.
 
 ## Pitfalls
 

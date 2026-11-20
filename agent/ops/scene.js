@@ -418,16 +418,79 @@ function draftEdits(entry, operations) {
   return { before, after: spec, editor };
 }
 
+/* Repairs a .json diorama that does not validate: patch operations apply to the raw JSON and only the result must validate.
+   Editor operations need a valid scene, so a repair batch may only contain patches. */
+function repairFile(given, { operations, baseRevision, dryRun, render, metrics }, ctx) {
+  const root = ctx.root ?? process.cwd(), file = path.resolve(root, given), dir = path.dirname(file);
+  const before = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const current = revisionOf(before);
+  if (baseRevision !== undefined && baseRevision !== current)
+    throw new OpError('STALE_REVISION', 'The file is at ' + current + ', not ' + baseRevision, { hint: 'reread it or drop baseRevision' });
+  const original = Scenes.problemsOf(before, Scenes.environmentFor(before, dir, root));
+  const editorOp = operations.findIndex(op => op.op !== 'patch');
+  if (editorOp >= 0)
+    throw new OpError('INVALID_SCENE', 'The file does not validate yet; repair it with patch operations first', {
+      path: '/operations/' + editorOp, hint: 'use { "op": "patch", "patch": { ... } } for every operation until the file validates',
+      details: Scenes.errorsOf(original)
+    });
+  let after = before;
+  operations.forEach((op, index) => {
+    if (!op.patch) throw new OpError('INVALID_INPUT', 'patch needs a patch object', { path: '/operations/' + index + '/patch' });
+    after = applyPatch(after, op.patch, index);
+  });
+  const env = Scenes.environmentFor(after, dir, root);
+  const remaining = Scenes.errorsOf(Scenes.problemsOf(after, env));
+  if (remaining.length) throw new OpError('INVALID_SCENE', 'The repaired diorama still has errors', { details: remaining });
+  const editor = Scenes.makeEditor(after, env);
+  const result = {
+    dryRun, repaired: true, fixed: Scenes.errorsOf(original), previousRevision: current, revision: revisionOf(after),
+    changes: diff(before, after)
+  };
+  if (!dryRun) {
+    writeAtomic(file, editor.serialize(2) + '\n');
+    result.file = file;
+  }
+  const target = { kind: 'diorama', editor, env, dir, file, worlds: new Map(), warnings: [], history: [] };
+  if (render) {
+    result.render = renderEntry(target, render, ctx);
+    delete result.render.handle;
+  }
+  if (metrics) {
+    const world = Scenes.worldAt(target, { t: render?.t ?? 0 });
+    result.metrics = measure(world, renderImage(world, { t: render?.t ?? 0, view: render?.view, size: render?.size, look: render?.look }), metrics);
+  }
+  const image = result.render?.image;
+  if (image) delete result.render.image;
+  const out = compact(result);
+  if (image) out.image = image;
+  return out;
+}
+
+/* write-then-rename so readers never see half a file; the temporary file is removed if anything fails */
+function writeAtomic(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = file + '.' + process.pid + '.' + Date.now() + '.tmp';
+  try {
+    fs.writeFileSync(temporary, text);
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
 defineOp({
   name: 'scene_edit',
   title: 'Edit a diorama',
   effects: 'write',
-  description: 'Apply a batch of edits to an open diorama atomically: either every operation applies and the scene validates, or nothing changes. Pass baseRevision to guard against stale state and dryRun to preview. Optionally render and/or measure the result in the same call. Operations: ' +
+  description: 'Apply a batch of edits to a diorama atomically: either every operation applies and the scene validates, or nothing changes. scene is an open handle, or a .json path, which is edited and written back in place (useful from the shell, where handles do not persist). A .json path that does not validate yet can be repaired with patch operations: only the result has to validate. Pass baseRevision to guard against stale state and dryRun to preview. Optionally render and/or measure the result in the same call. Operations: ' +
     Object.entries(EDIT_OPS).map(([k, v]) => k + ' ' + v).join('; '),
   input: {
     type: 'object', required: ['scene', 'operations'],
     properties: {
-      scene: { type: 'object', required: ['handle'], properties: { handle: { type: 'string' } }, additionalProperties: false },
+      scene: {
+        type: 'object', description: 'Exactly one of handle (from scene_open) or path (a .json diorama, saved in place).',
+        properties: { handle: { type: 'string' }, path: { type: 'string' } }, additionalProperties: false
+      },
       operations: { type: 'array', items: editOpSchema, minItems: 1, maxItems: 200 },
       baseRevision: { type: 'string', description: 'Fail with STALE_REVISION unless the scene is still at this revision.' },
       dryRun: { type: 'boolean', description: 'Validate and report the diff without changing the session.' },
@@ -437,7 +500,16 @@ defineOp({
     additionalProperties: false
   },
   async run({ scene, operations, baseRevision, dryRun = false, render, measure: metrics }, ctx) {
-    const entry = Scenes.open(scene, ctx);
+    if (scene.path !== undefined && !/\.json$/i.test(scene.path))
+      throw new OpError('UNSUPPORTED', 'Only .json dioramas can be edited by path', { path: '/scene/path' });
+    let entry;
+    try {
+      entry = Scenes.open(scene, { ...ctx, persist: !!scene.handle });
+    } catch (error) {
+      /* a file that does not validate yet cannot be opened, but it can be repaired with patches */
+      if (scene.path === undefined || error.code !== 'INVALID_SCENE') throw error;
+      return repairFile(scene.path, { operations, baseRevision, dryRun, render, metrics }, ctx);
+    }
     if (entry.kind !== 'diorama')
       throw new OpError('NOT_EDITABLE', 'Only JSON dioramas are editable; this is a ' + entry.kind + ' scene', { path: '/scene/handle' });
     const current = Scenes.revisionFor(entry);
@@ -457,13 +529,18 @@ defineOp({
 
     const before = Scenes.specOf(entry);
     const revision = revisionOf(after);
-    const result = { handle: entry.handle, dryRun, previousRevision: current, revision, changes: diff(before, after) };
+    const result = { handle: entry.persisted ? entry.handle : undefined, dryRun, previousRevision: current, revision, changes: diff(before, after) };
     if (!dryRun && revision !== current) {
       entry.history.push({ revision: current, spec: before });
       if (entry.history.length > Scenes.HISTORY_LIMIT) entry.history.shift();
       entry.editor = editor;
       entry.warnings = Scenes.problemsOf(after, entry.env);
       entry.dirty = true;
+      if (!entry.persisted) {
+        writeAtomic(entry.file, editor.serialize(2) + '\n');
+        entry.dirty = false;
+        result.file = entry.file;
+      }
     }
     if (render || metrics) {
       const target = dryRun
@@ -510,10 +587,7 @@ defineOp({
     if (!file.endsWith('.json')) throw new OpError('INVALID_INPUT', 'Save to a .json path', { path: '/path' });
     if (file !== entry.file && fs.existsSync(file) && !overwrite)
       throw new OpError('EXISTS', 'A file already exists at ' + file, { path: '/path', hint: 'pass overwrite: true' });
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const temporary = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(temporary, entry.editor.serialize(2) + '\n');
-    fs.renameSync(temporary, file);
+    writeAtomic(file, entry.editor.serialize(2) + '\n');
     if (!entry.file) {
       entry.file = file;
       entry.dir = path.dirname(file);

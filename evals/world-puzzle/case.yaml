@@ -1,0 +1,33 @@
+schema_version: "1.1"
+name: world-puzzle
+description: Discover the inputs that win a deterministic puzzle world, then verify and save the run.
+tags: [world, simulation]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    worlds/gate.json in the current directory is a deterministic ink-studio world whose scenario times out unless
+    the right inputs are sent at the right ticks. Using the ink-studio world tools (MCP, or the `ink-agent` shell command if they are not available), find a sequence of actions that makes
+    the scenario end in a win. Then verify the winning run and save its recording to runs/gate.run.json.
+    Pass absolute paths. Report the actions you used.
+    In this workspace the shell command is `./ink-agent` (the sandbox cannot run the plugin's own copy).
+  max_turns: 40
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+graders:
+  - name: stepped-with-actions
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call world_step[\s\S]*world/input'
+  - name: verified
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call world_sim[\s\S]*verify'
+  - name: won
+    type: regex
+    target: trace
+    pattern: 'status[\\\\"]*:[\\\\"]*win'
+  - name: recording-saved
+    type: regex
+    target: { source: file, path: runs/gate.run.json }
+    pattern: 'ink-studio/run'

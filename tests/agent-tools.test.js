@@ -256,3 +256,63 @@ test('scene_review accepts reports printed to stdout (cloth-review)', async () =
   assert.equal(typeof review.report, 'object');
   assert.ok(review.report.scene);
 });
+
+test('shell transport: ink-agent, scene_edit by path and world_step chained through files', async t => {
+  const dir = tempDir(t);
+  const { spawnSync } = require('node:child_process');
+  const agent = (...args) => spawnSync(path.join(root, 'bin', 'ink-agent'), args, { cwd: dir, encoding: 'utf8' });
+  const listed = agent('list');
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.ok(JSON.parse(listed.stdout).some(tool => tool.name === 'scene_edit'));
+
+  const scene = path.join(dir, 'gem.json');
+  fs.copyFileSync(path.join(root, 'examples', 'scene.json'), scene);
+  const edited = agent('call', 'scene_edit', JSON.stringify({ scene: { path: scene }, operations: [{ op: 'setMaterial', keys: ['slot:1'], material: 'earth' }] }));
+  assert.equal(edited.status, 0, edited.stdout);
+  assert.equal(JSON.parse(edited.stdout).result.file, scene);
+  assert.equal(JSON.parse(fs.readFileSync(scene, 'utf8')).solids[1].mat, 'earth');
+  const rejected = agent('call', 'scene_edit', JSON.stringify({ scene: { path: scene }, operations: [{ op: 'patch', patch: { op: 'replace', path: '/solids/1/kind', value: 'bal' } }] }));
+  assert.equal(rejected.status, 1);
+  assert.equal(JSON.parse(fs.readFileSync(scene, 'utf8')).solids[1].kind, 'ball', 'a rejected batch leaves the file alone');
+  fails(await call('scene_edit', { scene: { path: 'examples/sculpt.js' }, operations: [{ op: 'setRole', name: 'x', ramp: [1] }] }), 'UNSUPPORTED');
+
+  const actions = JSON.parse(fs.readFileSync(path.join(root, 'examples', 'world-puzzle-gate.actions.json'), 'utf8'));
+  const first = path.join(dir, 'step1.json'), second = path.join(dir, 'step2.json');
+  ok(await call('world_step', { world: { path: 'examples/world-puzzle-gate.json' }, steps: 5, actions, save: { path: first } }));
+  const done = ok(await call('world_step', { world: { path: first }, save: { path: second } }));
+  assert.equal(done.scenario.status, 'win');
+  assert.equal(done.handle, undefined, 'one-shot steps do not leave sessions behind');
+  assert.equal(ok(await call('world_sim', { world: { path: second }, action: 'verify' })).status, 'verified');
+  fails(await call('world_sim', { world: { path: second }, action: 'fork' }), 'INVALID_INPUT');
+  fails(await call('world_step', { world: { path: first }, save: { path: second } }), 'EXISTS');
+});
+
+test('scene_edit repairs an invalid file with patches and ink-agent explains itself', async t => {
+  const dir = tempDir(t), file = path.join(dir, 'broken.json');
+  fs.copyFileSync(path.join(root, 'evals', '_fixtures', 'broken.json'), file);
+  const kindFix = { op: 'patch', patch: { op: 'replace', path: '/solids/2/kind', value: 'ball' } };
+  const partial = fails(await call('scene_edit', { scene: { path: file }, operations: [kindFix] }), 'INVALID_SCENE');
+  assert.equal(partial.details[0].path, 'bogus');
+  const editorOp = fails(await call('scene_edit', { scene: { path: file }, operations: [{ op: 'setMaterial', keys: ['slot:1'], material: 'earth' }] }), 'INVALID_SCENE');
+  assert.match(editorOp.hint, /patch/);
+  assert.match(fs.readFileSync(file, 'utf8'), /"bal"/, 'failed repairs leave the file alone');
+  const repaired = ok(await call('scene_edit', { scene: { path: file }, operations: [kindFix, { op: 'patch', patch: { op: 'remove', path: '/bogus' } }] }));
+  assert.equal(repaired.repaired, true);
+  assert.equal(repaired.fixed.length, 2);
+  assert.equal(ok(await call('scene_validate', { scene: { path: file } })).valid, true);
+
+  const { spawnSync } = require('node:child_process');
+  const help = spawnSync(process.execPath, [path.join(root, 'bin', 'ink-agent'), '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /ink-agent call <tool>/);
+  assert.match(help.stdout, /scene_edit/);
+});
+
+test('world review fixes: no silent overwrite, no empty verify, one-shot note', async t => {
+  const dir = tempDir(t), source = path.join(dir, 'gate.json');
+  fs.copyFileSync(path.join(root, 'examples', 'world-puzzle-gate.json'), source);
+  fails(await call('world_step', { world: { path: source }, steps: 1, save: { path: source } }), 'EXISTS');
+  assert.equal(JSON.parse(fs.readFileSync(source, 'utf8')).format, 'ink-studio/world', 'the manifest is untouched');
+  fails(await call('world_sim', { world: { path: source }, action: 'verify' }), 'INVALID_INPUT');
+  assert.match(ok(await call('world_step', { world: { path: source }, steps: 1 })).note, /not kept/);
+});

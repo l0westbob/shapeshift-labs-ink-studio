@@ -14,6 +14,19 @@ module.exports = async function agentCli(argv) {
   const registry = require('./registry.js');
   require('./ops/index.js');
   const print = value => process.stdout.write(JSON.stringify(value) + '\n');
+  if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') {
+    process.stdout.write([
+      'usage: ink-agent list                     every tool with its description and input schema (JSON)',
+      "       ink-agent call <tool> '<json>'      run a tool; '-' reads the JSON from stdin; prints { ok, result | error }",
+      '       ink-agent mcp [--allow-code]        serve the tools over MCP stdio',
+      '',
+      'tools: ' + registry.list().map(op => op.name).join(', '),
+      'start: ink-agent call ink_discover \'{}\'   (overview), ink-agent call ink_docs \'{"topic":"agents"}\'   (guide)',
+      'exit codes: 0 ok, 1 tool error, 2 usage. Images are not printed: pass "out" and read the PNG.',
+      ''
+    ].join('\n'));
+    return 0;
+  }
   if (sub === 'list') {
     print(registry.list().map(op => ({ name: op.name, effects: op.effects, description: op.description, input: op.input })));
     return 0;

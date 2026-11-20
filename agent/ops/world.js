@@ -6,9 +6,6 @@ const { defineOp, OpError } = require('../registry.js');
 const { compact } = require('../data.js');
 const Worlds = require('../worlds.js');
 
-const handleOnly = {
-  type: 'object', required: ['handle'], properties: { handle: { type: 'string' } }, additionalProperties: false
-};
 const wrap = (code, fn) => {
   try {
     return fn();
@@ -53,22 +50,27 @@ defineOp({
   name: 'world_step',
   title: 'Advance a world',
   effects: 'write',
-  description: 'Schedule actions and advance an open world. Give exactly one of ticks (absolute), steps (relative) or t (seconds); with none, runs to the scenario\'s until tick. actions are commands like { id, tick, action: "world/input", args: { port: "system/port", value } }; invalid actions are rejected before anything advances. Returns the new tick, scenario status and the events emitted during the step.',
+  description: 'Schedule actions and advance a world. Give exactly one of ticks (absolute), steps (relative) or t (seconds); with none, runs to the scenario\'s until tick. actions are commands like { id, tick, action: "world/input", args: { port: "system/port", value } }; invalid actions are rejected before anything advances. Returns the new tick, scenario status and the events emitted during the step. world can be an open handle, or a path or spec for a one-shot run: then pass save to keep the result as a checkpoint or recording that a later call can open (handles do not persist between shell calls).',
   input: {
     type: 'object', required: ['world'],
     properties: {
-      world: handleOnly,
+      world: Worlds.worldSchema,
       ticks: { type: 'integer', minimum: 0 },
       steps: { type: 'integer', minimum: 0, maximum: 1000000 },
       t: { type: 'number', minimum: 0 },
       actions: { type: 'array', items: { type: 'object' }, maxItems: 10000 },
       stopOnOutcome: { type: 'boolean', description: 'Stop early when the scenario wins, fails or times out.' },
-      maxEvents: { type: 'integer', minimum: 0, maximum: 500, description: 'Events to return (default 25, newest last).' }
+      maxEvents: { type: 'integer', minimum: 0, maximum: 500, description: 'Events to return (default 25, newest last).' },
+      save: {
+        type: 'object', required: ['path'], description: 'Write the world after the step: kind "recording" (default, can be verified) or "checkpoint".',
+        properties: { path: { type: 'string' }, kind: { type: 'string', enum: ['checkpoint', 'recording'] }, overwrite: { type: 'boolean' } },
+        additionalProperties: false
+      }
     },
     additionalProperties: false
   },
-  run({ world, ticks, steps, t, actions, stopOnOutcome = false, maxEvents = 25 }, ctx) {
-    const entry = Worlds.open(world, ctx);
+  run({ world, ticks, steps, t, actions, stopOnOutcome = false, maxEvents = 25, save }, ctx) {
+    const entry = Worlds.open(world, { ...ctx, persist: !!world.handle });
     const run = entry.run, before = run.view();
     const modes = [ticks, steps, t].filter(v => v !== undefined);
     if (modes.length > 1) throw new OpError('INVALID_INPUT', 'Give only one of ticks, steps or t', { path: '/ticks' });
@@ -87,8 +89,19 @@ defineOp({
     }
     const after = run.view();
     const fresh = after.history.filter(event => !seen.has(event.id));
+    let saved;
+    if (save) {
+      const file = path.resolve(ctx.root ?? process.cwd(), save.path), kind = save.kind ?? 'recording';
+      if (!file.endsWith('.json')) throw new OpError('INVALID_INPUT', 'Save to a .json path', { path: '/save/path' });
+      if (kind === 'recording' && !entry.record) throw new OpError('UNSUPPORTED', 'This world was opened without recording', { path: '/save/kind' });
+      Worlds.writeJson(file, kind === 'recording' ? run.recording() : run.checkpoint(), save.overwrite === true);
+      saved = { kind, file };
+    }
+    const oneShot = !world.handle && !saved;
     return compact({
-      handle: entry.handle, from: before.tick, tick: after.tick, time: after.time, scenario: run.scenario,
+      handle: entry.handle, ...(saved && { saved }),
+      ...(oneShot && { note: 'One-shot run: this state is not kept. Pass save to continue from it later.' }),
+      from: before.tick, tick: after.tick, time: after.time, scenario: run.scenario,
       commands: run.commandCounts(), newEvents: fresh.length, events: maxEvents ? fresh.slice(-maxEvents) : [],
       ...(fresh.length > maxEvents && { eventsTruncated: fresh.length - maxEvents })
     });
@@ -146,11 +159,11 @@ defineOp({
   destructive: true,
   title: 'Manage world branches and evidence',
   effects: 'write',
-  description: 'plan: system contracts and resolved execution order. fork: branch the world at its current tick into a new handle. reset: return to the opened state. save: write the current checkpoint or run recording to path. verify: replay the recording and confirm it reproduces. diff: compare with another handle at the same tick (edits), or with first: true locate the first divergent tick between their recordings. close: drop the handle.',
+  description: 'plan: system contracts and resolved execution order. fork: branch the world at its current tick into a new handle. reset: return to the opened state. save: write the current checkpoint or run recording to path. verify: replay the recording and confirm it reproduces (a recording opened by path is verified as saved). diff: compare with another handle at the same tick (edits), or with first: true locate the first divergent tick between their recordings. close: drop the handle.',
   input: {
     type: 'object', required: ['world', 'action'],
     properties: {
-      world: handleOnly,
+      world: { ...Worlds.worldSchema, description: 'A handle, or a path/spec for one-shot plan and verify.' },
       action: { type: 'string', enum: SIM_ACTIONS },
       path: { type: 'string', description: 'save: destination .json.' },
       kind: { type: 'string', enum: ['checkpoint', 'recording'], description: 'save: what to write (default checkpoint).' },
@@ -162,10 +175,20 @@ defineOp({
     additionalProperties: false
   },
   run({ world, action, path: destination, kind = 'checkpoint', overwrite = false, other, first = false, from, to, limit }, ctx) {
-    const entry = Worlds.open(world, ctx), run = entry.run, R = Worlds.R();
+    if (!world.handle && !['plan', 'verify'].includes(action))
+      throw new OpError('INVALID_INPUT', action + ' needs a world handle from world_open', { path: '/world' });
+    const entry = Worlds.open(world, { ...ctx, persist: !!world.handle }), run = entry.run, R = Worlds.R();
     const recording = () => {
+      /* an opened recording that has not been stepped further is verified as it was saved, from its own origin */
+      const log = entry.input.log;
+      if (log && run.view().tick === log.end.tick) return log;
       if (!entry.record) throw new OpError('UNSUPPORTED', 'This world was opened without recording', { hint: 'reopen with record: true' });
-      return run.recording();
+      const recorded = run.recording();
+      if (recorded.end.tick === recorded.origin.tick)
+        throw new OpError('INVALID_INPUT', 'Nothing has run yet, so there is nothing to verify', {
+          path: '/world', hint: 'verify a saved recording (world_step save) or a handle you have stepped'
+        });
+      return recorded;
     };
     switch (action) {
       case 'plan': return compact({ handle: entry.handle, plan: run.composition() });

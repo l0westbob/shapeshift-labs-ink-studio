@@ -27,3 +27,5 @@ Judge with both eyes and numbers: `scene_render` shows the picture, `scene_measu
 4. Check other angles with `scene_render` `mode: "turn"` before declaring victory; a fix from one view can break another.
 
 Metrics compare a render with reference values taken from hand-made pixel art. They are guides, not goals: never trade a readable silhouette for a lower number.
+
+Without the MCP tools, run the same loop from the shell: `ink-agent call scene_measure '{...}'`, `ink-agent call scene_edit` with a `path` (edits and saves in place), and `scene_render` with `out` followed by reading the PNG.

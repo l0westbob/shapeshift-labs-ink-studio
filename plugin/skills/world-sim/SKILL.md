@@ -21,4 +21,8 @@ A world is a JSON manifest (`format: "ink-studio/world"`) of systems advanced in
 - Two branches at the same tick: `diff` lists keyed state changes. Different histories: `diff` with `first: true` finds the first tick where they diverge.
 - `world_sim` `plan` shows each system's reads, writes, emitted events and execution order.
 
+## From the shell
+
+Where the MCP tools are unavailable, use `ink-agent call <tool> '<json>'`. Handles do not survive between calls, so chain steps through files: `world_step` with `{"world":{"path":"/abs/worlds/gate.json"},"steps":5,"actions":[...],"save":{"path":"/abs/runs/step1.json"}}`, then continue from `runs/step1.json`. `world_query` and `world_sim` `plan` and `verify` accept a path too.
+
 Background reading: `ink_docs` topics `headless-worlds`, `agent-orders`, `agent-decisions`, `puzzles`, `simulation-scrubbing`, `first-divergence`.

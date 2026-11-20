@@ -1553,7 +1553,7 @@
       "kind": "agent",
       "status": "ready",
       "title": "Edit a diorama",
-      "what": "Apply a batch of edits to an open diorama atomically: either every operation applies and the scene validates, or nothing changes.",
+      "what": "Apply a batch of edits to a diorama atomically: either every operation applies and the scene validates, or nothing changes.",
       "use": "MCP tool scene_edit or: ink-studio agent call scene_edit '<json>'",
       "where": "agent/ops",
       "tags": [
@@ -1628,7 +1628,7 @@
       "kind": "agent",
       "status": "ready",
       "title": "Advance a world",
-      "what": "Schedule actions and advance an open world.",
+      "what": "Schedule actions and advance a world.",
       "use": "MCP tool world_step or: ink-studio agent call world_step '<json>'",
       "where": "agent/ops",
       "tags": [

@@ -88,8 +88,27 @@ Tree keys look like `slot:1` (solids by position) or `part:gem`. See [docs/scene
 
 ## Errors
 
-Failures return `{ code, message, path?, hint?, details? }`. Codes: `INVALID_INPUT`, `INVALID_JSON`, `INVALID_SCENE`, `INVALID_PATCH`, `INVALID_WORLD`, `INVALID_ACTIONS`, `STALE_REVISION`, `NOT_FOUND`, `NOT_EDITABLE`, `CODE_NOT_ALLOWED`, `UNSUPPORTED`, `EXISTS`, `BUILD_FAILED`, `EDIT_FAILED`, `EXPORT_FAILED`, `STEP_FAILED`, `QUERY_FAILED`, `VERIFY_FAILED`, `DIFF_FAILED`, `UNKNOWN_OP`, `INTERNAL`. Fix the input at `path` and retry; `details` lists every problem at once.
+Failures return `{ code, message, path?, hint?, details? }`. Codes: `INVALID_INPUT`, `INVALID_JSON`, `CLI_FAILED`, `CLI_TIMEOUT`, `INVALID_SCENE`, `INVALID_PATCH`, `INVALID_WORLD`, `INVALID_ACTIONS`, `STALE_REVISION`, `NOT_FOUND`, `NOT_EDITABLE`, `CODE_NOT_ALLOWED`, `UNSUPPORTED`, `EXISTS`, `BUILD_FAILED`, `EDIT_FAILED`, `EXPORT_FAILED`, `STEP_FAILED`, `QUERY_FAILED`, `VERIFY_FAILED`, `DIFF_FAILED`, `UNKNOWN_OP`, `INTERNAL`. Fix the input at `path` and retry; `details` lists every problem at once.
 
 ## Units and conventions
 
 Positions are `[x, y, z]` in scene units with Y up; `box` takes half-extents; angles are radians; `res` is surface sampling spacing (smaller is denser and slower). "Agents" inside scene data means simulated characters (`docs/agent-*.md`), not you.
+
+## Shell transport
+
+Organizations can restrict Claude Code to managed MCP servers (`allowManagedMcpServersOnly`); then the plugin's MCP server does not start. An administrator can allow it with an `allowedMcpServers` entry `{ "serverName": "ink-studio" }`. Until then, every tool runs as `ink-agent call <tool> '<json>'` with identical input and output. Handles do not survive between shell calls, so:
+
+- edit dioramas with `scene_edit` and `{"scene":{"path":...}}` (validated, atomic, saved in place), or with your file tools (the plugin hook validates every write),
+- render with `out` and read the PNG to see it,
+- chain world steps through files with `world_step` `save`, and `verify` a saved recording with `world_sim` and a `path`.
+
+## Evals
+
+`evals/` holds end-to-end tasks for agents (discover the format, repair a broken scene, build from a brief, tune the look with metrics, win a puzzle world, export an atlas). Each case is graded on the tools it used and on the files it produced. Runs are real Claude Code sessions and cost usage:
+
+```bash
+claude plugin eval . --runs 1 --ablation none --scaffold --mocks off --allow-tools "Bash(./ink-agent *)" "Bash(ink-agent *)" Write Edit --no-publish --max-cost-usd 8
+```
+
+The graders check the shell transport, because that is what runs where MCP servers are restricted. The eval sandbox only executes files inside the workspace, so each case's scaffold copies the runtime and a node binary into the workspace and agents call `./ink-agent`. Where the MCP server may run, add `--allow-tools "mcp__plugin_ink-studio_ink-studio__*"`; the MCP transport itself is covered by `tests/agent-ops.test.js`.
+

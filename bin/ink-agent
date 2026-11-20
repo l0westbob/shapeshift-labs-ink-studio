@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+'use strict';
+/* ink-agent list | call <tool> '<json>' | mcp : the ink-studio agent tools from a shell, JSON in and JSON out.
+   The Claude Code plugin puts bin/ on PATH, so agents can use the tools even where local MCP servers are not allowed. */
+require('../agent/cli.js')(process.argv.slice(2)).then(code => {
+  if (code !== undefined) process.exitCode = code;
+});

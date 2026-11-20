@@ -1,0 +1,23 @@
+schema_version: "1.1"
+name: export-atlas
+description: Export a directional sprite atlas.
+tags: [export, smoke]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    Using the ink-studio tools (MCP, or the `ink-agent` shell command if they are not available), export a 4-direction sprite atlas of the ink-studio diorama scenes/gem.json (in the current directory) into the
+    directory out/gem-atlas, covering the first second at 4 frames per second. Pass absolute paths.
+    In this workspace the shell command is `./ink-agent` (the sandbox cannot run the plugin's own copy).
+  max_turns: 12
+  timeout_seconds: 300
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+graders:
+  - name: exported
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_export[\s\S]*atlas'
+  - name: atlas-written
+    type: regex
+    target: { source: file, path: out/gem-atlas/atlas.json }
+    pattern: '"frames"'
