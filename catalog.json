@@ -2064,6 +2064,20 @@
       "generated": true
     },
     {
+      "id": "cli.sweep",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Render still and clip contact sheets across settings and seeds",
+      "what": "render still and clip contact sheets across settings and seeds",
+      "use": "ink-studio sweep <scene> <plan.json> --out directory",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
       "id": "cli.variants",
       "kind": "cli",
       "status": "ready",

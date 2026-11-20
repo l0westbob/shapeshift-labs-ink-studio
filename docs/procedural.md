@@ -151,6 +151,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `KIT.cellular.create(options)`, `KIT.cellular.rules` | [Seeded cellular automata](cellular-lattices.md) on line, square, hex, and voxel lattices, including reversible block rules |
 | `KIT.cellular.sandpile`, `KIT.cellular.rules.excitable` | [Sandpiles and excitable media](sandpiles-excitable.md) with local toppling, charge, and refractory waves |
 | `KIT.cellular.graph` | [Graph automata](graph-automata.md) with named cells, weighted and delayed edges, and seeded replay |
+| `KIT.cellular.domain` | [Shared cellular domains](shared-domains.md) for the same discrete or named-channel rule on images, joined UV charts, graphs, and volumes |
 | `KIT.cellular.learned` | [Learned cellular growth](learned-cellular-growth.md) from data-only neighborhood rule weights, with damage and replay |
 | `KIT.cellular.continuous` | [Continuous cellular automata](continuous-cellular.md) with sampled kernels, coupled channels, masks, brush injections, and replay |
 | `layouts.bsp(options)`, `layouts.cave(options)`, `layouts.pack(items, options)`, `layouts.floorPlan(rooms, options)` | Connected room partitions and caves, constrained rectangle packing and named room adjacencies |
@@ -166,6 +167,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `ornament.compile(spec)` | [Wallpaper and frieze groups](wallpaper-frieze.md) for repeated motifs, seamless pigment, etched relief, and physical tiles |
 | `fracture.power(spec)`, `fracture.separate(graph, options)`, `fracture.crack(options)` | Anisotropic power cells, cumulative bond failure and stress-guided crack paths |
 | `grammar.assemble(route, modules, options)`, `construct.loadPaths(sockets, spans, options)`, `construct.supportGraph(parts)`, `construct.damage(parts, options)` | Dimensioned, socket-connected assemblies, stylized supports, support propagation and seeded part damage |
+| `fabrication.shell(options)`, `fabrication.stack(options)` | [Field-driven fabrication](field-fabrication.md) for variable wall thickness, perforation, contour ribs, and solid layers |
 | `construct.profile(rings)`, `construct.offset(profile, distance)`, `construct.extrude(profile, options)`, `construct.weightedRoof(rings, options)` | Signed footprints, planar offsets, extrusions and roof wavefronts with per-edge pitches |
 | `geometry.distanceTransform(mask, options)`, `materials.outline(mask, options)` | Exact Euclidean distances over pixel or voxel centers, including anisotropic spacing and inside/outside masks |
 | `materials.triplanar(sample, options)`, `materials.tangent(sample, options)`, `materials.threshold(field, options)`, `materials.ramp(colors, options)` | Surface-aligned patterns, pixel-footprint filtering and perceptual palettes |
@@ -178,6 +180,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `sampleVisibility.create(count)`, `splatOrder.compile(indices, depthAt)` | Packed visibility updates and reusable depth buckets for retained samples |
 | `splatCodec.encode(data, count, options)`, `splatCodec.decode(bytes, options)` | Compact, ordered native splat rows for offline delivery |
 | `motion.streamline(field, start, options)`, `motion.obstacleWake(sdf, options)`, `motion.loopTrajectory(points, options)`, `motion.surfaceAdvection(chart, seeds, options)` | Field integration, wake and curl sampling, closed tracks and UV-attached motion |
+| `KIT.fieldOutputs.create(options)` | [Shared field outputs](shared-field-outputs.md) for named pigment, relief, density, contour, splat, and geometry sources |
 | `KIT.fieldViews.lic(field, options)` | [Vector-field painting](vector-field-painting.md) with aligned grain, obstacle masks, and traveling convolution kernels |
 | `motion.stableFluid(options)`, `motion.shallowWater(options)` | Persistent density and velocity grids, and conservative terrain-aligned water |
 | `motion.coupledFluid(options)` | [Bidirectional field–particle coupling](field-particle-coupling.md) for flow, dye, and drag feedback |
