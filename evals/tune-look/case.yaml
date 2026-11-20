@@ -1,0 +1,33 @@
+schema_version: "1.1"
+name: tune-look
+description: Use the metrics loop to fix a diorama that reads in one tone.
+tags: [scene, metrics]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    scenes/gem.json in the current directory is an ink-studio diorama whose values check says it reads in one tone.
+    Improve it with the ink-studio tools (the ink-studio MCP tools, or the `ink-agent` shell command if they are not available) until the values check reports clearly more than one tone,
+    without removing the floating gem, then save it in place. Pass absolute paths. Report the verdict before and after.
+    In this workspace the shell command is `./ink-agent` (the sandbox cannot run the plugin's own copy).
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+graders:
+  - name: measured-twice
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_measure'
+    min: 2
+  - name: edited
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_edit'
+  - name: better-verdict
+    type: regex
+    target: trace
+    pattern: 'verdict[\\\\"]*:[\\\\"]*(TWO|THREE)_TONES'
+  - name: gem-kept
+    type: regex
+    target: { source: file, path: scenes/gem.json }
+    pattern: '"part": *"gem"'

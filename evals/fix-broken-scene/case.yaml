@@ -1,0 +1,29 @@
+schema_version: "1.1"
+name: fix-broken-scene
+description: Repair a diorama that fails validation, using only the ink-studio tools.
+tags: [scene, repair]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    scenes/broken.json in the current directory is an ink-studio diorama that fails validation.
+    Repair it in place with the ink-studio tools (the ink-studio MCP tools, or the `ink-agent` shell command if they are not available) so that it validates, keeping everything the author clearly meant
+    (including the second, smaller ball). Pass absolute paths to the tools. Finish with one line saying what you fixed.
+    In this workspace the shell command is `./ink-agent` (the sandbox cannot run the plugin's own copy).
+  max_turns: 20
+  timeout_seconds: 420
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+graders:
+  - name: validated
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_validate'
+  - name: ball-kept
+    type: regex
+    target: { source: file, path: scenes/broken.json }
+    pattern: '"kind": *"ball"[\s\S]*"kind": *"ball"'
+  - name: typo-gone
+    type: regex
+    target: { source: file, path: scenes/broken.json }
+    pattern: '"bal"|"bogus"'
+    match: not_contains

@@ -1,0 +1,14 @@
+{
+  "name": "ink-studio-local",
+  "owner": {
+    "name": "ink-studio"
+  },
+  "plugins": [
+    {
+      "name": "ink-studio",
+      "source": "./",
+      "description": "Agent tools for ink-studio: dioramas, renders, metrics, exports and world simulations over MCP."
+    }
+  ],
+  "description": "Local marketplace for the ink-studio agent plugin."
+}

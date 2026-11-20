@@ -1,0 +1,29 @@
+{
+  "name": "ink-studio",
+  "version": "0.1.0",
+  "description": "Agent tools for ink-studio: sculpt SDF dioramas into pixel-art splats, render and measure them, edit them atomically, export GLB and sprite atlases, and run deterministic world simulations.",
+  "author": {
+    "name": "ink-studio contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pixel-art",
+    "sdf",
+    "gaussian-splats",
+    "simulation",
+    "mcp"
+  ],
+  "mcpServers": {
+    "ink-studio": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/agent/mcp-server.js"
+      ]
+    }
+  },
+  "skills": "./plugin/skills/",
+  "agents": [
+    "./plugin/agents/ink-art-director.md"
+  ],
+  "hooks": "./plugin/hooks/hooks.json"
+}

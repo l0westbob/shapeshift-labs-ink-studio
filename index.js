@@ -8,6 +8,29 @@ const fs = require('fs'),
   { randomUUID } = require('crypto');
 const KIT_DIR = path.join(__dirname, 'src', 'kit'),
   read = f => fs.readFileSync(f, 'utf8').replace(/\nif \(typeof module[^\n]*\n?$/, '\n');
+/* where load() keeps its compiled bundle: dist/ in the package, or, when the package directory is read-only (an installed
+   plugin cache, a system-wide install), a per-checkout folder in the user's own cache directory. The bundle is executed, so
+   the cache folder must belong to this user and be writable by nobody else; a shared temporary directory would let another
+   user plant code. A bundle that is already current in dist/ is used as it is. */
+function bundlePath(newest) {
+  const local = path.join(__dirname, 'dist', 'standalone.js');
+  if (fs.existsSync(local) && fs.statSync(local).mtimeMs >= newest) return local;
+  try {
+    fs.mkdirSync(path.dirname(local), { recursive: true });
+    fs.accessSync(path.dirname(local), fs.constants.W_OK);
+    return local;
+  } catch {
+    const key = require('crypto').createHash('sha256').update(__dirname).digest('hex').slice(0, 12);
+    const base = process.env.XDG_CACHE_HOME || path.join(require('os').homedir(), '.cache');
+    const dir = path.join(base, 'ink-studio', key);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const stat = fs.statSync(dir);
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid())
+      throw new Error('The ink-studio bundle cache belongs to another user: ' + dir);
+    if (stat.mode & 0o022) throw new Error('The ink-studio bundle cache is writable by other users: ' + dir);
+    return path.join(dir, 'standalone.js');
+  }
+}
 const files = () =>
   [
     'src/typography-truetype.js', 'src/typography.js', 'src/frame-budget.js', 'src/target-inspection.js', 'src/drawing-primitives.js', 'src/view-annotations.js', 'src/frame-composite.js', 'src/ink-veil.js', 'src/textured-surface.js', 'src/sprite-surface.js', 'src/camera-atlas.js', 'src/sprite-cels.js', 'src/atlas-sprites.js', 'src/target-selectors.js', 'src/camera-lens.js', 'src/camera-impulses.js', 'src/camera-staging.js', 'src/splat-provenance.js',
@@ -145,9 +168,9 @@ module.exports = {
   createSimulationWorkers: require('./src/simulation-worker-pool.js'),
   openCheckpointStore: require('./src/simulation-checkpoint-store.js').openCheckpointStore,
   load() {
-    const out = path.join(__dirname, 'dist', 'standalone.js'),
-      srcs = files().concat(demoFiles()),
-      newest = Math.max(...srcs.map(f => fs.statSync(f).mtimeMs));
+    const srcs = files().concat(demoFiles()),
+      newest = Math.max(...srcs.map(f => fs.statSync(f).mtimeMs)),
+      out = bundlePath(newest);
     if (!fs.existsSync(out) || fs.statSync(out).mtimeMs < newest) {
       fs.mkdirSync(path.dirname(out), { recursive: true });
       // Parallel consumers may compile together. Publish only complete bundles.

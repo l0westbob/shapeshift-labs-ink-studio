@@ -1,0 +1,35 @@
+schema_version: "1.1"
+name: build-from-brief
+description: Author a new diorama from a short brief, validate it, save it and render it.
+tags: [scene, authoring]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    Create an ink-studio diorama of a small stone well with a wooden roof standing on a round patch of grass.
+    Save it as scenes/well.json in the current directory and render it from the scene camera to out/well.png.
+    Pass absolute paths to the tools (the current directory is the workspace). Use the ink-studio tools for everything (MCP, or the `ink-agent` shell command if they are not available).
+    In this workspace the shell command is `./ink-agent` (the sandbox cannot run the plugin's own copy).
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+graders:
+  - name: validated
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_validate'
+  - name: rendered
+    type: tool_used
+    tool: Bash
+    input_match: 'ink-agent call scene_render[\s\S]*well\.png'
+  - name: saved-diorama
+    type: regex
+    target: { source: file, path: scenes/well.json }
+    pattern: '"solids"'
+  - name: looks-like-a-well
+    type: llm
+    focus: { source: file, path: out/well.png }
+    criteria: |
+      The image is a small pixel-art render. PASS if it plausibly shows a well: a round or square stone structure
+      with a roof above it (posts or a frame holding a roof) on a ground patch, readable at this size.
+      FAIL if the image is empty, shows only a ground plane, or shows no roof over the structure.

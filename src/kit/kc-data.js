@@ -242,6 +242,8 @@
     tap: 'obj',
     spare: 'pos'
   };
+  /* the same tables the checker uses, published so tools can describe the format without parsing these comments */
+  DIO.fields = Object.freeze({ top: TOP, common: COMMON, motion: MOTION, effects: EFFECT, modifiers: modifierKinds });
 
   // ---------------- checking ----------------
   const isNum = v => typeof v === 'number' && Number.isFinite(v),

@@ -6,12 +6,15 @@
   "main": "index.js",
   "browser": "./webgl.mjs",
   "bin": {
-    "ink-studio": "cli/ink-studio.js"
+    "ink-studio": "cli/ink-studio.js",
+    "ink-studio-mcp": "agent/mcp-server.js",
+    "ink-agent": "bin/ink-agent"
   },
   "scripts": {
     "test": "node --test tests/*.test.js && node cli/ink-studio.js selftest",
     "lint": "node scripts/check.js",
-    "format": "prettier --write \"src/**/*.js\" \"cli/*.js\" \"demos/*.js\" \"lab/*.js\" index.js \"scripts/*.js\""
+    "mcp": "node agent/mcp-server.js",
+    "format": "prettier --write \"src/**/*.js\" \"cli/*.js\" \"demos/*.js\" \"lab/*.js\" index.js \"scripts/*.js\" \"agent/*.js\""
   },
   "license": "MIT",
   "engines": {
