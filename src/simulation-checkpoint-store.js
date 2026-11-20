@@ -4,7 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 
 const format = 'ink-studio/checkpoint-ref';
 const checkpoint = 'ink-studio/checkpoint', run = 'ink-studio/run';
-const kinds = new Set([checkpoint, run]);
+const kinds = new Set([checkpoint, run, 'ink-studio/raster-checkpoint']);
 const pageSize = 1024, tableThreshold = 128, bucketCount = 32;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const json = value => Buffer.from(JSON.stringify(value));

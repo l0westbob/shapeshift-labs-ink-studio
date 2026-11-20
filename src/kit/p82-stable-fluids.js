@@ -244,6 +244,25 @@
       Object.assign(fields,buffers);
       time=clock;
     }
+    function exportState(){
+      return {time,u:Array.from(fields.u),v:Array.from(fields.v),density:Array.from(fields.density),
+        dyes:Object.fromEntries(names.map((name,i)=>[name,Array.from(fields.dyes[i])]))};
+    }
+    function importState(state){
+      const {time:clock,u,v,density,dyes:channels}=state??{};
+      if(stepping||!Number.isFinite(clock)||clock<0||!record(channels)||Object.keys(channels).length!==names.length)
+        throw new Error('Invalid portable fluid state');
+      function read(data,mask,scalar){
+        if(!Array.isArray(data)||data.length!==mask.length||!Array.from(data).every((n,i)=>
+          Number.isFinite(n)&&(!scalar||number(n,0,maxDensity))&&(mask[i]||n===0)))
+          throw new Error('Invalid portable fluid buffer');
+        return Float64Array.from(data);
+      }
+      const next={u:read(u,uf,false),v:read(v,vf,false),density:read(density,open,true),
+        dyes:names.map(name=>read(channels[name],open,true))};
+      Object.assign(fields,next);
+      time=clock;
+    }
     function step(duration,{
       force,source,dyeSource,viscosity=0.0002,diffusion=0.001,dissipation=0.025
     }={}){
@@ -313,7 +332,7 @@
         return snapshot(n);
       }finally{stepping=false;}
     }
-    return Object.freeze({step,snapshot,checkpoint,restore});
+    return Object.freeze({step,snapshot,checkpoint,restore,exportState,importState});
   }
   Object.assign(M,{stableFluid,gridDomain,gridSpacing});
 })(KIT);

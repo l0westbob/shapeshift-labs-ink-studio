@@ -4,12 +4,14 @@
   const point = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 
   function topology(mesh) {
-    const vertices = mesh?.points || (mesh?.pos && Array.from({ length: mesh.pos.length / 3 },
-      (_, i) => Array.from(mesh.pos.slice(i * 3, i * 3 + 3))));
-    const faces = mesh?.faces || (mesh?.tri && Array.from({ length: mesh.tri.length / 3 },
-      (_, i) => Array.from(mesh.tri.slice(i * 3, i * 3 + 3))));
+    const indices = mesh?.tri ?? mesh?.indices ?? mesh?.triangles;
+    const positions = mesh?.pos ?? mesh?.positions ?? (indices && mesh?.points);
+    const triples = (values, limit) => values && values.length % 3 === 0 && values.length <= limit * 3 &&
+      Array.from({ length: values.length / 3 }, (_, i) => Array.from(values.slice(i * 3, i * 3 + 3)));
+    const vertices = Array.isArray(mesh?.points?.[0]) ? mesh.points : triples(positions, 250000);
+    const faces = mesh?.faces ?? triples(indices, 500000);
     if (!Array.isArray(vertices) || !vertices.length || vertices.length > 250000 || !vertices.every(point) ||
-        !Array.isArray(faces) || faces.length > 500000 || !faces.every(face => Array.isArray(face) && face.length >= 3 &&
+        !Array.isArray(faces) || faces.length > 500000 || !faces.every(face => (Array.isArray(face) || ArrayBuffer.isView(face)) && face.length >= 3 &&
           face.length <= 64 && new Set(face).size === face.length && face.every(i => Number.isSafeInteger(i) && i >= 0 && i < vertices.length)))
       throw new RangeError('Expected a bounded indexed mesh');
     return { points: vertices, faces };

@@ -2260,6 +2260,20 @@
       "generated": true
     },
     {
+      "id": "cli.graph",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Validate and describe a headless graph",
+      "what": "validate and describe a headless graph",
+      "use": "ink-studio graph validate|plan <project.json> [--inputs values.json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
       "id": "cli.material-controls",
       "kind": "cli",
       "status": "ready",

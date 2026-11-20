@@ -440,22 +440,49 @@ const PixelLook = (() => {
     }
     const mod = (n, size) => ((Math.floor(n) % size) + size) % size;
     const reservedIndex = rgb => exact.size ? exact.get(packedRgb(rgb)) : undefined;
+    const sites = lab ?? swatches;
+    function closest(input, hue) {
+      let best = matchSlots[0], distance = Infinity;
+      for (const slot of matchSlots) {
+        const next = matchDistance(input, sites[slot], matchId, hue);
+        if (next < distance) {
+          best = slot;
+          distance = next;
+        }
+      }
+      return best;
+    }
+    function diffusionIndex(original, adjusted) {
+      const locked = reservedIndex(original);
+      if (locked !== undefined) return locked;
+      const base = lab ? labPoint(original) : original;
+      const best = closest(base, matchId === 4 ? hueWeight(base[3]) : 0);
+      if (!canMix(best)) return best;
+      const input = lab ? labPoint(adjusted) : adjusted;
+      const hue = matchId === 4 ? hueWeight(input[3]) : 0;
+      let result = best, distance = matchDistance(input, sites[best], matchId, hue), lightness;
+      for (const {slot,range} of partners?.[best] ?? mixSlots) {
+        if (range) {
+          lightness ??= clamp(lab ? base[0] : spaces.toOKLab(original)[0]);
+          if (lightness < range[0] || lightness > range[1]) continue;
+        }
+        const next = matchDistance(input, sites[slot], matchId, hue);
+        if (next < distance || next === distance && slot < result) {
+          result = slot;
+          distance = next;
+        }
+      }
+      return result;
+    }
     function index(rgb, x = 0, y = 0, useDither = true, placement, trace) {
       const locked = reservedIndex(rgb);
       if (locked !== undefined) {
         if (trace) trace.method = 'reserved';
         return locked;
       }
-      const sites = lab ?? swatches, input = lab ? labPoint(rgb) : rgb;
+      const input = lab ? labPoint(rgb) : rgb;
       const hue = matchId === 4 ? hueWeight(input[3]) : 0;
-      let best = matchSlots[0], firstDistance = Infinity;
-      for (const slot of matchSlots) {
-        const distance = matchDistance(input, sites[slot], matchId, hue);
-        if (distance < firstDistance) {
-          best = slot;
-          firstDistance = distance;
-        }
-      }
+      const best = closest(input,hue);
       if (!amount || !useDither || mixSlots.length < 2 || !canMix(best)) return best;
       let gain = 1;
       if (tuning) {
@@ -499,7 +526,7 @@ const PixelLook = (() => {
         length = matchDistance(sites[best],sites[second],matchId,hue);
         // Recover the projection using distances in the same metric used to rank the pair.
         if (length <= 0) return best;
-        projection = .5*(firstDistance+length-secondDistance);
+        projection = .5*(matchDistance(input,sites[best],matchId,hue)+length-secondDistance);
       } else {
         projection = 0;
         length = 0;
@@ -516,7 +543,8 @@ const PixelLook = (() => {
       }
       return mixed ? second : best;
     }
-    return { packed, swatches, count, reserveAccess, matchSlots, width, height, ranks, amount, source, match, matchId, lab, pairs, anchor, tuning, reservedIndex, index };
+    return { packed, swatches, count, reserveAccess, matchSlots, width, height, ranks, amount, source, match, matchId, lab,
+      pairs, anchor, tuning, reservedIndex, index, diffusionIndex, canMix };
   }
 
   function prepareLookPolicy(definition, options = {}) {

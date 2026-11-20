@@ -58,6 +58,12 @@ const branch = KIT.world.runtime.create(snapshot.world, { checkpoint: snapshot }
 `save` also accepts a recording. `load` verifies the block representation.
 The runtime validates the restored state against the world before advancing.
 
+The store also accepts `ink-studio/raster-checkpoint` documents from the
+[headless raster simulation graph](headless-authoring.md#animation-and-raster-simulation).
+Pass the loaded document to `KIT.procedural.rasterSimulation.session` to
+resume the recipe. The graph CLI can also load its standalone JSON as
+a named asset and pass it to `sim.run`.
+
 ## Reproducible run records
 
 `sim run`, `sim resume`, and `sim fork` retain execution evidence when

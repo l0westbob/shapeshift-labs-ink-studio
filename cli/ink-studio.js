@@ -199,13 +199,25 @@ function build(id, seedOverride, { paint = true, parameterInputs, controls: supp
   const t0 = Date.now();
   const controls = suppliedControls ?? (opt.params ? JSON.parse(String(opt.params)) : undefined);
   const snapshot = opt.authoring ? JSON.parse(fs.readFileSync(path.resolve(opt.authoring), 'utf8')) : undefined;
+  const importedInputs = snapshot?.format === 'ink-studio/scene-simulation-inputs' ||
+    snapshot?.format === 'ink-studio/scene-replay' && snapshot.simulationInputs !== undefined;
+  if (importedInputs && (snapshot.scene !== s.id || snapshot.version !== 1 || !Number.isSafeInteger(snapshot.seed)))
+    die('Simulation inputs need the original scene and a valid seed');
+  const inputs = importedInputs ? lib().KIT.simulationInputs.tracks(snapshot.simulationInputs) : undefined;
   const seed = seedOverride ?? (opt.seed === undefined ? snapshot?.seed ?? s.seed : +opt.seed);
   shot?.seed(seed);
   const assemble = () => {
-    const built = s.build(seed, { controls, snapshot, ...(parameterInputs && { parameterInputs }) });
+    const built = s.build(seed, { controls, snapshot, ...(inputs && { simulationInputs: inputs }),
+      ...(parameterInputs && { parameterInputs }) });
     return (s.animate && s.animate(built, seed)) || built;
   };
   const w = liveSunOption() ? require('./look-preview.js').withAlbedo(assemble) : assemble();
+  if (inputs) {
+    const actual = w.simulationInputs && lib().KIT.simulationInputs.tracks(w.simulationInputs);
+    if (!actual || Object.entries(inputs).some(([id, track]) => JSON.stringify(actual[id]) !== JSON.stringify(track)))
+      die('The scene did not restore the supplied simulation input tracks');
+  }
+  if (w.simulationInputs) w.simulationInputSeed = seed;
   if (w.sandbox && !w.anim) lib().KIT.sandbox.attach(w); // and one whose stuff is a sandbox gets its grid going
   if (w.pix && lib().KIT.pixel)
     ((w.pixTex = lib().KIT.pixel.evaluators(w)),
@@ -755,6 +767,7 @@ const view = extra =>
       splatFields: splatFieldsOption(),
       atmosphereEmitters: atmosphereEmittersOption(),
       spriteAtlases: spriteAtlasOption(),
+      scalePreviews: onOffOption('scale-previews'),
       spriteAtlasMode: opt['sprite-atlas-mode'],
       aerialPerspective: aerialOption(),
       volumeLocalLights: onOffOption('volume-local-lights'),
@@ -980,6 +993,11 @@ const CMD = {
         '  randomness <recipe.json> [--samples 16 --out report.json]  inspect named authoring streams and distributions',
         '  math-fields <field.json> [--point x,y,z --time n --integrate seconds --out report.json]  inspect procedural math fields',
         '  render-graph <graph.json> [--w 900 --h 620 --out report.json]  inspect effect resolution and memory/work budgets',
+        '  graph validate|plan <project.json> [--inputs values.json]   validate and describe a headless graph',
+        '  graph inspect <project.json> [--output NAME | --node PATH --port NAME] [--out directory]',
+        '  graph run <project.json> [--inputs values.json --at seconds --seed N --out directory]',
+        '  graph batch <project.json> <cases-or-sweep.json> [--out directory]   run named cases or a Cartesian sweep',
+        '  graph session <project.json> [--protocol ndjson --out directory]   serve requests using a warm graph',
         '  material-controls <material.json> [--palette colors.json --out report.json]  inspect shared material controls',
         '  light-emitters <lights.json> [--at seconds --out report.json]  inspect shaped lights and cookies',
         '  typography <type.json> [--font font.ttf --at seconds --out report.json]  inspect glyph layout and animation',
@@ -999,6 +1017,7 @@ const CMD = {
         '  passes <id> [--channels coverage,depth,normal,objectId,materialId,emission]  save art-pixel render pass previews',
         '  export-layers <id> [--t 0,1,2 | --from 0 --to 2 --n 3] [--out directory]   export aligned RGBA, depth, normals, IDs and material mattes',
         '  export-scene <id> --out directory [--formats still,loop,replay,embed]   publish one scene in multiple formats',
+        '    --loop-join   inspect the actual frame join and excluded endpoint on a clip or scene export',
         '    --w width --h height --still-scale 2 --t seconds --from 0 --to 2 --fps 12 --embed-config file.json',
         '  scene-replay <recording.json> --out output.png [--at seconds]   save a frame from a replay',
         '  scene-replay <recording.json> --embed --out embed.html [--embed-config file.json]   package a replay for the web',
@@ -2032,6 +2051,9 @@ const CMD = {
   'render-graph'() {
     return require('./render-graph-plan.js')(pos,opt,lib());
   },
+  graph() {
+    return require('./graph-cli.js')(pos,opt,{kit:lib(),operations:cfg.graphOperations});
+  },
   'material-controls'() {
     return require('./material-controls.js')(pos,opt,lib());
   },
@@ -2172,6 +2194,8 @@ const CMD = {
       const camera = moving ? clipCamera(world) : null, replay = moving ? feedbackReplay(world, from, frame) : null;
       return {
         scene: world.id, title: world.name,
+        ...(world.simulationInputs && { seed: world.simulationInputSeed,
+          simulationInputs: lib().KIT.simulationInputs.tracks(world.simulationInputs) }),
         duration: Math.max(world.timeline?.duration ?? 0, world.cameraRig?.duration ?? 0),
         sample(time, lastTime) {
           function draw(t, resetRenderHistory) {
@@ -2184,7 +2208,7 @@ const CMD = {
       };
     }, { out: opt.out, formats: opt.formats?.split(',').map(format => format.trim()), embed: settings,
       width: num('w', 640), height: num('h', 360), fps: num('fps', 12), from: num('from', 0), to: num('to'),
-      stillScale: num('still-scale', 2), stillTime: num('t') });
+      stillScale: num('still-scale', 2), stillTime: num('t'), loopJoin: onOffOption('loop-join') });
     console.log('wrote', file);
   },
   'scene-replay'() {
@@ -2519,6 +2543,7 @@ const CMD = {
     save(w.id + '-turn.png', R.grid(imgs, num('cols', 4), labs));
   },
   clip() {
+    const join = onOffOption('loop-join') && require('./loop-join.js');
     const w = buildPreview(), diagnostics = previewPasses(),
       fps = num('fps', 12),
       from = num('from', 0),
@@ -2527,7 +2552,7 @@ const CMD = {
       n = Math.max(2, Math.round((to - from) * fps)),
       frames = [], ts = [], camera = clipCamera(w),
       f = outputFile(w.id+'-clip.png');
-    const suffixes = reviewSidecars(diagnostics);
+    const suffixes = [...reviewSidecars(diagnostics), ...(join ? join.suffixes : [])];
     shot?.destination(f,suffixes);
     const frame = { ...sequenceHistory(),
       w: num('w', 600), h: num('h', 420) };
@@ -2543,8 +2568,16 @@ const CMD = {
       ts.push(t);
       frames.push(displayFrame(im, w));
     }
+    const end = from + n / fps;
+    const audit = join && join.inspect({ first: frames[0], penultimate: frames[n - 2], last: frames[n - 1],
+      endpoint: displayFrame(replay ? replay.sample(end, draw) : draw(end, undefined, 1), w), from, fps, count: n });
     fs.mkdirSync(path.dirname(f), { recursive: true });
     PNG.animate(f, frames, fps);
+    if (audit) {
+      const base = f.replace(/\.(?:a?png)$/i, '');
+      PNG.write(base + '-join.png', audit.image.w, audit.image.h, audit.image.rgb);
+      require('./asset-files.js').json(base + '-join.json', audit.report);
+    }
     diagnostics?.write(f, { times: ts, fps });
     if (opt.text) {
       const textFile = textSidecar(f);

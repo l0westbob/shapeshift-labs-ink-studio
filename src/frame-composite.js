@@ -117,15 +117,21 @@ const FrameComposite = (() => {
     return { w, h, data: output };
   }
 
-  function drawLayer(layer, w, h, text, camera, drawn, hard = false) {
-    const data = new Uint8Array(layer.w * layer.h * 4);
+  function drawLayer(layer, w, h, text, camera, drawn, hard = false, budget) {
+    const precise = budget !== undefined;
+    const data = precise ? new Float32Array(layer.w * layer.h * 4) : new Uint8Array(layer.w * layer.h * 4);
+    const quantize = precise ? n => n : Math.round;
     const mask = new Float32Array(layer.w * layer.h);
     const sx = w / layer.w, sy = h / layer.h, aa = Math.max(sx, sy);
-    let dirty, coverage;
+    let dirty, coverage, work = 0;
+    function spend(cost) {
+      if (precise && (work += cost) > budget) throw new RangeError('Drawing exceeds its raster work budget');
+    }
     function bounds(x, y, right, bottom) {
       const x0 = Math.max(0, Math.floor(x / sx)), y0 = Math.max(0, Math.floor(y / sy));
       const x1 = Math.min(layer.w, Math.ceil(right / sx)), y1 = Math.min(layer.h, Math.ceil(bottom / sy));
       if (x1 <= x0 || y1 <= y0) return null;
+      spend((x1 - x0) * (y1 - y0));
       dirty = dirty ? [Math.min(x0, dirty[0]), Math.min(y0, dirty[1]), Math.max(x1, dirty[2]), Math.max(y1, dirty[3])] :
         [x0, y0, x1, y1];
       return [x0, y0, x1, y1];
@@ -166,6 +172,7 @@ const FrameComposite = (() => {
       const edges = rings.flatMap(ring => ring.map((a,i) => [a,ring[(i+1)%ring.length]]));
       coverage ??= new Float32Array(layer.w);
       const samples = 4, invPixel = 1/(sx*samples);
+      spend((y1-y0)*samples*(edges.length+x1-x0));
       for (let y = y0; y < y1; y++) {
         coverage.fill(0,x0,x1);
         for (let sub = 0; sub < samples; sub++) {
@@ -189,19 +196,25 @@ const FrameComposite = (() => {
     function paint(rgba) {
       if (!dirty) return;
       const [x0,y0,x1,y1] = dirty;
+      spend((x1-x0)*(y1-y0));
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
         const p = y*layer.w+x;
         if (!mask[p]) continue;
         const opacity = rgba[3]/255*mask[p], q = p*4;
-        const a = hard ? Number(opacity >= .5) : opacity;
+        const a = hard === 'coverage' ? rgba[3]/255*Number(mask[p] >= .5) :
+          hard ? Number(opacity >= .5) : opacity;
         for (let c = 0; c < 4; c++)
-          data[q+c] = Math.round(data[q+c]*(1-a) + (c === 3 ? 255 : rgba[c])*a);
+          data[q+c] = quantize(data[q+c]*(1-a) + (c === 3 ? 255 : rgba[c])*a);
         mask[p] = 0;
       }
       dirty = undefined;
     }
     for (const draw of drawn) {
-      if (draw.type === 'text') {
+      if (draw.type === 'bitmapStamp') {
+        const {at: [x,y], stamp} = draw;
+        raster(x,y,x+stamp.width,y+stamp.height,(u,v) => Number(stamp.data[((v-y)*stamp.width+u-x)*4+3]>0));
+        paint(stamp.color);
+      } else if (draw.type === 'text') {
         lettering(draw);
         paint(draw.color);
       } else if (draw.type === 'rect') {
@@ -224,6 +237,31 @@ const FrameComposite = (() => {
         stroke.space !== undefined && stroke.space !== 'screen'))
       throw new TypeError('Paint maps use pixel paths, polygons and rectangles');
     return drawLayer({ w, h }, w, h, null, null, Array.from(strokes, command), true).data;
+  }
+
+  function screenDrawing(width, height, strokes, {edges = 'smooth', bitmap} = {}) {
+    if (!positive(width) || !positive(height) || width > 8192 || height > 8192 || width * height > 8e6 ||
+        !Array.isArray(strokes) || strokes.length > 8192 || !['smooth','hard'].includes(edges))
+      throw new RangeError('Invalid screen drawing dimensions, edge filter or command count');
+    function* drawn() {
+      for (const draw of strokes) {
+        if (draw?.type === 'text' && typeof bitmap === 'function') yield bitmap(draw);
+        else {
+          if (!['rect','polygon','path','arrow','grid'].includes(draw?.type) ||
+              draw.space !== undefined && draw.space !== 'screen')
+            throw new TypeError('Standalone drawing commands use screen-space shapes and bitmap text');
+          yield command(draw);
+        }
+      }
+    }
+    const {data} = drawLayer({w:width,h:height},width,height,null,null,drawn(),edges==='hard' && 'coverage',64e6);
+    const out = new Uint8Array(data.length);
+    for (let i=0; i<data.length; i+=4) {
+      const a=data[i+3];
+      out[i+3]=Math.round(a);
+      if (out[i+3]) for (let c=0; c<3; c++) out[i+c]=Math.round(Math.min(255,255*data[i+c]/a));
+    }
+    return {width,height,channels:4,data:out};
   }
 
   function layers(plan, world, time, text, camera, resolve, gl) {
@@ -307,6 +345,6 @@ const FrameComposite = (() => {
     return { w, h, rgb, ...(alpha && { alpha }) };
   }
 
-  return Object.freeze({ settings, prepare, layers, compose, image, pixels, sample, samplePlaced, blend, straight, paintMap, textureSource });
+  return Object.freeze({ settings, prepare, layers, compose, image, pixels, sample, samplePlaced, blend, straight, paintMap, screenDrawing, textureSource });
 })();
 if (typeof module !== 'undefined') module.exports = FrameComposite;

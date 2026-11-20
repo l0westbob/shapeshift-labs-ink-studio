@@ -4,17 +4,20 @@ const PNG = require('./png.js');
 const { json } = require('./asset-files.js');
 const { resize } = require('./render.js');
 const Replay = require('./scene-replay.js');
+const Join = require('./loop-join.js');
 
 const products = ['still', 'loop', 'replay', 'embed'];
 
 function exportScene(createCapture, { out, formats = products, width = 640, height = 360, fps = 12, from = 0, to,
-  stillScale = 2, stillTime = from, embed } = {}) {
+  stillScale = 2, stillTime = from, embed, loopJoin = false } = {}) {
   if (typeof out !== 'string' || !out.trim()) throw new TypeError('Scene export needs an output directory');
   if (!Array.isArray(formats) || !formats.length || Array.from(formats).some(format => !products.includes(format)))
     throw new RangeError('Choose scene export formats from ' + products.join(', '));
   const selected = new Set(formats);
   const still = selected.has('still'), sequence = [...selected].some(format => format !== 'still');
   const keepRecording = selected.has('replay') || selected.has('embed');
+  if (typeof loopJoin !== 'boolean' || loopJoin && !sequence)
+    throw new TypeError('Loop join inspection needs a moving export');
   const stillWidth = width * stillScale, stillHeight = height * stillScale;
   if (!Replay.dimensions(width, height) || still && !Replay.dimensions(stillWidth, stillHeight) ||
       still && (!Number.isFinite(stillTime) || !Number.isFinite(stillScale) || stillScale < 1) ||
@@ -33,10 +36,22 @@ function exportScene(createCapture, { out, formats = products, width = 640, heig
     return prefix + '/' + name;
   }
   const manifest = { format: 'ink-studio/scene-export', version: 1 };
+  let inputs, captured = false;
   function capture(dimensions, moving) {
     const result = createCapture({ ...dimensions, moving, from });
     manifest.scene ??= result.scene;
     manifest.title ??= result.title ?? result.scene ?? 'Ink Studio scene';
+    let document;
+    if (result.simulationInputs !== undefined) {
+      if (typeof result.scene !== 'string' || !Number.isSafeInteger(result.seed))
+        throw new TypeError('Seeded scene tracks need a scene ID and integer seed');
+      document = { format: 'ink-studio/scene-simulation-inputs', version: 1, scene: result.scene,
+        seed: result.seed, simulationInputs: result.simulationInputs };
+    }
+    if (captured && JSON.stringify(document) !== JSON.stringify(inputs))
+      throw new RangeError('Scene simulation inputs differed between captures');
+    inputs = document;
+    captured = true;
     return result;
   }
   try {
@@ -49,10 +64,17 @@ function exportScene(createCapture, { out, formats = products, width = 640, heig
         throw new RangeError('Scene export exceeds the sequence budget. Shorten the range or lower the resolution or frame rate.');
       const packed = [], frames = [], files = [];
       const lastTime = from + (count - 1) / fps;
-      let encodedLength = 0;
+      const extra = inputs ? Buffer.byteLength(JSON.stringify(inputs)) : 0;
+      let encodedLength = extra, first, penultimate, last;
       for (let index = 0; index < count; index++) {
         const time = from + index / fps;
-        const frame = PNG.packFrame(resize(source.sample(time, lastTime), width, height));
+        const image = resize(source.sample(time, lastTime), width, height);
+        if (loopJoin) {
+          if (index === 0) first = Join.capture(image);
+          if (index === count - 2) penultimate = index === 0 ? first : Join.capture(image);
+          if (index === count - 1) last = index === 0 ? first : Join.capture(image);
+        }
+        const frame = PNG.packFrame(image);
         if (selected.has('loop')) packed.push(frame);
         const png = PNG.encodeFrame(frame);
         if (selected.has('loop')) {
@@ -67,12 +89,19 @@ function exportScene(createCapture, { out, formats = products, width = 640, heig
         }
       }
       manifest.sequence = { width, height, start: from, fps, frameCount: count, duration: count / fps };
+      if (loopJoin) {
+        const endpoint = resize(source.sample(from + count / fps, lastTime), width, height);
+        const { report, image } = Join.inspect({ first, penultimate, last, endpoint, from, fps, count });
+        manifest.loopJoin = { image: save('loop-join.png', PNG.encode(image.w, image.h, image.rgb)),
+          report: save('loop-join.json', JSON.stringify(report, null, 2) + '\n') };
+      }
       if (selected.has('loop')) {
         manifest.loop = { file: save('loop.png', PNG.encodeAnimation(packed, fps)), frames: files };
       }
       if (keepRecording) {
         const document = { format: Replay.format, version: 1, scene: manifest.scene, title: manifest.title,
-          width, height, start: from, fps, frames };
+          width, height, start: from, fps, frames,
+          ...(inputs && { seed: inputs.seed, simulationInputs: inputs.simulationInputs }) };
         if (selected.has('replay')) manifest.replay = save('scene.replay.json', JSON.stringify(document) + '\n');
         if (selected.has('embed')) manifest.embed = save('embed.html', Replay.embedPage(document, Replay.embedSettings(embed, document.title)));
       }
@@ -83,6 +112,7 @@ function exportScene(createCapture, { out, formats = products, width = 640, heig
       manifest.still = { file: save('still.png', PNG.encodeFrame(PNG.packFrame(frame))), time: stillTime,
         width: stillWidth, height: stillHeight };
     }
+    if (inputs) manifest.simulationInputs = save('simulation-inputs.json', JSON.stringify(inputs, null, 2) + '\n');
     const file = path.join(directory, 'export.json');
     json(file, manifest);
     return { file, manifest };

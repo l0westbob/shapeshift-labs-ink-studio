@@ -196,19 +196,23 @@ function readSpriteAtlas(file, { cels } = {}) {
   return AtlasSprites.compile({metadata,images});
 }
 
-function writeSpriteAtlas(source, { out } = {}) {
-  if (typeof out !== 'string' || path.extname(out).toLowerCase() !== '.json') throw new TypeError('Choose a sprite atlas .json filename');
-  const files=require('./asset-files.js'), file=path.resolve(out), directory=path.dirname(file);
+function spriteAtlasManifest(source, emitImage) {
   const { metadata, images }=AtlasSprites.compile(source).snapshot();
   const save=(channels, width, height)=>Object.fromEntries(Object.entries(channels).map(([name, rgba])=>
-    [name,files.image(directory,width,height,rgba)]));
+    [name,emitImage(width,height,rgba)]));
   metadata.files=save(images,metadata.width,metadata.height);
   if (metadata.cels?.replacements) metadata.cels.replacements=metadata.cels.replacements.map(({images,...edit})=>{
     const {width,height}=celSize(edit,metadata.cels,metadata);
     return {...edit,files:save(images,width,height)};
   });
-  files.json(file,metadata);
+  return metadata;
+}
+
+function writeSpriteAtlas(source, { out } = {}) {
+  if (typeof out !== 'string' || path.extname(out).toLowerCase() !== '.json') throw new TypeError('Choose a sprite atlas .json filename');
+  const files=require('./asset-files.js'), file=path.resolve(out), directory=path.dirname(file);
+  files.json(file,spriteAtlasManifest(source,(...image)=>files.image(directory,...image)));
   return { file };
 }
 
-module.exports = { spriteAtlas, writeAtlas, writeSpriteAtlas, readSpriteAtlas, exportViews };
+module.exports = { spriteAtlas, writeAtlas, writeSpriteAtlas, readSpriteAtlas, exportViews, spriteAtlasManifest };

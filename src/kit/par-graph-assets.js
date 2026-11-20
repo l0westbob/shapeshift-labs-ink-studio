@@ -57,10 +57,15 @@
         throw new RangeError('Raster tag requires an in-range half-open frame range: ' + name);
       clips.set(name, { start, end, fps: rate, loop });
     }
-    function frameAt(time, tag = 'all') {
-      if (!Number.isFinite(time)) throw new RangeError('Raster time must be finite');
+    function getClip(tag) {
       const clip = clips.get(tag);
       if (!clip) throw new RangeError('Unknown raster tag ' + tag);
+      return clip;
+    }
+    function clipInfo(tag = 'all') { return { ...getClip(tag) }; }
+    function frameAt(time, tag = 'all') {
+      if (!Number.isFinite(time)) throw new RangeError('Raster time must be finite');
+      const clip = getClip(tag);
       const i = Math.max(0, Math.floor(time * clip.fps + 1e-8)), length = clip.end - clip.start;
       return clip.start + (clip.loop ? i % length : Math.min(length - 1, i));
     }
@@ -102,7 +107,7 @@
       };
     }
     return Object.freeze({ [rasterBrand]: true, width, height, frameCount, layers: [...planes.keys()], tags: [...clips.keys()],
-      frameAt, layer, composite, snapshot });
+      clipInfo, frameAt, layer, composite, snapshot });
   }
 
   function material({ height = 0, wetness = 0, ink = 0, palette = 'stone', spacing = .005, normalStrength = 1 } = {}) {
@@ -158,6 +163,16 @@
   P.graph.material = material;
   P.graph.tiles = tiles;
   P.graph.operations = Object.freeze({
+    ...P.graph.arrays.operations,
+    ...P.raster.operations,
+    ...P.drawing2d.operations,
+    ...P.rasterColor.operations,
+    ...P.pixelEffects.operations,
+    ...P.rasterWarp.operations,
+    ...P.generator.operations,
+    ...P.sceneGraph.operations,
+    ...P.animationGraph.operations,
+    ...P.rasterSimulation.operations,
     meshPaths: {
       inputs: { mesh: 'geometry', sources: 'points', targets: { type: 'points', default: [] }, options: { type: 'any', default: {} } },
       outputs: { value: 'any', curves: 'points', distance: 'field' },

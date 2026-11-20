@@ -2,24 +2,7 @@ const SceneOptics = require('../src/scene-optics.js');
 const CloudField = require('../src/cloud-field.js');
 const ArtDirection = require('../src/art-direction.js');
 const { airTransmission } = require('../src/sky-environment.js');
-
-function cameraRays(view, eye, W, H, focal, ortho) {
-  const origin = eye.slice(),
-    direction = [0, 0, 0];
-  const ray = { origin, direction, axial: 1 };
-  return (x, y) => {
-    const u = (x - W / 2) / focal,
-      v = (y - H / 2) / focal;
-    ray.axial = ortho ? 1 : 1 / Math.hypot(u, v, 1);
-    for (let i = 0; i < 3; i++) {
-      const j = i * 4;
-      const offset = u * view[j] + v * view[j + 1];
-      origin[i] = eye[i] + (ortho ? offset : 0);
-      direction[i] = ortho ? -view[j + 2] : (offset - view[j + 2]) * ray.axial;
-    }
-    return ray;
-  };
-}
+const { rays: cameraRays } = require('../src/camera-lens.js');
 
 function surfacePoint(ray, normal, x, y, z, axialDepth, radius) {
   const { origin, direction, axial } = ray;
