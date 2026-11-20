@@ -44,3 +44,46 @@ module.exports = async function agentCli(argv) {
   print({ ok: false, error: { code: 'USAGE', message: 'ink-studio agent list | call <op> <json|-> [--allow-code] | mcp [--allow-code]' } });
   return 2;
 };
+
+/* `ink-studio stats|validate|lint|crisp|values <scene> --json`: the classic measuring commands answered by the agent ops,
+   so scripts get the same JSON an agent gets. Times default as in the classic commands (lint and crisp look at t = 2). */
+const LEGACY_JSON = ['stats', 'validate', 'lint', 'crisp', 'values'];
+const DEFAULT_TIME = { stats: 0, lint: 2, crisp: 2, values: 0 };
+
+async function legacyJson(cmd, pos, opt) {
+  for (const method of ['log', 'info', 'warn', 'debug']) console[method] = (...args) => console.error(...args);
+  const registry = require('./registry.js');
+  require('./ops/index.js');
+  const ctx = { allowCode: true, root: process.cwd() };
+  const number = key => (opt[key] === undefined ? undefined : Number(opt[key]));
+  const source = id => ({
+    ...(/\.(json|c?js)$/i.test(id) ? { path: id } : { builtin: id }),
+    ...(opt.seed !== undefined && { seed: Number(opt.seed) })
+  });
+  const ids = pos.length ? pos : [];
+  if (!ids.length) {
+    process.stdout.write(JSON.stringify({ ok: false, error: { code: 'USAGE', message: 'ink-studio ' + cmd + ' <scene ...> --json' } }) + '\n');
+    return 2;
+  }
+  const outcomes = [];
+  for (const id of ids) {
+    if (cmd === 'validate') {
+      outcomes.push(await registry.call('scene_validate', { scene: { path: id } }, ctx));
+      continue;
+    }
+    const view = Object.fromEntries(['yaw', 'pitch', 'zoom'].map(k => [k, number(k)]).filter(([, v]) => v !== undefined));
+    if (opt.target) view.target = String(opt.target).split(',').map(Number);
+    if (opt.ortho) view.ortho = true;
+    const size = { w: number('w') ?? 900, h: number('h') ?? 620 };
+    outcomes.push(await registry.call('scene_measure', {
+      scene: source(id), metrics: [cmd], t: number('t') ?? DEFAULT_TIME[cmd], view, size,
+      look: { colored: !!opt.colored, raw: !!opt.raw }
+    }, ctx));
+  }
+  process.stdout.write(JSON.stringify(outcomes.length === 1 ? outcomes[0] : outcomes) + '\n');
+  const failed = outcomes.some(o => !o.ok || (cmd === 'validate' && !o.result.valid));
+  return failed ? 1 : 0;
+}
+
+module.exports.LEGACY_JSON = LEGACY_JSON;
+module.exports.legacyJson = legacyJson;

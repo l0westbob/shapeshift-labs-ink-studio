@@ -141,7 +141,8 @@ function dioramaSchema(part) {
 
 /* --- discovery ------------------------------------------------------------------------------------------------------ */
 
-const catalog = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'catalog.json'), 'utf8')).entries;
+/* agent entries mirror the registry, which is searched directly */
+const catalog = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'catalog.json'), 'utf8')).entries.filter(entry => entry.kind !== 'agent');
 const opSummary = op => ({ name: op.name, effects: op.effects, title: op.title });
 
 defineOp({
@@ -171,7 +172,7 @@ defineOp({
       for (const entry of catalog()) kinds[entry.kind] = (kinds[entry.kind] ?? 0) + 1;
       return {
         tools: list().map(opSummary),
-        catalog: { entries: catalog().length, kinds, note: 'query to search features; CLI entries are commands not yet exposed as tools' },
+        catalog: { entries: catalog().length, kinds, note: 'query to search features; run kind "cli" entries with ink_cli' },
         docs: { topics: docs().size, note: 'ink_docs lists and searches them' },
         schemas: ['diorama', 'solidKinds', 'motion', 'effects', 'modifiers', 'roles', 'styles'],
         builtins: Scenes.kit().SCENES.map(s => s.id)

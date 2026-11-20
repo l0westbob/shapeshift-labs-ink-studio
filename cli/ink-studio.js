@@ -2752,6 +2752,10 @@ async function run() {
     if (code !== undefined) process.exitCode = code;
     return;
   }
+  if (opt.json === true && require('../agent/cli.js').LEGACY_JSON.includes(cmd)) {
+    process.exitCode = await require('../agent/cli.js').legacyJson(cmd, pos, opt);
+    return;
+  }
   const mode = Shot.modeFor(cmd,pos);
   if (opt.recipe !== undefined)
     shot = Shot.createRecorder(opt.recipe,{mode,scene:pos[cmd === 'sim' ? 1 : 0],options:opt,root:CWD});

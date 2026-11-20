@@ -128,3 +128,70 @@ test('scene_export writes GLB models and sprite atlases', async t => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'atlas', 'atlas.json'), 'utf8')).frames.length, 8);
   assert.equal(Buffer.from(atlas.image.base64, 'base64').subarray(1, 4).toString(), 'PNG');
 });
+
+test('scene_query explains baked splats and look targets', async () => {
+  const scene = { path: 'examples/scene.json' };
+  const targets = ok(await call('scene_query', { scene, action: 'select' })).result.targets;
+  assert.ok(targets.some(target => target.object === 'gem' && target.material === 'accent'));
+  const sample = ok(await call('scene_query', { scene, action: 'sample', at: [0, 1.8, 0.7] })).result.value;
+  assert.equal(sample.material, 'accent');
+  assert.match(sample.swatch, /^#[0-9a-f]{6}$/);
+  const output = ok(await call('scene_query', { scene, action: 'output', select: { material: 'accent' } })).result.value;
+  assert.equal(output.matched, 1);
+  fails(await call('scene_query', { scene, action: 'sample' }), 'INVALID_INPUT');
+});
+
+test('ink_cli runs classic commands as JSON envelopes and keeps code behind permission', async t => {
+  const help = ok(await call('ink_cli', { command: 'help' }));
+  assert.equal(help.exitCode, 0);
+  assert.match(help.stdout.text, /ink-studio <command>/);
+  const sheet = path.join(tempDir(t), 'sheet.png');
+  const made = ok(await call('ink_cli', { command: 'sheet', args: ['examples/scene.json', '--n', '2', '--out', sheet] }));
+  assert.equal(made.ok, true);
+  assert.ok(fs.existsSync(sheet));
+  const unknown = ok(await call('ink_cli', { command: 'nope' }));
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.stderr.text, /unknown command/);
+  fails(await call('ink_cli', { command: 'render', args: ['examples/sculpt.js'] }), 'CODE_NOT_ALLOWED');
+  fails(await call('ink_cli', { command: 'agent', args: ['list'] }), 'INVALID_INPUT');
+});
+
+test('scene_review and look return the CLI reports as data', async () => {
+  const withCode = { root, allowCode: true };
+  const review = ok(await registry.call('scene_review', { scene: { path: 'examples/motion-review.js' }, kind: 'motion-review' }, withCode));
+  assert.equal(review.report.scene, 'motion-review');
+  assert.ok(Array.isArray(review.report.findings));
+  fails(await call('scene_review', { scene: { path: 'examples/motion-review.js' }, kind: 'motion-review' }), 'CODE_NOT_ALLOWED');
+  fails(await call('scene_review', { scene: { path: 'examples/scene.json' }, kind: 'timeline' }), 'CLI_FAILED');
+
+  const opened = ok(await call('scene_open', { scene: { path: 'examples/scene.json' }, bake: false }));
+  ok(await call('scene_edit', { scene: { handle: opened.handle }, operations: [{ op: 'patch', patch: { op: 'replace', path: '/name', value: 'Edited gem' } }] }));
+  const dataReview = await call('scene_review', { scene: { handle: opened.handle }, kind: 'data-inputs' });
+  assert.equal(dataReview.ok, false, 'a scene without data inputs reports a CLI failure');
+  assert.equal(fs.readdirSync(path.join(root, 'examples')).filter(f => f.startsWith('.ink-agent-')).length, 0, 'temporary scene files are removed');
+
+  const imported = ok(await call('look', { action: 'import', file: 'examples/blue-shadow.cube' }));
+  assert.equal(imported.report.format, 'ink-studio/asset-pack');
+  const sampled = ok(await call('look', { action: 'sample', file: 'examples/blue-shadow.cube', args: ['--colors', '["#ff0000"]'] }));
+  assert.equal(sampled.report.samples.length, 1);
+  fails(await call('look', { action: 'bake', file: 'examples/blue-shadow.cube' }), 'INVALID_INPUT');
+});
+
+test('the catalog lists every agent tool and CLI command', () => {
+  const { spawnSync } = require('node:child_process');
+  const check = spawnSync(process.execPath, [path.join(root, 'scripts', 'sync-catalog.js'), '--check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(check.status, 0, check.stderr);
+  const ids = new Set(JSON.parse(fs.readFileSync(path.join(root, 'catalog.json'), 'utf8')).entries.map(e => e.id));
+  for (const op of registry.list()) assert.ok(ids.has('agent.' + op.name), op.name);
+});
+
+test('classic measuring commands answer with agent JSON when given --json', () => {
+  const { spawnSync } = require('node:child_process');
+  const run = (...args) => spawnSync(process.execPath, [path.join(root, 'cli', 'ink-studio.js'), ...args, '--json'], { cwd: root, encoding: 'utf8' });
+  const stats = run('stats', 'examples/scene.json');
+  assert.equal(stats.status, 0, stats.stderr);
+  assert.ok(JSON.parse(stats.stdout).result.stats.splats.total > 0);
+  const valid = run('validate', 'examples/scene.json');
+  assert.equal(JSON.parse(valid.stdout).result.valid, true);
+  assert.equal(run('validate', 'missing.json').status, 1);
+});

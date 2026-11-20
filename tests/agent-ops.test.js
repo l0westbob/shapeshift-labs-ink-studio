@@ -12,7 +12,7 @@ const { applyPatch, compact, diff, revisionOf } = require('../agent/data.js');
 
 const TOOLS = [
   'ink_docs', 'ink_discover', 'scene_validate', 'scene_open', 'scene_render', 'scene_measure', 'scene_edit', 'scene_save',
-  'scene_export', 'world_open', 'world_step', 'world_query', 'world_sim'
+  'scene_query', 'scene_export', 'world_open', 'world_step', 'world_query', 'world_sim', 'ink_cli', 'scene_review', 'look'
 ];
 const example = path.join(root, 'examples', 'scene.json');
 const gem = JSON.parse(fs.readFileSync(example, 'utf8'));

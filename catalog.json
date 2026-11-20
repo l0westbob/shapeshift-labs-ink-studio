@@ -1295,7 +1295,12 @@
       "what": "Tiny pixel sprites attach to fixed surface points and appear beyond the silhouette. The same points are kept as the scene changes detail level.",
       "use": "K.pixel.edge(material, { up: 'grass', every: 5, share: 0.55 })",
       "where": "src/kit/kpz-sprite.js and cli/render.js",
-      "tags": ["pixel art", "sprite", "tuft", "silhouette"]
+      "tags": [
+        "pixel art",
+        "sprite",
+        "tuft",
+        "silhouette"
+      ]
     },
     {
       "id": "look.surface",
@@ -1305,7 +1310,13 @@
       "what": "Compose directional roughness, fibre highlights, grazing reflection, sheen, thin-film colour, diffraction, directional tint and anchored glints. Forty editable presets use the same layer settings.",
       "use": "K.surface.preset('brushed-steel', { r: [1, 2, 3] }, { direction: 'y' })",
       "where": "docs/surface-materials.md",
-      "tags": ["material", "anisotropy", "iridescence", "specular", "glints"]
+      "tags": [
+        "material",
+        "anisotropy",
+        "iridescence",
+        "specular",
+        "glints"
+      ]
     },
     {
       "id": "look.planar-reflection",
@@ -1315,7 +1326,13 @@
       "what": "Render the world around a named mirror plane and distort it with surface normal variation. Drop sources add travelling rings after the scene is baked.",
       "use": "K.reflection.plane({ id: 'pool' }) · K.reflection.material(base, 'pool') · K.ripple.field(options)",
       "where": "docs/scene-optics.md",
-      "tags": ["water", "reflection", "mirror", "ripples", "normal"]
+      "tags": [
+        "water",
+        "reflection",
+        "mirror",
+        "ripples",
+        "normal"
+      ]
     },
     {
       "id": "look.atmosphere-volumes",
@@ -1325,7 +1342,13 @@
       "what": "Integrate world-space fog, local spheres and boxes, and tinted beams along the camera ray up to the nearest opaque surface.",
       "use": "B.finish({ cam, atmosphere: [K.atmosphere.fog({ top: 0.4 }), K.atmosphere.sphere({ at, radius })] })",
       "where": "docs/scene-optics.md",
-      "tags": ["atmosphere", "mist", "fog", "shaft", "depth"]
+      "tags": [
+        "atmosphere",
+        "mist",
+        "fog",
+        "shaft",
+        "depth"
+      ]
     },
     {
       "id": "convert.signed-field",
@@ -1335,7 +1358,12 @@
       "what": "Polygonize a bounded signed-distance function, use it in an existing sculpt, or bake it into a splat world with a fitted camera.",
       "use": "K.sdf.toMesh(sd, { bounds }) · K.sdf.solid(S, sd, mat, { bounds }) · K.sdf.toSplats(sd, { bounds })",
       "where": "docs/depth-maps.md",
-      "tags": ["sdf", "mesh", "splats", "conversion"]
+      "tags": [
+        "sdf",
+        "mesh",
+        "splats",
+        "conversion"
+      ]
     },
     {
       "id": "place.props",
@@ -1345,7 +1373,12 @@
       "what": "Reusable libraries place small objects in an area, along a path, around a solid or at the foot of a wall. Each library uses roles to map its props to the scene materials.",
       "use": "K.props.clutter(S, K.props.starter, materials, rules)",
       "where": "src/kit/kpy-props.js",
-      "tags": ["scatter", "props", "decoration", "path"]
+      "tags": [
+        "scatter",
+        "props",
+        "decoration",
+        "path"
+      ]
     },
     {
       "id": "studio.paint",
@@ -1355,7 +1388,11 @@
       "what": "Export a per-pixel view and its surface coordinates, then turn edited pixels into palette-colored decals that stay in place from every camera angle.",
       "use": "ink-studio paint export <scene> and ink-studio paint absorb <scene>",
       "where": "cli/ink-studio.js and src/builder.js",
-      "tags": ["paint", "decal", "pixel art"]
+      "tags": [
+        "paint",
+        "decal",
+        "pixel art"
+      ]
     },
     {
       "id": "studio.pixel-critique",
@@ -1365,7 +1402,13 @@
       "what": "Check isolated pixels and unwanted shading patterns, review fixed camera angles, compare a reference or measure flicker as the view moves.",
       "use": "ink-studio lint <scene> or ink-studio shimmer <scene> --mode orbit",
       "where": "cli/crisp.js and cli/critic.js",
-      "tags": ["lint", "crisp", "compare", "review", "shimmer"]
+      "tags": [
+        "lint",
+        "crisp",
+        "compare",
+        "review",
+        "shimmer"
+      ]
     },
     {
       "id": "import.depth",
@@ -1375,7 +1418,14 @@
       "what": "Unproject a calibrated raster, preserve holes and depth breaks, project an optional RGB image, and build a backed closed solid from the visible surface.",
       "use": "ink-studio depth input.png --image aligned.png",
       "where": "docs/depth-maps.md",
-      "tags": ["depth", "mesh", "sdf", "splats", "projection", "import"]
+      "tags": [
+        "depth",
+        "mesh",
+        "sdf",
+        "splats",
+        "projection",
+        "import"
+      ]
     },
     {
       "id": "sim.sandbox",
@@ -1385,7 +1435,12 @@
       "what": "A seeded grid simulates liquids, powders, gases, heat and phase changes. The simulation can run in a worker and draw its cells as splats.",
       "use": "const grid = K.sandbox.grid({ at, size, cell }); const sim = K.sandbox(grid.spec())",
       "where": "src/kit/kq-sandbox.js",
-      "tags": ["simulation", "heat", "matter", "worker"]
+      "tags": [
+        "simulation",
+        "heat",
+        "matter",
+        "worker"
+      ]
     },
     {
       "id": "chance.seeded",
@@ -1402,6 +1457,891 @@
         "repeatable",
         "test"
       ]
+    },
+    {
+      "id": "agent.ink_docs",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Read documentation",
+      "what": "Read the toolkit documentation in pieces.",
+      "use": "MCP tool ink_docs or: ink-studio agent call ink_docs '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "read"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.ink_discover",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Discover capabilities",
+      "what": "Find out what ink-studio can do.",
+      "use": "MCP tool ink_discover or: ink-studio agent call ink_discover '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "read"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_validate",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Validate a diorama",
+      "what": "Check a JSON diorama without baking it.",
+      "use": "MCP tool scene_validate or: ink-studio agent call scene_validate '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "read"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_open",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Open a scene",
+      "what": "Open a diorama, built-in demo or (when allowed) JS scene and bake it once.",
+      "use": "MCP tool scene_open or: ink-studio agent call scene_open '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_render",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Render a scene",
+      "what": "Render a PNG with the CPU renderer.",
+      "use": "MCP tool scene_render or: ink-studio agent call scene_render '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_measure",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Measure a scene",
+      "what": "Render one view at native art resolution and return numeric quality metrics (no image).",
+      "use": "MCP tool scene_measure or: ink-studio agent call scene_measure '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_edit",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Edit a diorama",
+      "what": "Apply a batch of edits to an open diorama atomically: either every operation applies and the scene validates, or nothing changes.",
+      "use": "MCP tool scene_edit or: ink-studio agent call scene_edit '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_save",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Save a diorama",
+      "what": "Write the current diorama JSON of an open scene to disk.",
+      "use": "MCP tool scene_save or: ink-studio agent call scene_save '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_query",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Query a baked scene",
+      "what": "Ask about a baked scene at time t.",
+      "use": "MCP tool scene_query or: ink-studio agent call scene_query '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "read"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_export",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Export a scene",
+      "what": "Write a scene for use elsewhere.",
+      "use": "MCP tool scene_export or: ink-studio agent call scene_export '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.world_open",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Open a world simulation",
+      "what": "Open a deterministic fixed-tick world (an ink-studio/world manifest, checkpoint or run recording) and keep it running in memory.",
+      "use": "MCP tool world_open or: ink-studio agent call world_open '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.world_step",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Advance a world",
+      "what": "Schedule actions and advance an open world.",
+      "use": "MCP tool world_step or: ink-studio agent call world_step '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.world_query",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Query a world",
+      "what": "Read the published state of an open world at its current tick.",
+      "use": "MCP tool world_query or: ink-studio agent call world_query '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "read"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.world_sim",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Manage world branches and evidence",
+      "what": "plan: system contracts and resolved execution order.",
+      "use": "MCP tool world_sim or: ink-studio agent call world_sim '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.ink_cli",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Run any ink-studio CLI command",
+      "what": "Run a command of the ink-studio CLI that has no dedicated tool (e.g.",
+      "use": "MCP tool ink_cli or: ink-studio agent call ink_cli '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.scene_review",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Run a review report",
+      "what": "Run one of the CLI review commands that produce a JSON report and return the report: motion-review (motion findings, focus ranges and evidence (scene must expose Motion Review)); clip-sequence (clip instances, retimed keys and cues, measured handoffs); authored-contacts (authored contact ranges and socket transfer timing); motion-fx (Motion FX timing, part masks and sampled effect output); animation-timeline (shared shot timeline, stages, findings); camera-rig (resolved shot, projection, blend and occlusion clearance); timeline (sampled tracks and exported cues); data-inputs (typed source datasets, columns and samples); cloth-review (captured cloth pose and settle report).",
+      "use": "MCP tool scene_review or: ink-studio agent call scene_review '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
+      "id": "agent.look",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Work with looks",
+      "what": "Looks are versioned colour treatments (LUTs, colour stacks, palettes, asset packs).",
+      "use": "MCP tool look or: ink-studio agent call look '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.hierarchy",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Inspect or reparent live scene nodes",
+      "what": "inspect or reparent live scene nodes",
+      "use": "ink-studio hierarchy <graph.json> [--node id] [--parent id|world] [--out file.json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.curve",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Sample reusable curve families",
+      "what": "sample reusable curve families",
+      "use": "ink-studio curve <family.json> [--distance n] [--text INK] [--out file.json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.ornament",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Export a wallpaper or frieze pattern",
+      "what": "export a wallpaper or frieze pattern",
+      "use": "ink-studio ornament <pattern.json> [--format pigment|relief|tiles] [--out file]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.palette",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Render a palette in 3D",
+      "what": "render a palette in 3D",
+      "use": "ink-studio palette plot <plot.json> [--space rgb|oklab] [--orbit degrees] [--format png|data]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.inspect",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Discover fields, actions, ports and entities",
+      "what": "discover fields, actions, ports and entities",
+      "use": "ink-studio inspect <scene|run>",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.environment",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Explain sky and local weather",
+      "what": "explain sky and local weather",
+      "use": "ink-studio environment inspect <scene|run> --at x,y,z [--t seconds] [--out report.json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.probe",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio probe",
+      "what": "See ink-studio help.",
+      "use": "ink-studio probe <scene|run> --field name [--at x,y,z | --entity id] [--explain]  sample world state",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.trace",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Trace a route, signal or other exposed query",
+      "what": "trace a route, signal or other exposed query",
+      "use": "ink-studio trace <scene|run> <name>",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.field",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio field",
+      "what": "See ink-studio help.",
+      "use": "ink-studio field <scene|run> <name> --spec file.json [--explain]  export a line, grid or time series",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.authoring",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Inspect retained parts",
+      "what": "inspect retained parts",
+      "use": "ink-studio authoring inspect <scene> [--authoring snapshot.json] [--part id]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.scene",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio scene",
+      "what": "See ink-studio help.",
+      "use": "ink-studio scene apply|stamp|remix|capture|upgrade|sync-prefab|history|promote <world> ...  edit or derive a world manifest",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.sim",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio sim",
+      "what": "See ink-studio help.",
+      "use": "ink-studio sim run|resume|fork|reset|replay|verify|scrub|take|diff|sweep|render ...  run or compare fixed-tick simulations",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.compare",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Compare look variants on the same view",
+      "what": "compare look variants on the same view",
+      "use": "ink-studio compare <scene|run> --looks cases.json [--out sheet.png]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.look",
+      "kind": "cli",
+      "status": "ready",
+      "title": "List bindings, dependencies and targets",
+      "what": "list bindings, dependencies and targets",
+      "use": "ink-studio look inspect <scene|run|look-file> [--renderer headless|webgl]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.lut",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio lut",
+      "what": "See ink-studio help.",
+      "use": "ink-studio lut import <file.cube|file.json> [--out file.json]  load a 3D color table as native JSON",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.scenes",
+      "kind": "cli",
+      "status": "ready",
+      "title": "List every diorama",
+      "what": "list every diorama",
+      "use": "ink-studio scenes",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.catalog",
+      "kind": "cli",
+      "status": "ready",
+      "title": "What the toolkit can do, searchable",
+      "what": "what the toolkit can do, searchable",
+      "use": "ink-studio catalog [words]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.bounce-probes",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio bounce-probes",
+      "what": "See ink-studio help.",
+      "use": "ink-studio bounce-probes bake <scene> [--bounce-probes settings.json] --out probes.json",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.shot",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Verify and recreate the review render",
+      "what": "verify and recreate the review render",
+      "use": "ink-studio shot replay <shot.json> --out <image.png> [--root project]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.reel",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Export selected captures as an offline reel",
+      "what": "export selected captures as an offline reel",
+      "use": "ink-studio reel <manifest.json> [--out reel.html] [--clean]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.acts",
+      "kind": "cli",
+      "status": "ready",
+      "title": "The ready clips, reactions, easings and cues, by name",
+      "what": "the ready clips, reactions, easings and cues, by name",
+      "use": "ink-studio acts",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.export-glb",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Write UV-mapped geometry with materials, skins and clips",
+      "what": "write UV-mapped geometry with materials, skins and clips",
+      "use": "ink-studio export-glb <scene.js|.json|.obj|.gltf|.glb> --out model.glb",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.perf",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Animation time and planned texture upload size",
+      "what": "animation time and planned texture upload size",
+      "use": "ink-studio perf <id> [--secs 5 --fps 60 --json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "A sheet of fixed shots (four sides, top, low, far, near, close), beside the last one",
+      "what": "a sheet of fixed shots (four sides, top, low, far, near, close), beside the last one",
+      "use": "ink-studio review <id> [--ref pic --px 2]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.variants",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio variants",
+      "what": "See ink-studio help.",
+      "use": "ink-studio variants <id> --seeds 3,7,12 [--group silhouette|openness|wear --motion]  render a ranked seed contact sheet",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.atlas",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio atlas",
+      "what": "See ink-studio help.",
+      "use": "ink-studio atlas <id> [--directions 8 --pitches 0,0.7 --w 96 --h 96 --fps 12 --maps depth,normal,emission,silhouette]  export a transparent sprite atlas",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.camera-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Export-sized frames and framing checks",
+      "what": "export-sized frames and framing checks",
+      "use": "ink-studio camera-review <scene> --from 0 --to 2 --frames 5 --w 160 --h 96",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.silhouette-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Paired export-size views and edge contrast",
+      "what": "paired export-size views and edge contrast",
+      "use": "ink-studio silhouette-review <scene> --directions 8 --w 96 --h 96",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.transition-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio transition-review",
+      "what": "See ink-studio help.",
+      "use": "ink-studio transition-review <scene> [--plan file.json] --w 160 --h 90 [--out sheet.png]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.pose-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio pose-review",
+      "what": "See ink-studio help.",
+      "use": "ink-studio pose-review <id> [--directions 8 --w 96 --h 96]  review named poses at sprite resolution",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.motion-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio motion-review",
+      "what": "See ink-studio help.",
+      "use": "ink-studio motion-review <id> [--finding kind-or-id] [--out report.json]  inspect motion findings and focused playback ranges",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.clip-sequence",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio clip-sequence",
+      "what": "See ink-studio help.",
+      "use": "ink-studio clip-sequence <id> [--handoff 0] [--out report.json]  inspect clip instances, retimed cues, and handoffs",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.animation-graph",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio animation-graph",
+      "what": "See ink-studio help.",
+      "use": "ink-studio animation-graph <graph.json> [--at seconds] [--inputs file.json] [--out report.json]  inspect poses and event responses",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.data-inputs",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio data-inputs",
+      "what": "See ink-studio help.",
+      "use": "ink-studio data-inputs <scene or catalog> [dataset] [--sample JSON --t seconds --rows --out report.json]  inspect typed source data",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.camera-impulses",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio camera-impulses",
+      "what": "See ink-studio help.",
+      "use": "ink-studio camera-impulses <motion.json> [--at seconds --eye x,y,z --yaw radians --pitch radians --out report.json]  inspect camera motion",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.camera-rig",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio camera-rig",
+      "what": "See ink-studio help.",
+      "use": "ink-studio camera-rig <scene or world> [--at seconds --camera-shot ID --out report.json]  sample a shot and its clearance",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.timeline",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio timeline",
+      "what": "See ink-studio help.",
+      "use": "ink-studio timeline <scene> [--at seconds] [--from seconds --to seconds] [--out report.json]  sample tracks and export cues",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.authored-contacts",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio authored-contacts",
+      "what": "See ink-studio help.",
+      "use": "ink-studio authored-contacts <id> [--at seconds] [--out report.json]  inspect contact ranges and socket transfer timing",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.motion-fx",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio motion-fx",
+      "what": "See ink-studio help.",
+      "use": "ink-studio motion-fx <id> [--at seconds] [--out report.json]  inspect keyed FX layers and sampled effect output",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.cloth-review",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio cloth-review",
+      "what": "See ink-studio help.",
+      "use": "ink-studio cloth-review <id> [--pose seconds] [--through seconds] [--bake take.json]  preview a cloth pose and optionally bake it",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.animation-timeline",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio animation-timeline",
+      "what": "See ink-studio help.",
+      "use": "ink-studio animation-timeline <id> [--state context.json] [--stage block|spline|polish] [--at seconds] [--part name]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.retarget",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio retarget",
+      "what": "See ink-studio help.",
+      "use": "ink-studio retarget <source> <target> [--clip name|--motion clip.json] [--profile name|file.json]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.passes",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio passes",
+      "what": "See ink-studio help.",
+      "use": "ink-studio passes <id> [--channels coverage,depth,normal,objectId,materialId,emission]  save art-pixel render pass previews",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.environment-parity",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio environment-parity",
+      "what": "See ink-studio help.",
+      "use": "ink-studio environment-parity [--fixture observatory --out directory --chrome executable]  compare matched CLI and WebGL environment frames",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.crisp",
+      "kind": "cli",
+      "status": "ready",
+      "title": "How crisp at its own pixel size: stray pixels, specks, flat area, finest frequencies,",
+      "what": "how crisp at its own pixel size: stray pixels, specks, flat area, finest frequencies,",
+      "use": "ink-studio crisp <id ...|all> [--t 2 --map]",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
     }
   ]
 }
