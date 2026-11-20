@@ -5,8 +5,9 @@
    is loaded, so the hook costs nothing on unrelated files. If the hook itself fails (toolkit cannot load, unreadable
    asset), it exits 1: Claude Code shows that to the user without blaming the file.
 
-   World: { "format": "ink-studio/world" }. Diorama: no "format", a "solids" array whose items all have a string "kind",
-   and a string "id" (the CLI requires both), so unrelated JSON that happens to have "solids" is left alone. */
+   World: { "format": "ink-studio/world" }. Diorama: no "format" and a non-empty "solids" array whose items all have a string
+   "kind", plus either a string "id" or no id at all and only ink-studio solid kinds (so a missing id is reported), so
+   unrelated JSON that happens to have "solids" is left alone. */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -18,9 +19,12 @@ function readStdin() {
   }
 }
 
+/* with a string id it is ours; without one (the error worth reporting) it needs solids, and problemsFor then checks that
+   every kind is an ink-studio solid kind */
 const looksLikeDiorama = value =>
-  value.format === undefined && typeof value.id === 'string' && Array.isArray(value.solids) &&
-  value.solids.every(solid => solid && typeof solid === 'object' && typeof solid.kind === 'string');
+  value.format === undefined && Array.isArray(value.solids) &&
+  value.solids.every(solid => solid && typeof solid === 'object' && typeof solid.kind === 'string') &&
+  (typeof value.id === 'string' || (value.id === undefined && value.solids.length > 0));
 
 function classify(file) {
   if (typeof file !== 'string' || !file.toLowerCase().endsWith('.json') || !fs.existsSync(file)) return null;
@@ -45,8 +49,9 @@ function problemsFor(file, found) {
   for (const method of ['log', 'info', 'warn', 'debug']) console[method] = () => {};
   const Scenes = require('../scenes.js');
   const { OpError } = require('../registry.js');
-  Scenes.kit();
+  const K = Scenes.kit().KIT;
   if (found.kind === 'diorama') {
+    if (typeof found.value.id !== 'string' && !found.value.solids.every(solid => Object.hasOwn(K.diorama.kinds, solid.kind))) return [];
     let env;
     try {
       env = Scenes.environmentFor(found.value, path.dirname(file));

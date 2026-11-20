@@ -282,7 +282,8 @@ defineOp({
   }
 });
 
-function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'single', frames = 8, scale, out, overwrite = false, measure: metrics }, ctx) {
+/* onFrame(world, image, mode) sees the drawn image, so callers can measure it without drawing it again */
+function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'single', frames = 8, scale, out, overwrite = false, measure: metrics }, ctx, onFrame) {
   const world = Scenes.worldAt(entry, { t });
   let image, meta;
   if (mode === 'turn') {
@@ -310,6 +311,7 @@ function renderEntry(entry, { t = 0, view = {}, size = {}, look = {}, mode = 'si
   }
   const result = { handle: entry.persisted ? entry.handle : undefined, revision: Scenes.revisionFor(entry), t, ...meta, width: encoded.width, height: encoded.height };
   if (metrics && mode === 'single') result.metrics = measure(world, image, metrics);
+  onFrame?.(world, image, mode);
   return { ...compact(result), image: { mimeType: encoded.mimeType, base64: encoded.base64 } };
 }
 
@@ -384,14 +386,29 @@ function editError(error, index) {
 }
 
 /* Applies the batch to a draft built from the current spec. Nothing in the session changes unless every operation and the
-   final validation pass, and dryRun is false. */
-function draftEdits(entry, operations) {
+   final validation pass, and dryRun is false. Consecutive patches apply to the raw JSON, so only the scene before a keyed
+   operation and the final result have to validate; the environment (meshes, prefab library) is reloaded after patches. */
+function draftEdits(entry, operations, root) {
   const before = Scenes.specOf(entry);
-  let spec = before, editor = Scenes.makeEditor(before, entry.env), pending = false;
+  let spec = before, env = entry.env, editor = null, settled = null, patched = false;
+  const reload = () => {
+    if (!patched) return;
+    env = Scenes.environmentFor(spec, entry.dir, root);
+    patched = false;
+  };
+  const valid = () => {
+    if (spec === before) return Scenes.makeEditor(spec, env);
+    reload();
+    const errors = Scenes.errorsOf(Scenes.problemsOf(spec, env));
+    if (errors.length) throw new OpError('INVALID_SCENE', 'The diorama has errors', { details: errors });
+    return Scenes.makeEditor(spec, env);
+  };
   const settle = () => {
-    if (pending) editor.commit();
-    pending = false;
+    if (!editor) return;
+    editor.commit();
     spec = editor.snapshot();
+    settled = editor;
+    editor = null;
   };
   operations.forEach((op, index) => {
     try {
@@ -399,23 +416,28 @@ function draftEdits(entry, operations) {
         if (!op.patch) throw new OpError('INVALID_INPUT', 'patch needs a patch object', { path: '/operations/' + index + '/patch' });
         settle();
         spec = applyPatch(spec, op.patch, index);
-        editor = Scenes.makeEditor(spec, entry.env);
+        settled = null;
+        patched = true;
       } else {
-        if (!pending) editor.begin('agent edit');
-        pending = true;
+        if (!editor) {
+          editor = settled ?? valid();
+          settled = null;
+          editor.begin('agent edit');
+        }
         applyEditorOp(editor, op, index);
       }
     } catch (error) {
-      if (pending) editor.cancel();
+      if (editor) editor.cancel();
       throw editError(error, index);
     }
   });
   try {
     settle();
+    settled ??= valid();
   } catch (error) {
     throw editError(error, operations.length - 1);
   }
-  return { before, after: spec, editor };
+  return { before, after: settled.snapshot(), editor: settled, env };
 }
 
 /* Repairs a .json diorama that does not validate: patch operations apply to the raw JSON and only the result must validate.
@@ -451,19 +473,7 @@ function repairFile(given, { operations, baseRevision, dryRun, render, metrics }
     result.file = file;
   }
   const target = { kind: 'diorama', editor, env, dir, file, worlds: new Map(), warnings: [], history: [] };
-  if (render) {
-    result.render = renderEntry(target, render, ctx);
-    delete result.render.handle;
-  }
-  if (metrics) {
-    const world = Scenes.worldAt(target, { t: render?.t ?? 0 });
-    result.metrics = measure(world, renderImage(world, { t: render?.t ?? 0, view: render?.view, size: render?.size, look: render?.look }), metrics);
-  }
-  const image = result.render?.image;
-  if (image) delete result.render.image;
-  const out = compact(result);
-  if (image) out.image = image;
-  return out;
+  return withRender(result, target, render, metrics, ctx);
 }
 
 /* write-then-rename so readers never see half a file; the temporary file is removed if anything fails */
@@ -516,7 +526,7 @@ defineOp({
     if (baseRevision !== undefined && baseRevision !== current)
       throw new OpError('STALE_REVISION', 'The scene is at ' + current + ', not ' + baseRevision, { hint: 'reread with scene_open or drop baseRevision' });
 
-    let after, editor;
+    let after, editor, env;
     if (operations[0].op === 'revert') {
       if (operations.length !== 1) throw new OpError('INVALID_INPUT', 'revert must be the only operation', { path: '/operations' });
       const found = entry.history.find(h => h.revision === operations[0].revision);
@@ -524,17 +534,19 @@ defineOp({
         path: '/operations/0/revision', hint: 'known: ' + entry.history.map(h => h.revision).join(', ')
       });
       after = found.spec;
-      editor = Scenes.makeEditor(after, entry.env);
-    } else ({ after, editor } = draftEdits(entry, operations));
+      env = found.env;
+      editor = Scenes.makeEditor(after, env);
+    } else ({ after, editor, env } = draftEdits(entry, operations, ctx.root));
 
     const before = Scenes.specOf(entry);
     const revision = revisionOf(after);
     const result = { handle: entry.persisted ? entry.handle : undefined, dryRun, previousRevision: current, revision, changes: diff(before, after) };
     if (!dryRun && revision !== current) {
-      entry.history.push({ revision: current, spec: before });
+      entry.history.push({ revision: current, spec: before, env: entry.env });
       if (entry.history.length > Scenes.HISTORY_LIMIT) entry.history.shift();
       entry.editor = editor;
-      entry.warnings = Scenes.problemsOf(after, entry.env);
+      entry.env = env;
+      entry.warnings = Scenes.problemsOf(after, env);
       entry.dirty = true;
       if (!entry.persisted) {
         writeAtomic(entry.file, editor.serialize(2) + '\n');
@@ -542,26 +554,35 @@ defineOp({
         result.file = entry.file;
       }
     }
-    if (render || metrics) {
-      const target = dryRun
-        ? { kind: 'diorama', editor, env: entry.env, dir: entry.dir, file: entry.file, seedOverride: entry.seedOverride, worlds: new Map(), warnings: [], history: [] }
-        : entry;
-      if (render) {
-        result.render = renderEntry(target, render, ctx);
-        delete result.render.handle;
-      }
-      if (metrics) {
-        const world = Scenes.worldAt(target, { t: render?.t ?? 0 });
-        result.metrics = measure(world, renderImage(world, { t: render?.t ?? 0, view: render?.view, size: render?.size, look: render?.look }), metrics);
-      }
-    }
-    const image = result.render?.image;
-    if (image) delete result.render.image;
-    const out = compact(result);
-    if (image) out.image = image;
-    return out;
+    const target = dryRun
+      ? { kind: 'diorama', editor, env, dir: entry.dir, file: entry.file, seedOverride: entry.seedOverride, worlds: new Map(), warnings: [], history: [] }
+      : entry;
+    return withRender(result, target, render, metrics, ctx);
   }
 });
+
+/* adds the optional render and metrics of an edit result; a single view is drawn once and measured from the same image */
+function withRender(result, target, render, metrics, ctx) {
+  let measured;
+  if (render) {
+    result.render = renderEntry(target, render, ctx, (world, image, mode) => {
+      if (metrics && mode === 'single') measured = measure(world, image, metrics);
+    });
+    delete result.render.handle;
+  }
+  if (metrics) {
+    if (!measured) {
+      const t = render?.t ?? 0, world = Scenes.worldAt(target, { t });
+      measured = measure(world, renderImage(world, { t, view: render?.view, size: render?.size, look: render?.look }), metrics);
+    }
+    result.metrics = measured;
+  }
+  const image = result.render?.image;
+  if (image) delete result.render.image;
+  const out = compact(result);
+  if (image) out.image = image;
+  return out;
+}
 
 defineOp({
   name: 'scene_save',

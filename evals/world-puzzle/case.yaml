@@ -23,11 +23,12 @@ graders:
     type: tool_used
     tool: Bash
     input_match: 'ink-agent call world_sim[\s\S]*verify'
-  - name: won
-    type: regex
-    target: trace
-    pattern: 'status[\\\\"]*:[\\\\"]*win'
   - name: recording-saved
     type: regex
     target: { source: file, path: runs/gate.run.json }
     pattern: 'ink-studio/run'
+  # the saved recording itself must end in a win: its origin scenario is "running", only the end can say "win"
+  - name: recording-won
+    type: regex
+    target: { source: file, path: runs/gate.run.json }
+    pattern: '"scenario":\{"status":"win"'

@@ -13,6 +13,7 @@ const Scenes = require('../scenes.js');
 
 const CLI = path.join(__dirname, '..', '..', 'cli', 'ink-studio.js');
 const CODE_FILE = /\.(c?js|mjs)$/i;
+const CONFIG_FILE = 'ink-studio.config.js';
 const codeAllowed = ctx => ctx.allowCode === true || process.env.INK_AGENT_ALLOW_CODE === '1';
 
 /* files under dir modified at or after `since` (one walk, after the command) */
@@ -38,6 +39,11 @@ function runCli(command, args, ctx, { timeoutSeconds = 120, maxChars = 8000 } = 
       path: '/args/' + bad, hint: 'use a .json diorama or world, or start the server with INK_AGENT_ALLOW_CODE=1'
     });
   const root = ctx.root ?? process.cwd(), outDir = path.join(root, 'studio', 'out');
+  /* the CLI requires ink-studio.config.js from its working directory on every start, so that file is code too */
+  if (!codeAllowed(ctx) && fs.existsSync(path.join(root, CONFIG_FILE)))
+    throw new OpError('CODE_NOT_ALLOWED', root + ' has an ' + CONFIG_FILE + ', which every CLI command runs', {
+      hint: 'start the server with --allow-code (or INK_AGENT_ALLOW_CODE=1) to run CLI commands in this directory, or use the scene_* and world_* tools'
+    });
   const started = Date.now() - 1;
   const child = spawnSync(process.execPath, [CLI, command, ...args], {
     cwd: root, encoding: 'utf8', timeout: timeoutSeconds * 1000, maxBuffer: 64 * 1024 * 1024,
@@ -71,6 +77,7 @@ defineOp({
   title: 'Run any ink-studio CLI command',
   effects: 'expensive',
   destructive: true,
+  idempotent: false,
   description: 'Run a command of the ink-studio CLI that has no dedicated tool (e.g. sheet, clip, ghost, passes, crisp, review, shimmer, compare, variants, pose-review, retarget, palette, curve, ornament, paint, reel, mesh, depth, snap, check). args are the words after the command, e.g. ["watcher", "--t", "2", "--n", "6"]. Returns the exit code, stdout (parsed when it is JSON), stderr and files written to studio/out. Use command "help" to list commands and options.',
   input: {
     type: 'object', required: ['command'],
