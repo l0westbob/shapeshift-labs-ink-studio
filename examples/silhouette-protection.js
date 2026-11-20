@@ -2,7 +2,7 @@ module.exports = ({ KIT:K, makeBuilder, makeSculpt }) => ({
   id:'silhouette-protection',
   name:'Courier at the mist beacon',
   seed:89,
-  build(seed) {
+  build(seed, {controls}={}) {
     const B=makeBuilder(seed,[
       0x24394a,0x2a3f4f,0x365260,0x496672,0x5e7880,0x7a9295,0xa7b2aa,
       0x364b42,0x486452,0x5e7962,0x7a9274,0x9da088,
@@ -73,7 +73,7 @@ module.exports = ({ KIT:K, makeBuilder, makeSculpt }) => ({
     S.box(at(.264,.94,-.073),[.073,.048,.185],brass,{...actor,res:.031,rd:.026});
     const lantern={...actor,res:.03,surfaceId:'courier-lantern'};
     S.lathe(at(.343,.379,.22),.20,[.047,.047],brass,lantern);
-    S.ball(at(.343,.34,.219),[.073,.102,.077],light,lantern);
+    S.ball(at(.343,.34,.219),[.073,.102,.077],light,{...lantern,target:{tags:['lantern-core']}});
     S.bake();
 
     const fog=K.atmosphere.sphere({id:'estuary-fog',at:[0,1.28,0],radius:8.6,density:.236,color:'#a2bec7'});
@@ -82,7 +82,9 @@ module.exports = ({ KIT:K, makeBuilder, makeSculpt }) => ({
       cam:{target:[-.09,1.22,.09],dist:10.9,yaw:.30,pitch:.27,sway:0},radius:24,detail:28,dither:.15,
       skyEnvironment:{defaults:{zenith:'#3e6681',horizon:'#a5c6cb',ground:'#668a96',sunStrength:0}},
       atmosphere:[fog,banks],volumeQuality:{scale:3},
-      look:{silhouetteProtection:{targets:[
+      look:{...(controls?.lanternAccent && {paletteConstraints:{targets:[
+        {select:{tag:'lantern-core'},palette:['#fff0c2'],reserved:[{color:'#fff0c2',match:true}]}
+      ]}}),silhouetteProtection:{targets:[
         {id:'courier',select:{object:'courier'},fogScale:.20,contrast:1.37,pivot:.50},
         {id:'mist-beacon',select:{object:'mist-beacon'},fogScale:.41,contrast:1.31,pivot:.50}
       ]}}

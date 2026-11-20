@@ -1018,3 +1018,43 @@ or updating an existing one. Updates keep the look ID and carry over
 omitted components. The pack revision increments on content changes.
 Use `K.authoring.assetPacks.savePaletteLook(approval, pack)` in the library,
 passing the report objects directly where the CLI accepts paths.
+## Run palette checks in CI
+
+```sh
+ink-studio palette check examples/silhouette-protection.js examples/palette-check-courier.json \
+  --params '{"lanternAccent":true}' --w 216 --h 136 --px 1 --out palette-checks
+```
+
+The plan uses the same named `subjects`, `views`, `states`, `thresholds`
+and optional `matte` as subject readability. Add a `checks` array. Every
+check has a distinct `id`, a `type` and a subject ID. Checks run on every
+sample by default. An optional `views` or `states` list can scope a check
+to named samples. For a camera move, name views along the orbit or
+sample the authored camera path at the plan's state times.
+
+- A `swatch` check takes an exact `#rrggbb` swatch. It counts visible
+  subject pixels in the final resolved RGB at native art size before
+  screen overlays. `minPixels` defaults to one visible pixel and
+  `minShare` defaults to 1, so every visible pixel must match. This
+  compares the actual output colour, including the effect of dithering.
+- A `readability` check measures subject contour contrast against the
+  immediate background. Set `minSamples`, `minPixels`, `minColorP10`,
+  `minLightnessP10`, `maxWeakColorShare`, `maxWeakLightnessShare` or
+  `maxCroppedEdges`. At least one visible pixel and one comparable edge
+  are required. If no contrast limit is supplied, both weak-edge shares
+  must be at or below the plan's `thresholds.weakShare`. The matte, when
+  present, applies to contour contrast.
+
+The example checks that every visible lantern-core pixel keeps
+`#fff0c2` and that the courier meets the contrast limits at each of four
+orbit samples. Omit `--params` to run the same checks with the lantern's
+reserved accent disabled.
+
+The command writes `board.png` and `report.json` on both pass and
+assertion failure. The board pairs each rendered view with its
+highlighted swatch and edge evidence. JSON records the overall
+outcome, each check's evaluation count, and actual values with limits
+for failures at each view and state. Exit status is 0 when every check
+passes, 2 when any check fails, and 1 for invalid input or a render or
+I/O error. In Node, call `ink.checkPaletteShot(world, { plan, view, width,
+height, columns, pose })` and read `report.passed`.

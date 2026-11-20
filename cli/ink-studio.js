@@ -899,6 +899,7 @@ const CMD = {
         '  palette stages <scene> [--select JSON] [--allowed JSON] [--out directory]   review paint, lighting, grade and resolve',
         '  palette compare <scene|checkpoint> <palettes.json> [--out directory]   apply alternatives to one captured shot',
         '  palette save-look <approved.json> [--pack pack.json] [--out pack.json]   save approved palette findings as a look',
+        '  palette check <scene> <plan.json> [--out directory]   export a PNG board and check palette assertions',
         '  palette chart <chart.json> [--type chart] [--format png|data]   export an indexed swatch, bar or pair chart',
         '  palette lighting <source-or-draft.json> [--approve] [--out file.json]   suggest or save named lighting ramps',
         '  palette field <field.json> [--t seconds] [--w width --h height] [--format png|data]   render a palette field or report grayscale bands',
@@ -1088,6 +1089,31 @@ const CMD = {
     if (pos[0] === 'plot') return require('./palette-plot.js')(pos.slice(1), opt, lib(), outputFile);
     if (pos[0] === 'fit') return require('./palette-fit.js').fit(pos.slice(1), opt, lib(), outputFile);
     if (pos[0] === 'dither-review') return require('./palette-fit.js').review(pos.slice(1),opt,lib(),outputFile);
+    if (pos[0] === 'check') {
+      if (pos.length!==3 || ['out','w','h','px','cols','t'].some(key=>opt[key]===true))
+        die('Use palette check <scene> <plan.json> [--w N --h N --px N --cols N] [--out directory]');
+      const [,scene,source]=pos;
+      const plan=JSON.parse(fs.readFileSync(path.resolve(source),'utf8'));
+      const directory=outputFile('palette-checks'), files={board:'board.png',report:'report.json'};
+      const inputs=[scene,source].map(name=>fs.statSync(path.resolve(name),{throwIfNoEntry:false})).filter(Boolean);
+      for (const name of Object.values(files)) {
+        const existing=fs.statSync(path.join(directory,name),{throwIfNoEntry:false});
+        if (existing && inputs.some(input=>input.dev===existing.dev && input.ino===existing.ino))
+          die('Choose palette check outputs separate from the scene and plan');
+      }
+      const {image,report}=require('./palette-checks.js').checkPaletteShot(buildPreview(scene),{
+        plan,pose,view:view({t:num('t',0),transparent:onOffOption('transparent')}),
+        width:num('w',160),height:num('h',96),columns:num('cols')
+      });
+      fs.mkdirSync(directory,{recursive:true});
+      PNG.write(path.join(directory,files.board),image.w,image.h,image.rgb);
+      fs.writeFileSync(path.join(directory,files.report),JSON.stringify({...report,files},null,2)+'\n');
+      console.log(report.summary.passed,'checks passed,',report.summary.failed,'failed. Wrote',directory);
+      for (const check of report.checks) if (!check.passed)
+        console.error(check.id + ' failed in ' + check.failed + ' of ' + check.evaluations + ' samples');
+      if (!report.passed) process.exitCode=2;
+      return;
+    }
     if (pos[0] === 'save-look') {
       if (pos.length !== 2 || Object.entries(opt).some(([key,value])=>!['pack','out'].includes(key) || typeof value !== 'string'))
         die('Use palette save-look <approved.json> [--pack pack.json] [--out pack.json]');

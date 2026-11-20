@@ -85,7 +85,7 @@ const percentile = values => {
   return {min:values[0],p10:values[Math.floor((values.length-1)*.1)],mean:sum/values.length};
 };
 
-function measure(frame, subjects, thresholds, matte) {
+function measure(frame, subjects, thresholds, matte, indices=subjects.map((_,i)=>i)) {
   const sample=compositeMatte(frame,matte), {w,h,rgb,alpha}=sample;
   const {readabilityMask,passes:{depth}}=frame, cache=new Map();
   const count=w*h, overlay=new Uint8Array(count);
@@ -96,7 +96,8 @@ function measure(frame, subjects, thresholds, matte) {
     return value;
   }
   const point=(p,color)=>({x:p%w,y:Math.floor(p/w),swatch:hex(color)});
-  const rows=subjects.map((subject,index)=>{
+  const rows=indices.map(index=>{
+    const subject=subjects[index];
     const bit=1<<index, owns=p=>(readabilityMask[p]&bit)!==0 && frame.alpha?.[p]!==0;
     const colorDistances=[], lightnessDistances=[];
     let pixels=0, boundaryPixels=0, croppedEdges=0, occludedEdges=0, transparentEdges=0;
@@ -168,13 +169,13 @@ function dimensions(w,h,samples,columns) {
 
 const edgeLegend = ['Clear edge','Low color','Low lightness','Both low'].map((label,i)=>[label,tones[i]]);
 
-function sheet(kit, tiles, layout, columns, {title='Subject readability',legend=edgeLegend}={}) {
+function sheet(kit, tiles, layout, columns, {title='Subject readability',subtitle='Scene / edge evidence',legend=edgeLegend}={}) {
   const {w,cellWidth,cellHeight}=layout, draw=[], layers=[];
   const across=Math.min(legend.length,Math.max(2,Math.floor(w/108)));
   const lines=Math.ceil(legend.length/across), h=layout.h+Math.max(0,lines-2)*12;
   const label=(text,x,y,size,color='#e2ebf6')=>draw.push({type:'text',text,at:[x,y],size,color});
   label(title,w/2,19,16);
-  label('Scene / edge evidence',w/2,39,10,'#a5b6ca');
+  label(subtitle,w/2,39,10,'#a5b6ca');
   for (const [i,row] of tiles.entries()) {
     const { frame,marked,result }=row, x=8+(i%columns)*cellWidth+(cellWidth-frame.w)/2;
     const top=49+Math.floor(i/columns)*cellHeight, mid=x+frame.w/2;
@@ -183,7 +184,7 @@ function sheet(kit, tiles, layout, columns, {title='Subject readability',legend=
     label(result.state.slice(0,17),mid,top+24,9,'#a5b6ca');
     layers.push({source:frame,rect:[Math.floor(x),top+34,frame.w,frame.h]},
       {source:marked,rect:[Math.floor(x),top+39+frame.h,frame.w,frame.h]});
-    label(result.isBaseline ? 'Baseline' : flags.length ? flags.length+(flags.length===1 ? ' flag' : ' flags') : 'Clear',
+    label(result.status ?? (result.isBaseline ? 'Baseline' : flags.length ? flags.length+(flags.length===1 ? ' flag' : ' flags') : 'Clear'),
       mid,top+48+2*frame.h,9,
       flags.length ? '#ffb282' : '#81dac1');
   }
@@ -213,7 +214,8 @@ function overview(subjects, samples) {
 }
 
 function captureReview(world,{subjects,views,states,thresholds,matte},
-  {width=160,height=96,view={},columns,pose,fixedCameraAt}, analyze=measure) {
+  {width=160,height=96,view={},columns,pose,fixedCameraAt},
+  analyze=(frame,subjects,thresholds,matte)=>measure(frame,subjects,thresholds,matte)) {
   const px=view.px??1, w=Math.ceil(width/px), h=Math.ceil(height/px), count=views.length*states.length;
   columns??=Math.min(views.length,4);
   if (!integer(px,1,2048) || !integer(width,1,2048) || !integer(height,1,2048) || !integer(columns,1,12) ||
@@ -241,9 +243,9 @@ function captureReview(world,{subjects,views,states,thresholds,matte},
         composite:false,renderGraph:false,renderHistory:undefined,inspection:false,cameraGuides:false,
         samples:false,captureCoverage:false,readabilitySelectors:selectors,passes:['depth'],
         shotFrame(info) { captured=info; view.shotFrame?.(info); }});
-      const {frame:scene,marked,...evidence}=analyze(frame,subjects,thresholds,matte,kit);
-      tiles[index*views.length+i]={frame:scene,marked,result:{
-        view:shot.id,state:state.id,time,camera:captured.camera,skyTime:captured.skyTime,...evidence}};
+      const sample={view:shot.id,state:state.id,time,camera:captured.camera,skyTime:captured.skyTime};
+      const {frame:scene,marked,...evidence}=analyze(frame,subjects,thresholds,matte,kit,sample);
+      tiles[index*views.length+i]={frame:scene,marked,result:{...sample,...evidence}};
     }
   }
   return {kit,tiles,layout,columns,frame:{width:w,height:h,pixelSize:px},samples:tiles.map(row=>row.result)};

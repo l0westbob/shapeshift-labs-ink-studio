@@ -30,6 +30,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `geometry.clipConvexFaces(faces, planes, {capTag})` | Clip a closed convex shell of outward-wound planar faces. Keep polygons intact through clipping and tag each cap with its plane tag or the supplied default |
 | `geometry.clipPlanarFaces(faces, planes)` | Crop existing planar polygons against half spaces while retaining face attributes and leaving the cut open. |
 | `geometry.clipHeightMesh(mesh, height, {slopeBound, resolution, budget})` | Keep the part of a triangle surface above a world-space height field (height(x, z)). Subdivision near the cut follows the supplied grade bound and resolution. UVs, normals and surface metadata carry through to the uncapped result |
+| `geometry.fourD` | [4D projections and slices](four-dimensional.md) of polytopes and scalar fields with ordinary XYZ outputs |
 | `geometry.implicitSurface(field, bounds, options)` | Marching tetrahedra for negative-inside fields, with column preparation and bounded edge refinement |
 | `geometry.implicitTriangles(field, bounds, options, emit)` | Stream outward triangles from the same bounded field sampler |
 | `pieces.convex`, `pieces.box`, `pieces.beam`, `pieces.tube`, `pieces.union` | Reusable solid pieces and query unions. Union meshes contain constituent shells |
@@ -185,6 +186,7 @@ const mesh = P.geometry.toKitMesh(geometry, (owner, material) => [.6, .64, .61])
 | `motion.surfaceWeather(options)`, `motion.materialStateGraph(machine, entities, options)` | Persistent wetness and thermal fields, and event-driven material changes |
 | `motion.phaseChange(options)` | [Coupled phase changes](coupled-phase-changes.md) with reaction-driven finishes, relief, and emissions |
 | `motion.transportSplats(source, target, options)` | Balanced mass correspondences and barycentric splat targets |
+| `motion.geometryMorph(source, target, geometry)` | [Geometry-preserving morphs](geometry-morphs.md) with explicit point pairs, rigid features, and authored intermediate poses |
 | `contours.march(field, options)` | Bounded marching-squares paths at a scalar level |
 
 Heights and distances use world units. Planar masks take XZ and use negative
@@ -2777,6 +2779,11 @@ the existing stage effect. It can take contiguous dab ranges or explicit
 dab ID lists. Pass solver settings through `transport`. The normal
 correspondence mode uses nearest samples. `examples/transport-morph.js`
 shows a leaf, an intermediate stage, and the resulting flower.
+
+For authored correspondences, use `correspondence: 'geometry'` with
+[point tracks and rigid feature poses](geometry-morphs.md). The stage
+keeps the same live splat IDs through the morph, with intermediate keys
+for positions and feature rotations.
 
 ## Optional retained authoring
 
