@@ -8,6 +8,7 @@ Stand: 20.11.2026, Basis-Commit `cac4cf8` (main). Reine Analyse, keine Code-Änd
 - **Das Problem ist die Schnittstelle zum Agenten:** Ausgaben sind meist Prosa oder ASCII-Balken, es gibt keine Schemas, die Discovery ist lückenhaft, die Doku umfasst etwa 1,2 MB, und jeder Aufruf ist ein Kaltstart (etwa 1,4 s). Dazu kommen 57 CLI-Commands mit handgeparsten Flags.
 - **Empfehlung: kein Rewrite des Kerns.** Stattdessen eine neue Schicht **Operation Registry** (typisierte Ops mit JSON Schema). Daraus werden MCP-Server, eine JSON-first CLI und ein Claude-Code-Plugin generiert. Mensch-Oberflächen (HTML-Demos, PNG-Paint-Workflow, Prosa-Ausgaben) werden depriorisiert oder ausgelagert.
 - **Nächster Schritt:** ein vertikaler Schnitt mit 5 Ops (`validate`, `open`, `render`, `measure`, `edit`) über MCP, plus eine Eval-Aufgabe, die den geschlossenen Loop "bauen, rendern, messen, editieren" beweist.
+- **Stand 20.11.2026:** Phasen 1 bis 5 sind umgesetzt (Branch `agent-first/phase-2`), siehe Abschnitt 6.
 
 ---
 
@@ -224,19 +225,27 @@ Gemessen: `examples/scene.json` öffnen 15 ms, Render aus dem Cache 20 bis 30 ms
 
 Bewusst offen für Phase 2: Brush-Ops, Prefab-Instanzen, `--params`, Paint-Korrekturen, Look-Overrides und die übrigen CLI-Commands; außerdem eine Eval-Aufgabe, die den Loop mit einem echten Agenten misst.
 
-### Status Phase 2, erster Schnitt (Branch `agent-first/phase-2`)
+### Status Phase 2 bis 5 (Branch `agent-first/phase-2`, abgeschlossen)
 
-| Familie | Tools | Datei |
+| Phase | Ergebnis | Commit |
 | --- | --- | --- |
-| Discovery | `ink_discover` (Übersicht, Suche über Tools, Katalog und Doku, Tool-Schemas, Diorama-Format), `ink_docs` (Themen, Volltextsuche, seitenweise lesen, einzelne Abschnitte) | `agent/ops/discover.js` |
-| Export | `scene_export` (GLB, Sprite-Atlas mit Vorschau) | `agent/ops/export.js` |
-| World/Sim | `world_open`, `world_step`, `world_query`, `world_sim` (plan, fork, reset, save, verify, diff, close) mit Welten als Sessions im Speicher | `agent/ops/world.js`, `agent/worlds.js` |
+| 2. Breite | 17 Tools: Discovery (`ink_discover`, `ink_docs`), Szene (`scene_validate/open/render/measure/edit/save/query/export`), Welt (`world_open/step/query/sim`), Long Tail (`scene_review`, `look`, `ink_cli` für jedes CLI-Command). Katalog aus Registry und Hilfe generiert (91 auf 153 Einträge), `--json` für `stats`, `lint`, `crisp`, `values` | `1f1d683`, `2baa708`, `d8af761` |
+| 3. Plugin | Repo ist Plugin und lokaler Marketplace: MCP-Server, 5 Skills (3 Wissen, 2 Slash-Commands), Subagent `ink-art-director` (nur Lese-Tools), Hook zur Validierung beim Schreiben | `088e597` |
+| 4. Evals | 6 End-to-End-Fälle mit `claude plugin eval`; letzter Stand 6 von 6 bestanden, etwa 2 USD pro Gesamtlauf. Shell-Transport `ink-agent`, dateibasierte Varianten von `scene_edit` und `world_step`, Reparaturmodus für ungültige Dateien | `3e0fb66` |
+| 5. Aufräumen | README kurz und agent-first, voller Leitfaden in `docs/reference.md`; geseedeter Zufall in `kg-play.js`; Bundle-Fallback in einen nutzereigenen Cache | `d5ef004` |
 
-- 13 Tools insgesamt, Tool-Liste etwa 21 KB. Die Übersicht von `ink_discover` passt in unter 1 KB.
-- Das Diorama-Format ist jetzt maschinenlesbar: `KIT.diorama.fields` veröffentlicht die Tabellen, mit denen der Checker ohnehin prüft (einzige Kit-Änderung, `src/kit/kc-data.js`).
-- Welten laufen nur vorwärts; `world_step` lehnt ungültige Aktionen ab, bevor sich etwas bewegt.
+Jede Phase lief mit Selbstreview (code-review, Stufe high), Fixes, Commit und Push. Die Reviews fanden 26 Punkte, davon 24 behoben, 1 bewusst offen (Hook lädt pro Schreibvorgang das Toolkit), 1 kein Fehler. Volle Suite am Ende: 2.055 bestanden, 0 Fehler, 60 übersprungen (wie vor den Änderungen).
 
-Noch offen in Phase 2: Look-Familie (`look inspect/sample/bake`), Animations-Reviews (`motion-review`, `pose-review`, `retarget`), Szenen-Abfragen auf gebackenen Splats (`look/sample`), Katalog aus der Registry generieren und die menschliche CLI auf die Registry umstellen.
+**Was die Evals gefunden haben** (und was danach behoben wurde):
+- Ungültige Dioramen ließen sich mit den Tools nicht reparieren, weil Öffnen eine gültige Szene verlangte. Jetzt repariert `scene_edit` per Pfad mit `patch`-Operationen.
+- `ink-agent --help` war ein Fehler statt einer Hilfe.
+
+**Wichtige Randbedingung auf diesem Rechner:** Die verwalteten Einstellungen der Organisation setzen `allowManagedMcpServersOnly: true`. Lokale MCP-Server, auch der des Plugins, starten dadurch nicht. Freischalten kann nur ein Admin, mit einem `allowedMcpServers`-Eintrag `{ "serverName": "ink-studio" }`. Bis dahin nutzen Agenten denselben Funktionsumfang über `ink-agent` in der Shell; die Skills beschreiben beide Wege. Die Evals laufen deshalb über die Shell. Der MCP-Weg ist durch automatisierte Tests abgedeckt (Handshake, Tool-Liste, Bild-Content).
+
+**Bewusst nicht umgesetzt** (braucht deine Entscheidung, siehe Abschnitt 7):
+- HTML-Demos und WebGL-Renderer bleiben im Repo. Verschieben würde relative Imports der Demos brechen, und ob Browser-Hosts noch gebraucht werden, ist offen.
+- Die menschliche CLI läuft nicht vollständig über die Registry. Agenten erreichen jedes Command über `ink_cli`; ein Umbau aller 57 Commands lohnt erst, wenn die CLI für Menschen wegfallen soll.
+- Kein Merge nach `main`.
 
 ### Quick Wins (unabhängig von der Roadmap)
 
