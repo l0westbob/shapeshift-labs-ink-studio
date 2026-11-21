@@ -452,9 +452,9 @@ Two settings decide how fine the result reads, and they belong together:
 
 - The **art resolution**: render size divided by `pixelSize`. A 128 × 128 render with `pixelSize: 1` is a 128-pixel
   sprite; the default `pixelSize` of 2 halves it.
-- The **splat spacing**, `finish.res` (default 0.09 scene units). For a model a few units long that is coarser than a
-  pixel already at 128 pixels, and at higher resolutions it shows as blotchy shading on large flat faces. Pass `art`
-  to `model_build` (the sprite width in art pixels) and it sets `finish.res` to the model size over `art`.
+- The **splat spacing**, `finish.res` (the renderer's default is 0.09 scene units). For a model a few units long that is
+  coarser than a pixel already at 128 pixels, and at higher resolutions it shows as blotchy shading on large flat faces.
+  `model_build` sets `finish.res` to the model size over `art` (default 128).
 
 On the CadQuery tank at 384 pixels, noise fell from 0.085 with the default spacing to 0.075 with matched spacing, and
 the flat faces lost their blotches; from 128 to 384 pixels it fell from 0.18 to 0.075. `node scripts/resolution-sweep.js`
@@ -484,6 +484,13 @@ and spacing (the mesh rows therefore start with an advantage; compare rows withi
 - Meshes: field cells at or above the object's pixel width (96 here) and splats one pixel apart hold the shape; half a
   pixel adds a little colour fidelity for twice the splats; two pixels clearly loses it.
 - Noise alone misleads: the coarsest grid had the least noise because it is made of big flat blocks.
+
+`model_build` applies this by default from `art`, the sprite width in art pixels (default 128): the model is taken to
+span about two thirds of it at the generated camera (85 of 128), mesh engines get about that many field cells (`cells`
+97 at 128, 195 at 256), splats are placed about a pixel apart (`finish.res`), captures are binned at about 1.4 pixels per
+block, and grid engines (voxels, carving, stacking, depth, terrain, levels) report `detail.pixelsPerBlock` with a
+warning and a suggested block count when it falls below 1 or above 2.5. Pass `cells` to override the field; a source's
+own grid is never changed.
 
 `/tools/tune.html` (with `npm run serve`) changes the finished result live with sliders: art resolution, zoom and camera
 re-render the baked scene (about 0.1 to 0.3 s); splat spacing, shade steps, ramp and palette dithering, edge hardness,

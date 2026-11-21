@@ -521,3 +521,16 @@ test('levels: tile maps and sectors become floors, walls, doors and pools', asyn
   const error = fails(await call({ source: path.join(dir, 'room.level.json'), out: path.join(dir, 'room'), overwrite: true, preview: false }, {}), 'BUILD_FAILED');
   assert.match(error.message, /"#" is not in tiles/);
 });
+
+test('detail follows the art size: cells, splat spacing, capture resolution and a pixels-per-block word for grids', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'bar.vox.json'), JSON.stringify({ cell: 0.1, colours: { o: '#5b6b2e' }, layers: ['o'.repeat(120)] }));
+  const fine = ok(await call({ source: path.join(dir, 'bar.vox.json'), out: path.join(dir, 'fine'), size: 6, preview: false }, {}));
+  assert.equal(fine.detail.blocks, 120);
+  assert.equal(fine.detail.pixelsPerBlock, 0.7);
+  assert.match(fine.warnings.join(' '), /smaller than an art pixel .* About 60 blocks/);
+  const big = ok(await call({ source: path.join(dir, 'bar.vox.json'), out: path.join(dir, 'big'), size: 6, art: 256, preview: false }, {}));
+  assert.equal(big.detail.pixelsPerBlock, 1.41);
+  assert.deepEqual(big.warnings, []);
+  assert.equal(JSON.parse(fs.readFileSync(big.scene, 'utf8')).finish.res, Math.round((6 / 256) * 1e4) / 1e4);
+});

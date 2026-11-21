@@ -6,7 +6,7 @@
      { "ply": "capture.ply", "resolution": 64, "colours": 6, "up": "y", "opacity": 0.5, "fill": true, "close": 1, "hard": false,
        "crop": [[-1, 0, -1], [1, 2, 1]], "names": ["moss", "bark", ...] }
 
-   resolution is the number of blocks along the longest side; colours the number of families; up the capture's up axis
+   resolution is the number of blocks along the longest side (default: from model_build's art, about 1.4 art pixels per block); colours the number of families; up the capture's up axis
    ("y", "-y" as many trainers write, "z" or "-z"); opacity drops faint splats (3DGS only); crop keeps a box (in capture
    units, before turning up); fill closes gaps of up to `close` blocks before filling the inside. A .ply on its own uses
    these defaults. */
@@ -127,7 +127,7 @@ async function buildModel(file, options) {
   if (points.length < 4) throw new Error('Fewer than four points are left (check opacity and crop)');
 
   const lo = [0, 1, 2].map(k => Math.min(...points.map(pt => pt.p[k]))), hi = [0, 1, 2].map(k => Math.max(...points.map(pt => pt.p[k])));
-  const extent = Math.max(...hi.map((v, k) => v - lo[k])), resolution = config.resolution ?? 64, cell = extent / resolution;
+  const extent = Math.max(...hi.map((v, k) => v - lo[k])), resolution = config.resolution ?? options.blocks ?? 64, cell = extent / resolution;
   const n = hi.map((v, k) => Math.max(1, Math.ceil((v - lo[k]) / cell) + 1));
   const id = (x, y, z) => (x * n[1] + y) * n[2] + z;
   const sums = new Map();

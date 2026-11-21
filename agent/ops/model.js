@@ -55,7 +55,7 @@ const engineFor = file => Object.keys(ENGINES).filter(name => matchOf(file, name
 const COMMON = {
   out: { type: 'string', description: 'Directory for scene.json, model.glb, raw.png, preview.png and parts/.' },
   size: { type: 'number', minimum: 0.1, maximum: 200, description: 'Largest side of the whole model in scene units (default: keep source units).' },
-  cells: { type: 'integer', minimum: 16, maximum: 256, description: 'Mesh engines: distance-field cells along the whole model\'s longest side (default 96); small parts get the same cell size.' },
+  cells: { type: 'integer', minimum: 16, maximum: 512, description: 'Mesh engines: distance-field cells along the whole model\'s longest side (default: from art, about the pixels the model spans; 97 at art 128); small parts get the same cell size.' },
   hues: { type: 'integer', minimum: 1, maximum: 12, description: 'Colour families for meshes with vertex colours (default 6).' },
   shades: { type: 'integer', minimum: 2, maximum: 8, description: 'Shades per role ramp (default 4).' },
   pixelSize: { type: 'integer', minimum: 1, maximum: 16, description: 'Screen pixels per art pixel, written to finish.look.pixelSize (default: the renderer\'s 2, so a 128 px render is a 64 px sprite; 1 draws every pixel).' },
@@ -63,14 +63,25 @@ const COMMON = {
     anyOf: [{ type: 'boolean' }, { type: 'object' }],
     description: 'pixelStyle for every role material (default true: { dither: "none", shadeSteps: shades }, flat shade bands without speckle; false leaves the renderer default; an object is used as given).'
   },
-  art: { type: 'integer', minimum: 16, maximum: 1024, description: 'Art pixels the sprite will be across; sets finish.res (splat spacing) to the model size over this, never coarser than 0.09, so detail and flat shading hold at that resolution. Render at the same size with pixelSize 1.' },
+  art: { type: 'integer', minimum: 16, maximum: 1024, description: 'Art pixels the sprite is across (default 128; the screen size is art times pixelSize). Detail follows it: the model spans about two thirds of that at the generated camera, mesh fields get about that many cells, splats sit about a pixel apart (finish.res), captures are binned at about 1.4 pixels per block, and grid engines report pixels per block, with a warning outside 1 to 2.5.' },
   snap: { type: 'integer', minimum: 8, maximum: 1024, description: 'Art pixels the longest side spans in the final sprite; positions and sizes round to whole pixels so part edges land on the pixel grid (mesh engines and voxels).' },
   overwrite: { type: 'boolean', description: 'Replace an earlier model in out.' },
   preview: { type: 'boolean', description: 'Return a turnaround image of the baked scene (default true).' },
   frames: { type: 'integer', minimum: 1, maximum: 8, description: 'Preview views (default 4).' }
 };
 
-async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, art, overwrite = false, preview = true, frames = 4 }, ctx, field) {
+/* the detail rule measured by scripts/detail-sweep.js (docs/model-build.md): at the generated camera a model spans about
+   two thirds of the art width; grids read best at 1.2 to 1.7 art pixels per block, mesh fields need about as many cells as
+   the model spans pixels, and splats about a pixel apart */
+const COVERAGE = 0.66, BEST_PIXELS_PER_BLOCK = 1.4;
+const detailFor = art => {
+  const objectPixels = Math.round(art * COVERAGE);
+  return { art, objectPixels, cells: Math.max(48, Math.ceil(objectPixels * 1.15)), blocks: Math.round(objectPixels / BEST_PIXELS_PER_BLOCK) };
+};
+
+async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, art = 128, overwrite = false, preview = true, frames = 4 }, ctx, field) {
+  const detail = detailFor(art);
+  cells ??= detail.cells;
   const spec = ENGINES[engine];
   if (runsCode(engine, source) && !Scenes.codeAllowed(ctx))
     throw new OpError('CODE_NOT_ALLOWED', spec.label + ' run arbitrary code and are disabled', {
@@ -95,7 +106,7 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
   try {
     report = await require(spec.module).buildModel(file, {
       out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, overwrite,
-      kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh, buildPart
+      blocks: detail.blocks, kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh, buildPart
     });
   } catch (error) {
     if (error.code === 'THREE_MISSING')
@@ -115,14 +126,25 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
       path: '/' + field, hint: error.where ?? error.stack?.split('\n').find(line => line.includes(file))?.trim()
     });
   }
-  /* art: splats about a pixel apart at the intended sprite size (the renderer's default spacing is coarser than a pixel
-     for a model a few units long, which reads as blotchy shading) */
-  if (art) {
-    const scene = JSON.parse(fs.readFileSync(report.scene, 'utf8'));
-    const extent = report.extent ?? scene.camera?.dist / 1.7;
+  /* splats about a pixel apart at the intended sprite size (the renderer's default spacing is coarser than a pixel for a
+     model a few units long, which reads as blotchy shading) */
+  const scene = JSON.parse(fs.readFileSync(report.scene, 'utf8'));
+  const extent = report.extent ?? scene.camera?.dist / 1.7;
+  if (scene.finish?.res === undefined && extent > 0) {
     scene.finish = { ...scene.finish, res: Math.round(Math.min(0.09, extent / art) * 1e4) / 1e4 };
     fs.writeFileSync(report.scene, JSON.stringify(scene, null, 2) + '\n');
-    report.res = scene.finish.res;
+  }
+  report.detail = { art, objectPixels: detail.objectPixels, res: scene.finish?.res };
+  if (report.triangles !== undefined && !report.grid) report.detail.cells = cells;
+  /* grids: how many art pixels a block covers, and a word when that is far from the best range */
+  if (report.grid) {
+    const blocks = Math.max(...report.grid), perBlock = Math.round((detail.objectPixels / blocks) * 100) / 100;
+    report.detail.blocks = blocks;
+    report.detail.pixelsPerBlock = perBlock;
+    if (perBlock < 1)
+      (report.warnings ??= []).push('Blocks are smaller than an art pixel (' + perBlock + ' px each at art ' + art + '): small parts blend and colours get lost. About ' + detail.blocks + ' blocks along the longest side, or a larger art size, reads better.');
+    else if (perBlock > 2.5)
+      (report.warnings ??= []).push('Blocks are ' + perBlock + ' art pixels each at art ' + art + ': coarse. About ' + detail.blocks + ' blocks along the longest side would hold more shape, or render smaller.');
   }
   const { spec: diorama, ...summary } = report;
   const result = compact({ engine, ...summary, next: { tool: 'scene_open', scene: { path: report.scene } } });

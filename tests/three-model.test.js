@@ -136,7 +136,10 @@ test('model_three gives each material a stable role, keeps vertex colours automa
   assert.equal(spec.palette[2], 0x5b6b2e, 'the material colour is the lit shade of its ramp');
   assert.ok(spec.palette.length > 10, 'the vertex-coloured part adds its own families');
   assert.deepEqual(spec.light, { sun: [0, 1, 0] });
-  assert.deepEqual(spec.finish, { dither: 0, look: { pixelSize: 1 } });
+  const { res, ...finish } = spec.finish;
+  assert.deepEqual(finish, { dither: 0, look: { pixelSize: 1 } });
+  assert.equal(res, Math.round((result.extent / 128) * 1e4) / 1e4, 'splats about a pixel apart at the default art size');
+  assert.deepEqual(result.detail, { art: 128, objectPixels: 84, res, cells: 97 });
 
   /* every built-in role points into this palette, so another style still validates */
   for (const style of ['slate', 'ember', 'moss']) {
@@ -147,5 +150,5 @@ test('model_three gives each material a stable role, keeps vertex colours automa
   const plain = ok(await call({ script, out, overwrite: true, pixelStyle: false, preview: false }));
   const plainSpec = JSON.parse(fs.readFileSync(plain.scene, 'utf8'));
   assert.equal(plainSpec.solids[0].mat, 'hull-paint');
-  assert.equal(plainSpec.finish, undefined);
+  assert.deepEqual(Object.keys(plainSpec.finish), ['res'], 'without pixelStyle only the splat spacing is set');
 });
