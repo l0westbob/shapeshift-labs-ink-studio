@@ -142,3 +142,49 @@ test('model_build carves drawn views into voxels: visual hull, colours from the 
   const error = fails(await call({ source, out, overwrite: true, preview: false }, {}), 'BUILD_FAILED');
   assert.match(error.message, /disagree on the size along y/);
 });
+
+const hasBlender = (() => {
+  try {
+    execFileSync(require('../cli/blender-model.js').blenderBinary(), ['--version'], { stdio: 'ignore', timeout: 60000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test('model_build runs a Blender script: modifiers applied, parts per material, Z up to Y up, sun lamp', { skip: hasBlender ? false : 'Blender is not installed', timeout: 240000 }, async t => {
+  const dir = tempDir(t), script = path.join(dir, 'post.blender.py'), out = path.join(dir, 'post');
+  fs.writeFileSync(script, `import bpy, math
+def mat(name, rgb, role=None):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (*rgb, 1)
+    if role: m["role"] = role
+    return m
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.1))
+base = bpy.context.object
+base.name = "base"
+base.scale = (1, 1, 0.2)
+base.data.materials.append(mat("paint", (0.1, 0.2, 0.05), "olive"))
+base.modifiers.new("bevel", "BEVEL").width = 0.05
+bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=2, location=(0, 0, 1.2))
+pole = bpy.context.object
+pole.name = "pole"
+pole.data.materials.append(mat("metal", (0.5, 0.5, 0.5)))
+bpy.ops.object.light_add(type="SUN")
+`);
+  const result = ok(await call({ source: script, out, preview: false }));
+  assert.equal(result.engine, 'blender');
+  assert.deepEqual(result.parts.map(part => [part.name, part.role]), [['base', 'olive'], ['pole', 'metal']]);
+  assert.ok(result.parts.every(part => part.open === 0));
+  assert.ok(result.parts[0].triangles > 12, 'the bevel modifier was applied');
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.ok(Math.abs(spec.solids[1].size - 2) < 0.01 && Math.abs(spec.solids[1].at[1] - 0.2) < 0.01, 'the pole stands 2 tall on the base');
+  assert.deepEqual(spec.light, { sun: [0, 1, 0] });
+  assert.equal((await validate(result.scene)).valid, true);
+
+  fs.writeFileSync(script, 'import bpy\nbpy.ops.mesh.primitive_cube_add()\nraise ValueError("no turret today")\n');
+  const error = fails(await call({ source: script, out, overwrite: true, preview: false }), 'BUILD_FAILED');
+  assert.match(error.message, /no turret today/);
+  assert.match(error.hint, /post\.blender\.py", line 3/);
+});

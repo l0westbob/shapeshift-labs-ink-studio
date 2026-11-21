@@ -13,6 +13,7 @@ voxel model     ─┘
 | --- | --- | --- | --- |
 | `three` | `.mjs`, `.js`, `.cjs` exporting `({ THREE, addon }) => Object3D` | Quick low-poly hard surfaces. See [three-modeling.md](three-modeling.md). | yes |
 | `cadquery` | `.py` defining `build()`, `result` or `show_object()` | Precise parts: fillets, chamfers, lofts, sweeps, cut details. | yes |
+| `blender` | `.blender.py` building objects with `bpy` | Bevelled hard surfaces and smooth organic forms: modifiers (bevel, subdivision, mirror, array, boolean) are applied. | yes |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `carve` | `.views.json` with orthographic views drawn as letter grids | Pixel first: draw how the sprite should read, get the solid that matches. | no |
 
@@ -70,6 +71,19 @@ def build():
 - Python errors come back as `BUILD_FAILED` with the line of the script in `hint`. A shape OpenCascade reports as invalid
   is listed in `warnings`; it usually still bakes.
 - [examples/cadquery/tank.py](../examples/cadquery/tank.py) is a complete assembly with 24 parts.
+
+## Blender
+
+The script runs headless (`blender -b`) in an empty scene, found as `$INK_BLENDER`, `blender` on the PATH or the macOS
+application. It builds objects with `bpy` (or defines `build()`, which is then called).
+
+- Every visible mesh, curve, surface, metaball and text object is evaluated with its modifiers, so a bevel, subdivision,
+  mirror, array or boolean modifier is part of the result.
+- One part per object and material. The colour is the material's Principled BSDF base colour; the role is the
+  material's custom property `role` (`mat["role"] = "olive"`), else the material name.
+- Blender is Z up; the model is turned so Z becomes Y. The first sun lamp becomes the diorama's sun.
+- [examples/blender/tank.blender.py](../examples/blender/tank.blender.py) uses bevels, an array and a mirror modifier and
+  a bmesh prism for the tracks.
 
 ## Voxels
 

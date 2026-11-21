@@ -5,6 +5,7 @@
 
      three     a three.js script (.mjs, .js, .cjs) exporting ({ THREE, addon }) => Object3D      runs code
      cadquery  a CadQuery or build123d script (.py) defining build(), result or show_object()    runs code
+     blender   a Blender script (.blender.py) building objects with bpy; modifiers are applied      runs code
      vox       a voxel model (.json): plans of letters and a colour per letter                    data only
      carve     drawn views (.views.json): the sprite drawn from front, side and top, carved into voxels   data only */
 const fs = require('node:fs');
@@ -17,6 +18,7 @@ const SceneOps = () => require('./scene.js');
 const ENGINES = {
   three: { module: '../../cli/three-model.js', extensions: ['.mjs', '.js', '.cjs'], code: true, label: 'three.js scripts' },
   cadquery: { module: '../../cli/cadquery-model.js', extensions: ['.py'], code: true, label: 'CadQuery scripts' },
+  blender: { module: '../../cli/blender-model.js', extensions: ['.blender.py'], code: true, label: 'Blender scripts' },
   vox: { module: '../../cli/vox-model.js', extensions: ['.vox.json', '.json'], code: false, label: 'voxel models' },
   carve: { module: '../../cli/carve-model.js', extensions: ['.views.json'], code: false, label: 'drawn views' }
 };
@@ -60,6 +62,8 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
   } catch (error) {
     if (error.code === 'THREE_MISSING')
       throw new OpError('UNSUPPORTED', 'three is not installed', { hint: 'npm install three in the project (or in ink-studio)' });
+    if (error.code === 'BLENDER_MISSING')
+      throw new OpError('UNSUPPORTED', error.message, { hint: 'install Blender (blender on the PATH, or set INK_BLENDER)' });
     if (error.code === 'PYTHON_MISSING' || error.code === 'CADQUERY_MISSING')
       throw new OpError('UNSUPPORTED', error.message, {
         hint: 'uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-modelling.txt (or set INK_PYTHON)'
@@ -91,7 +95,7 @@ defineOp({
   destructive: true,
   title: 'Build a model with another modeller',
   effects: 'write',
-  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. engine "carve" (.views.json): pixel first, draw the model as orthographic views { cell, colours, views: { front, right, top, (back, left, bottom): [rows of letters] } } the way the sprite should read; blocks stay where every view sees something and take the colours the views show, then it continues as voxels (writes carved.vox.json to refine and views.png). The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
+  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "blender": a Blender script (.blender.py, Z up, headless, empty scene) building objects with bpy; modifiers (bevel, subdivision, mirror, array, boolean) are applied, parts split per object and material, role from the "role" property or name of the material, base colour from its Principled BSDF; good for smooth organic forms and bevelled hard surfaces. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. engine "carve" (.views.json): pixel first, draw the model as orthographic views { cell, colours, views: { front, right, top, (back, left, bottom): [rows of letters] } } the way the sprite should read; blocks stay where every view sees something and take the colours the views show, then it continues as voxels (writes carved.vox.json to refine and views.png). The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
   input: {
     type: 'object', required: ['source', 'out'],
     properties: {
