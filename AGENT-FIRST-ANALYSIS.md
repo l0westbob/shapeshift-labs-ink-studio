@@ -1,116 +1,116 @@
-# ink-studio: Analyse und Plan für Agent-only
+# ink-studio: Analysis and plan for agent-only
 
-Stand: 20.11.2026, Basis-Commit `cac4cf8` (main). Reine Analyse, keine Code-Änderungen.
+As of 20 November 2026, base commit `cac4cf8` (main). Pure analysis, no code changes.
 
 ## TL;DR
 
-- **Der Kern ist schon zu großen Teilen agententauglich, die Oberfläche nicht.** Headless CPU-Renderer, Seeds und Determinismus, JSON-Szenen, Validierung mit "did you mean", Authoring mit Revision-Hashes und Undo, Sim Record/Replay/Verify, numerische Qualitätsmetriken: alles da.
-- **Das Problem ist die Schnittstelle zum Agenten:** Ausgaben sind meist Prosa oder ASCII-Balken, es gibt keine Schemas, die Discovery ist lückenhaft, die Doku umfasst etwa 1,2 MB, und jeder Aufruf ist ein Kaltstart (etwa 1,4 s). Dazu kommen 57 CLI-Commands mit handgeparsten Flags.
-- **Empfehlung: kein Rewrite des Kerns.** Stattdessen eine neue Schicht **Operation Registry** (typisierte Ops mit JSON Schema). Daraus werden MCP-Server, eine JSON-first CLI und ein Claude-Code-Plugin generiert. Mensch-Oberflächen (HTML-Demos, PNG-Paint-Workflow, Prosa-Ausgaben) werden depriorisiert oder ausgelagert.
-- **Nächster Schritt:** ein vertikaler Schnitt mit 5 Ops (`validate`, `open`, `render`, `measure`, `edit`) über MCP, plus eine Eval-Aufgabe, die den geschlossenen Loop "bauen, rendern, messen, editieren" beweist.
-- **Stand 20.11.2026:** Phasen 1 bis 5 sind umgesetzt (Branch `agent-first/phase-2`), siehe Abschnitt 6.
+- **The core is already largely agent-ready, the surface is not.** Headless CPU renderer, seeds and determinism, JSON scenes, validation with "did you mean", authoring with revision hashes and undo, sim record/replay/verify, numeric quality metrics: all there.
+- **The problem is the interface to the agent:** output is mostly prose or ASCII bars, there are no schemas, discovery has gaps, the docs total about 1.2 MB, and every call is a cold start (about 1.4 s). On top of that come 57 CLI commands with hand-parsed flags.
+- **Recommendation: no rewrite of the core.** Instead, add a new layer, an **Operation Registry** (typed ops with JSON Schema). From it, generate an MCP server, a JSON-first CLI and a Claude Code plugin. Human-facing surfaces (HTML demos, PNG paint workflow, prose output) are deprioritized or moved out.
+- **Next step:** a vertical slice with 5 ops (`validate`, `open`, `render`, `measure`, `edit`) over MCP, plus one eval task that proves the closed loop "build, render, measure, edit".
+- **Status 20 November 2026:** phases 1 to 5 are implemented (branch `agent-first/phase-2`), see section 6.
 
 ---
 
-## 1. Ist-Zustand in Zahlen
+## 1. Current state in numbers
 
-| Bereich | Umfang |
+| Area | Size |
 | --- | --- |
-| `src/kit/` | 434 Dateien, ca. 103.000 Zeilen |
-| `src/*.js` (Top-Level) | 83 Dateien, ca. 20.000 Zeilen |
-| `src/webgl/` + `webgl.mjs` | ca. 8.500 Zeilen (Browser-Renderer, Shader) |
-| `cli/` | 72 Dateien, ca. 17.600 Zeilen. `cli/ink-studio.js` allein hat 2.770 Zeilen |
-| CLI-Commands | ca. 57 Top-Level (`CMD`-Objekt) plus Subcommands (`sim`, `scene`, `look`, `authoring`, ...) |
-| Datei-Optionen (`--x file.json`) | ca. 45 (siehe `fileOptions` in `cli/shot-recipes.js`) |
-| `docs/*.md` | 145 Dateien, ca. 20.000 Zeilen, ca. 1,2 MB (grob 300.000 Tokens) |
-| `README.md` | 76 KB, 1.076 Zeilen |
-| `examples/` | 183 JS, 89 JSON, 20 HTML (interaktive Browser-Demos) |
-| `tests/` | ca. 394 Testdateien, ca. 47.000 Zeilen |
-| `catalog.json` | 91 Einträge, davon nur 18 CLI und 2 API |
-| Runtime-Dependencies | 0 |
-| Kaltstart `stats watcher` | ca. 1,4 s, davon ca. 0,9 s Bake |
+| `src/kit/` | 434 files, about 103,000 lines |
+| `src/*.js` (top level) | 83 files, about 20,000 lines |
+| `src/webgl/` + `webgl.mjs` | about 8,500 lines (browser renderer, shaders) |
+| `cli/` | 72 files, about 17,600 lines. `cli/ink-studio.js` alone has 2,770 lines |
+| CLI commands | about 57 top level (`CMD` object) plus subcommands (`sim`, `scene`, `look`, `authoring`, ...) |
+| File options (`--x file.json`) | about 45 (see `fileOptions` in `cli/shot-recipes.js`) |
+| `docs/*.md` | 145 files, about 20,000 lines, about 1.2 MB (roughly 300,000 tokens) |
+| `README.md` | 76 KB, 1,076 lines |
+| `examples/` | 183 JS, 89 JSON, 20 HTML (interactive browser demos) |
+| `tests/` | about 394 test files, about 47,000 lines |
+| `catalog.json` | 91 entries, of which only 18 CLI and 2 API |
+| Runtime dependencies | 0 |
+| Cold start `stats watcher` | about 1.4 s, of which about 0.9 s bake |
 
-### Architektur
+### Architecture
 
-- **Global-Scope-Bundle:** `index.js` `files()` hängt etwa 83 handsortierte `src/*.js` und alle `src/kit/*.js` **alphabetisch** aneinander. Der Dateiname-Präfix (`k0..kz`, `p00..pcy`, `pu0..pud`, `py/pz`) ist zugleich Lade- und Abhängigkeitsreihenfolge. Jede Kit-Datei ist eine IIFE `(function (K) {...})(KIT)`.
-- `load()` schreibt `dist/standalone.js` **ins Paketverzeichnis** (mtime-basierter Cache) und `require`t es.
-- **Keine Typen:** kein `.d.ts`, praktisch kein JSDoc. Verträge stehen in Blockkommentaren am Dateianfang und in `docs/`.
-- **Keine JSON Schemas:** Validierung ist imperativ (ca. 130 `validate(`-Stellen, `K.diorama.check`). Persistierte Formate tragen aber ein `format`-Tag (`ink-studio/world`, `/checkpoint`, `/run`, `/authoring`, `/asset-pack`, ...). Das ist eine gute Basis für Schemas.
-- **CLI:** ein großes `CMD`-Objekt, handgeschriebener argv-Parser, `world.js` für `inspect/probe/trace/field/sim/scene`, `shot-recipes.js` für reproduzierbare Renders.
+- **Global-scope bundle:** `index.js` `files()` concatenates about 83 hand-sorted `src/*.js` files and all `src/kit/*.js` files **alphabetically**. The file name prefix (`k0..kz`, `p00..pcy`, `pu0..pud`, `py/pz`) is at the same time the load order and the dependency order. Every kit file is an IIFE `(function (K) {...})(KIT)`.
+- `load()` writes `dist/standalone.js` **into the package directory** (mtime-based cache) and `require`s it.
+- **No types:** no `.d.ts`, practically no JSDoc. Contracts live in block comments at the top of files and in `docs/`.
+- **No JSON Schemas:** validation is imperative (about 130 `validate(` call sites, `K.diorama.check`). Persisted formats do carry a `format` tag though (`ink-studio/world`, `/checkpoint`, `/run`, `/authoring`, `/asset-pack`, ...). That is a good basis for schemas.
+- **CLI:** one large `CMD` object, a hand-written argv parser, `world.js` for `inspect/probe/trace/field/sim/scene`, `shot-recipes.js` for reproducible renders.
 
-### Begriffskollision
+### Term collision
 
-"Agents" bedeutet in diesem Repo **Simulations-NPCs** (`docs/agent-decisions.md`, `agent-needs.md`, `agent-orders.md`, `agent-storage.md`, `K.world.agentDecisions`). In diesem Dokument heißen sie **Sim-Agenten**, im Gegensatz zu **KI-Agenten**. In MCP-Tool-Namen und Beschreibungen muss das sauber getrennt sein, sonst verwirrt es das Modell (z. B. `world_sim_agents` statt `agents`).
+"Agents" in this repo means **simulation NPCs** (`docs/agent-decisions.md`, `agent-needs.md`, `agent-orders.md`, `agent-storage.md`, `K.world.agentDecisions`). In this document they are called **sim agents**, as opposed to **AI agents**. In MCP tool names and descriptions the two must be kept cleanly apart, otherwise the model gets confused (e.g. `world_sim_agents` instead of `agents`).
 
 ---
 
-## 2. Agent-Readiness pro Bereich
+## 2. Agent readiness per area
 
-🟢 bereit · 🟡 Substanz da, Schnittstelle fehlt · 🔴 Blocker
+🟢 ready · 🟡 substance is there, interface is missing · 🔴 blocker
 
-| Bereich | Status | Befund |
+| Area | Status | Finding |
 | --- | --- | --- |
-| Headless Rendering | 🟢 | CPU-Renderer, `render()` in Node, Ausgabe als PNG. Native Art-Auflösung ist winzig (z. B. 225 × 155 px), Bilder sind für multimodale Modelle also **billig**. |
-| Determinismus | 🟢 | Seeded PRNG, `variants --seeds`, Shot Recipes, Checkpoints, `sim verify`, `sim diff --first`. Rest-Risiko: ca. 20 `Math.random`-Stellen in `src/`. |
-| Szenen als Daten | 🟡 | JSON-Dioramen funktionieren, aber ohne Schema. Der Agent muss das Format aus Prosa-Doku lernen. |
-| Validierung | 🟡 | Gute Meldungen ("did you mean ball", erlaubte Keys gelistet), aber als **Text auf stderr**, nicht als strukturierte Daten. |
-| Retained Authoring | 🟢/🟡 | `K.authoring.document` und `sceneEditor` sind transaktional (begin/preview/commit/undo, Revision-Hash, Optimistic Concurrency). Über die CLI ist nur `authoring inspect/preview/apply` mit 3 Op-Typen erreichbar; der volle SceneEditor (Transform, Shape, Modifiers, Material, Brush) nur über die JS-API. |
-| World/Sim-Abfragen | 🟢 | `inspect/probe/trace/field` liefern JSON, `sim run/fork/replay/diff/scrub` sind deterministisch. |
-| Qualitätsmetriken | 🟡 | `lint`, `crisp`, `values`, `shimmer`, `motion`, `perf`, `ramps`, `variants` liefern Zahlen. Ideal als Reward-Signal, aber meist als Text-Tabelle ausgegeben. |
-| Ausgabeformat | 🔴 | Ca. 125 `console.log`/stdout-Stellen in `cli/`. JSON nur bei einem Teil der Commands (`--out report.json`, `--json` bei `perf` und `world`). `stats` gibt ASCII-Balken aus, `check` Prosa. |
-| Fehler und Exit-Codes | 🟡 | `die()` gibt Text aus und beendet mit 1, einige Commands nutzen 2 für "Checks fehlgeschlagen". Es gibt keine Fehler-Codes und keine Pfade als Daten. |
-| Discovery | 🔴 | `help` ist ein 150-Zeilen-Prosablock. `catalog.json` ist veraltet (18 von ca. 57 CLI-Commands). Es gibt keinen Weg zu fragen, welche Optionen ein Command hat und welche Typen sie haben. |
-| Doku | 🔴 | 1,2 MB Prosa, für Menschen geschrieben, ohne Frontmatter oder Chunking. Passt nicht in einen Kontext und ist nicht gezielt abrufbar. |
-| Token-Effizienz | 🔴 | Beispiel `authoring inspect`: pretty-printed JSON mit Floats wie `1.2999999999999998` und vollständigen Punktlisten. Es gibt keine `summary`/`detail`-Stufen und keine Paginierung. |
-| Prozessmodell | 🔴 | Jeder Aufruf lädt das Bundle neu und bakt die Szene neu (ca. 1,4 s). Es gibt keine Session und keine Handles, und gebackene Welten werden nicht wiederverwendet. |
-| Sicherheit | 🟡 | JS-Szenen sind beliebiger Code (`module.exports = kit => ...`). `ink-studio.config.js` wird aus dem CWD `require`t. Für lokale Nutzung okay, für autonome Agenten ein Risiko. |
-| Installierbarkeit | 🟡 | `load()` braucht ein beschreibbares Paketverzeichnis, das scheitert z. B. in einem schreibgeschützten Plugin-Cache. |
+| Headless rendering | 🟢 | CPU renderer, `render()` in Node, output as PNG. Native art resolution is tiny (e.g. 225 × 155 px), so images are **cheap** for multimodal models. |
+| Determinism | 🟢 | Seeded PRNG, `variants --seeds`, shot recipes, checkpoints, `sim verify`, `sim diff --first`. Remaining risk: about 20 `Math.random` call sites in `src/`. |
+| Scenes as data | 🟡 | JSON dioramas work, but without a schema. The agent has to learn the format from prose docs. |
+| Validation | 🟡 | Good messages ("did you mean ball", allowed keys listed), but as **text on stderr**, not as structured data. |
+| Retained authoring | 🟢/🟡 | `K.authoring.document` and `sceneEditor` are transactional (begin/preview/commit/undo, revision hash, optimistic concurrency). Through the CLI only `authoring inspect/preview/apply` with 3 op types is reachable; the full SceneEditor (transform, shape, modifiers, material, brush) only through the JS API. |
+| World/sim queries | 🟢 | `inspect/probe/trace/field` return JSON, `sim run/fork/replay/diff/scrub` are deterministic. |
+| Quality metrics | 🟡 | `lint`, `crisp`, `values`, `shimmer`, `motion`, `perf`, `ramps`, `variants` produce numbers. Ideal as a reward signal, but mostly printed as text tables. |
+| Output format | 🔴 | About 125 `console.log`/stdout call sites in `cli/`. JSON only for some of the commands (`--out report.json`, `--json` on `perf` and `world`). `stats` prints ASCII bars, `check` prints prose. |
+| Errors and exit codes | 🟡 | `die()` prints text and exits with 1, some commands use 2 for "checks failed". There are no error codes and no paths as data. |
+| Discovery | 🔴 | `help` is a 150-line prose block. `catalog.json` is outdated (18 of about 57 CLI commands). There is no way to ask which options a command has and what types they are. |
+| Docs | 🔴 | 1.2 MB of prose written for humans, without frontmatter or chunking. Does not fit into one context and cannot be fetched selectively. |
+| Token efficiency | 🔴 | Example `authoring inspect`: pretty-printed JSON with floats like `1.2999999999999998` and full point lists. There are no `summary`/`detail` levels and no pagination. |
+| Process model | 🔴 | Every call reloads the bundle and re-bakes the scene (about 1.4 s). There is no session and there are no handles, and baked worlds are not reused. |
+| Security | 🟡 | JS scenes are arbitrary code (`module.exports = kit => ...`). `ink-studio.config.js` is `require`d from the CWD. Fine for local use, a risk for autonomous agents. |
+| Installability | 🟡 | `load()` needs a writable package directory, which fails e.g. in a read-only plugin cache. |
 
 ---
 
-## 3. Was heute für Menschen gebaut ist
+## 3. What is built for humans today
 
-| Komponente | Zweck heute | Empfehlung Agent-only |
+| Component | Purpose today | Recommendation for agent-only |
 | --- | --- | --- |
-| `examples/*.html` (20) | Interaktive Browser-Demos | **Auslagern** (eigenes Repo oder `legacy/`). Die dazugehörigen JSON- und JS-Beispiele als Fixtures behalten. |
-| WebGL-Renderer (`src/webgl`, ca. 8.500 Zeilen) | Live-Canvas für Browser-Hosts | **Entscheidung nötig**, siehe Abschnitt 7. Ohne Browser-Host ist er nur noch für Parity-Tests nötig. |
-| `look parity`, `environment-parity` | CPU-gegen-WebGL-Vergleich, braucht Chrome | Optional halten, nicht im Agent-Pfad. |
-| `paint export/absorb` | Mensch malt `paint.png` im Bildeditor, Magenta radiert | **Ersetzen** durch strukturierte Op `paint_apply({ decals: [...] })` (Weltposition, Normale, Palettenindex). Die Datenstruktur existiert bereits (`decals.json`). |
-| Prosa- und ASCII-Ausgaben (`stats`, `check`, `validate`, `help`) | Lesbar im Terminal | JSON als Standard, `--human` als Opt-in. |
-| `review`, `turn`, `sheet` (Contact Sheets) | Visuelle Kontrolle | **Behalten**, als Bild-Content im MCP. Für multimodale Agenten sehr wertvoll. |
-| Text-Rendering (`--text ascii|braille|blocks`) | Gimmick | **Behalten**: ein Fallback für nicht-multimodale Modelle, sehr tokenarm. |
-| README 76 KB | Einstieg für Menschen | Auf ca. 2 KB kürzen. Daneben `AGENTS.md` und Skill-Dateien (siehe unten). |
-| `docs/*.md` (145) | Feature-Guides | Behalten, aber mit Frontmatter (`summary`, `tags`, `ops`) versehen und als MCP-Ressourcen mit Index ausliefern. |
-| Interaktive Konzepte (`viewer-input`, Kamera-Controls, `pick(ray)`) | Maus und Tastatur | `pick` bleibt als Op mit expliziten Strahlen. Viewer-Input entfällt im Agent-Pfad. |
+| `examples/*.html` (20) | Interactive browser demos | **Move out** (own repo or `legacy/`). Keep the accompanying JSON and JS examples as fixtures. |
+| WebGL renderer (`src/webgl`, about 8,500 lines) | Live canvas for browser hosts | **Decision needed**, see section 7. Without a browser host it is only needed for parity tests. |
+| `look parity`, `environment-parity` | CPU vs WebGL comparison, needs Chrome | Keep as optional, not in the agent path. |
+| `paint export/absorb` | Human paints `paint.png` in an image editor, magenta erases | **Replace** with a structured op `paint_apply({ decals: [...] })` (world position, normal, palette index). The data structure already exists (`decals.json`). |
+| Prose and ASCII output (`stats`, `check`, `validate`, `help`) | Readable in the terminal | JSON as the default, `--human` as opt-in. |
+| `review`, `turn`, `sheet` (contact sheets) | Visual check | **Keep**, as image content in MCP. Very valuable for multimodal agents. |
+| Text rendering (`--text ascii|braille|blocks`) | Gimmick | **Keep**: a fallback for non-multimodal models, very token-light. |
+| README 76 KB | Entry point for humans | Cut down to about 2 KB. Next to it `AGENTS.md` and skill files (see below). |
+| `docs/*.md` (145) | Feature guides | Keep, but add frontmatter (`summary`, `tags`, `ops`) and serve them as MCP resources with an index. |
+| Interactive concepts (`viewer-input`, camera controls, `pick(ray)`) | Mouse and keyboard | `pick` stays as an op with explicit rays. Viewer input is dropped in the agent path. |
 
 ---
 
-## 4. Designprinzipien für Agent-only
+## 4. Design principles for agent-only
 
-1. **Ein Vertrag pro Operation:** Name, Input-JSON-Schema, Output-JSON-Schema, Fehlercodes, Seiteneffekt-Klasse (`read`, `write`, `expensive`), Kostenhinweis.
-2. **Strukturiert zuerst:** Jede Antwort ist JSON. Bilder sind Content-Blöcke oder Artefakt-Referenzen. Prosa gibt es nur als kurzes `summary`-Feld.
-3. **Fehler als Daten:** `{ code, path, message, suggestion, allowed[] }`. Alle Fehler auf einmal melden, nicht nur den ersten.
-4. **Zustand im Server:** Handles für Szene, Welt und Sim. Gebackene Welten werden per `(specHash, seed, options)` gecacht. Das spart den Kaltstart von ca. 1,4 s pro Schritt.
-5. **Optimistic Concurrency überall:** `baseRevision` bei jeder Mutation (existiert schon im Authoring) plus `dryRun` bei jeder Mutation (existiert teilweise: `authoring preview`, `scene apply --dry-run`).
-6. **Progressive Disclosure:** wenige, gut beschriebene Tools. Details holt der Agent bei Bedarf (`describe`, `schema`, `docs_get`).
-7. **Token-Budget:** Floats runden (Standard 3 Nachkommastellen), Detailstufen `summary|standard|full`, Paginierung, `fields`-Auswahl.
-8. **Geschlossener Loop:** Jede Mutation kann direkt `render` und `measure` anhängen (`then: ["render", "lint"]`), damit der Agent in einem Roundtrip Feedback bekommt.
-9. **Daten vor Code:** JSON-Dioramen sind der Standardweg. JS-Szenen nur als vertrauenswürdige lokale Erweiterung, optional in einer Sandbox (Worker ohne `fs`).
+1. **One contract per operation:** name, input JSON Schema, output JSON Schema, error codes, side-effect class (`read`, `write`, `expensive`), cost hint.
+2. **Structured first:** every response is JSON. Images are content blocks or artifact references. Prose exists only as a short `summary` field.
+3. **Errors as data:** `{ code, path, message, suggestion, allowed[] }`. Report all errors at once, not just the first.
+4. **State in the server:** handles for scene, world and sim. Baked worlds are cached by `(specHash, seed, options)`. This saves the cold start of about 1.4 s per step.
+5. **Optimistic concurrency everywhere:** `baseRevision` on every mutation (already exists in authoring) plus `dryRun` on every mutation (partly exists: `authoring preview`, `scene apply --dry-run`).
+6. **Progressive disclosure:** few, well-described tools. The agent fetches details on demand (`describe`, `schema`, `docs_get`).
+7. **Token budget:** round floats (default 3 decimal places), detail levels `summary|standard|full`, pagination, `fields` selection.
+8. **Closed loop:** every mutation can directly append `render` and `measure` (`then: ["render", "lint"]`), so the agent gets feedback in one round trip.
+9. **Data before code:** JSON dioramas are the default path. JS scenes only as a trusted local extension, optionally in a sandbox (worker without `fs`).
 
 ---
 
-## 5. Zielarchitektur
+## 5. Target architecture
 
 ```mermaid
 flowchart TB
   subgraph Clients
-    CC[Claude Code / andere MCP-Clients]
+    CC[Claude Code / other MCP clients]
     CLI2[CLI --json]
     NODE[Node API]
   end
   subgraph Plugin[Claude Code Plugin 'ink-studio']
     SK[Skills: scene-authoring, look-tuning, sim-debugging]
-    CMDS[Slash-Commands]
+    CMDS[Slash commands]
     SUB[Subagent: art-director]
     HK[Hooks: validate on write]
   end
@@ -119,13 +119,13 @@ flowchart TB
   MCP[MCP Server stdio] --> REG
   CLI2 --> REG
   NODE --> REG
-  REG[Operation Registry<br/>defineOp: name, schema, effects, run] --> SESS[Session Store<br/>Handles, Bake-Cache, Artefakte]
-  SESS --> CORE[Bestehender Kern<br/>KIT, render, world, authoring]
+  REG[Operation Registry<br/>defineOp: name, schema, effects, run] --> SESS[Session Store<br/>Handles, bake cache, artifacts]
+  SESS --> CORE[Existing core<br/>KIT, render, world, authoring]
 ```
 
-### 5.1 Operation Registry (das Herzstück)
+### 5.1 Operation Registry (the centrepiece)
 
-Ein neues Verzeichnis (z. B. `ops/`) mit reinen Funktionen ohne `argv`, `console` oder `process.exit`:
+A new directory (e.g. `ops/`) with pure functions that have no `argv`, `console` or `process.exit`:
 
 ```js
 defineOp({
@@ -137,148 +137,148 @@ defineOp({
 });
 ```
 
-- Die bestehenden `CMD`-Handler werden schrittweise hierher extrahiert; die CLI wird ein dünner Adapter.
-- `catalog.json` wird **aus der Registry generiert**, statt von Hand gepflegt. Ein CI-Check verhindert Drift.
-- Die Schemas für Dioramen entstehen aus `K.diorama.check` (erlaubte Keys und Solid-Kinds sind dort bereits aufgezählt) und den `format`-Tags.
+- The existing `CMD` handlers are extracted here step by step; the CLI becomes a thin adapter.
+- `catalog.json` is **generated from the registry** instead of being maintained by hand. A CI check prevents drift.
+- The diorama schemas are derived from `K.diorama.check` (allowed keys and solid kinds are already enumerated there) and the `format` tags.
 
-### 5.2 MCP-Server
+### 5.2 MCP server
 
-Statt 57 Tools etwa 15 bis 18 gebündelte Tools, um Kontext zu sparen. Verwandte Aktionen laufen über ein `action`-Enum.
+Instead of 57 tools, about 15 to 18 bundled tools, to save context. Related actions go through an `action` enum.
 
-| Tool | Aktionen / Zweck | Basis heute |
+| Tool | Actions / purpose | Basis today |
 | --- | --- | --- |
-| `ink_discover` | Katalog durchsuchen, Op beschreiben, Schema holen | `catalog`, `help` |
-| `ink_docs` | Doku-Abschnitt per Thema oder Suche holen | `docs/*.md` |
-| `scene_validate` | Spec prüfen und alle Probleme strukturiert zurückgeben | `K.diorama.check` |
-| `scene_open` | Spec, Pfad oder Built-in öffnen, gibt Handle, Revision und Summary zurück | `dataScene`, `sceneEditor.create` |
-| `scene_inspect` | Baum, Teile, Materialien, Bounds | `authoring inspect`, `sceneEditor.tree()` |
-| `scene_edit` | Batch von Ops (transform, shape, modifier, material, role, suppress, ...), `baseRevision`, `dryRun`, optional `then` | `sceneEditor`, `authoring apply` |
-| `scene_render` | Einzelbild, Sheet, Turn, Review, Passes; Standard `px1` (native Art-Pixel) | `render`, `sheet`, `turn`, `review`, `passes` |
-| `scene_measure` | `stats`, `lint`, `crisp`, `values`, `shimmer`, `motion`, `perf`, `ramps` als Zahlen | `cli/critic.js`, `crisp.js`, `stats` |
-| `scene_compare` | Gegen Referenzbild oder Look-Varianten | `compare` |
-| `scene_variants` | Seeds rendern und ranken | `variants` |
-| `scene_export` | GLB, Atlas, JSON, Clip | `export-glb`, `atlas`, `clip` |
-| `asset_import` | Mesh, GLB, Depth-Map | `mesh`, `depth`, `readAsset` |
+| `ink_discover` | Search the catalog, describe an op, fetch a schema | `catalog`, `help` |
+| `ink_docs` | Fetch a docs section by topic or search | `docs/*.md` |
+| `scene_validate` | Check a spec and return all problems in structured form | `K.diorama.check` |
+| `scene_open` | Open a spec, path or built-in, returns handle, revision and summary | `dataScene`, `sceneEditor.create` |
+| `scene_inspect` | Tree, parts, materials, bounds | `authoring inspect`, `sceneEditor.tree()` |
+| `scene_edit` | Batch of ops (transform, shape, modifier, material, role, suppress, ...), `baseRevision`, `dryRun`, optional `then` | `sceneEditor`, `authoring apply` |
+| `scene_render` | Single frame, sheet, turn, review, passes; default `px1` (native art pixels) | `render`, `sheet`, `turn`, `review`, `passes` |
+| `scene_measure` | `stats`, `lint`, `crisp`, `values`, `shimmer`, `motion`, `perf`, `ramps` as numbers | `cli/critic.js`, `crisp.js`, `stats` |
+| `scene_compare` | Against a reference image or look variants | `compare` |
+| `scene_variants` | Render seeds and rank them | `variants` |
+| `scene_export` | GLB, atlas, JSON, clip | `export-glb`, `atlas`, `clip` |
+| `asset_import` | Mesh, GLB, depth map | `mesh`, `depth`, `readAsset` |
 | `look` | inspect, sample, bake, import, export | `look *`, `lut` |
 | `world_query` | inspect, probe, trace, field | `cli/world.js` |
 | `world_sim` | run, resume, fork, verify, diff, scrub, take | `sim *` |
-| `anim_review` | motion-review, clip-sequence, pose-review, retarget | Review-Commands |
+| `anim_review` | motion-review, clip-sequence, pose-review, retarget | review commands |
 
-**Ressourcen:** `ink://docs/{topic}`, `ink://catalog`, `ink://schema/{format}`, `ink://examples/{id}`, `ink://artifacts/{id}.png`.
+**Resources:** `ink://docs/{topic}`, `ink://catalog`, `ink://schema/{format}`, `ink://examples/{id}`, `ink://artifacts/{id}.png`.
 **Prompts:** `sculpt-from-brief`, `tune-look`, `debug-sim-divergence`.
-**Lange Jobs** (Sims, Bakes) laufen mit Progress-Notifications.
+**Long jobs** (sims, bakes) run with progress notifications.
 
-> Abhängigkeit: Das Repo hat heute **null** Runtime-Dependencies. Für MCP empfehle ich trotzdem das offizielle SDK, aber in einem separaten Paket (z. B. `packages/mcp` oder `@shapeshift-labs/ink-studio-mcp`). So bleibt der Kern dependency-frei.
+> Dependency: today the repo has **zero** runtime dependencies. For MCP I still recommend the official SDK, but in a separate package (e.g. `packages/mcp` or `@shapeshift-labs/ink-studio-mcp`). That keeps the core dependency-free.
 
-### 5.3 Claude-Code-Plugin (lokal)
+### 5.3 Claude Code plugin (local)
 
 ```
 ink-studio-plugin/
 ├── .claude-plugin/plugin.json
-├── .mcp.json                 # startet den MCP-Server
+├── .mcp.json                 # starts the MCP server
 ├── skills/
-│   ├── scene-authoring/SKILL.md   # Diorama-Format, Solids, Materialien, typische Fehler
-│   ├── look-tuning/SKILL.md       # Loop: render -> lint/crisp/values -> edit
+│   ├── scene-authoring/SKILL.md   # diorama format, solids, materials, typical errors
+│   ├── look-tuning/SKILL.md       # loop: render -> lint/crisp/values -> edit
 │   └── sim-debugging/SKILL.md     # record, verify, diff --first, trace cause
 ├── commands/                 # /ink:new-scene, /ink:review, /ink:variants
-├── agents/art-director.md    # Subagent: bewertet Renders gegen ein Briefing
-└── hooks/                    # PostToolUse: *.scene.json validieren
+├── agents/art-director.md    # subagent: judges renders against a brief
+└── hooks/                    # PostToolUse: validate *.scene.json
 ```
 
-- Für die eigene lokale Entwicklung reicht ein lokaler Marketplace-Eintrag; ein Publish ist nicht nötig.
-- Skills sind der Ersatz für README und Doku im Agent-Kontext: kurz, aufgabenorientiert, mit Verweisen auf `ink_docs`.
-- Plugin-Evals (`claude plugin eval`) eignen sich, um Skills und Tools messbar zu verbessern (siehe Phase 4).
+- For your own local development a local marketplace entry is enough; publishing is not needed.
+- Skills replace the README and docs in the agent context: short, task-oriented, with pointers to `ink_docs`.
+- Plugin evals (`claude plugin eval`) are a good way to improve skills and tools measurably (see phase 4).
 
 ---
 
 ## 6. Roadmap
 
-| Phase | Inhalt | Ergebnis | Aufwand (grob) |
+| Phase | Content | Result | Effort (rough) |
 | --- | --- | --- | --- |
-| **0. Entscheidungen** | Offene Fragen aus Abschnitt 7 klären, Baseline messen (Latenz, Tokens pro Aufgabe) | Klarer Scope | 0,5 bis 1 Tag |
-| **1. Vertikaler Schnitt** | Registry plus 5 Ops (`validate`, `open`, `render`, `measure`, `edit`), Session-Cache, strukturierte Fehler, MCP-Server mit genau diesen Tools | Ein Agent kann eine Szene bauen und iterieren, ohne die CLI anzufassen | 3 bis 5 Tage |
-| **2. Breite** | Restliche Ops migrieren (Sim, World, Look, Export, Review). CLI auf Registry umstellen, `--json` als Standard. Katalog generieren | Volle Abdeckung | 1 bis 2 Wochen |
-| **3. Plugin** | Skills, Commands, Subagent, Hooks, Doku als Ressourcen mit Frontmatter | Installierbar in Claude Code | 2 bis 3 Tage |
-| **4. Evals** | 10 bis 20 Aufgaben (z. B. "Laterne bauen, `lint.orphans` < 1 %", "kaputte Szene reparieren", "Sim-Divergenz finden"). Messen: Erfolgsrate, Tool-Calls, Tokens, Zeit | Objektiver Maßstab für alle weiteren Änderungen | 2 bis 3 Tage, danach laufend |
-| **5. Aufräumen** | HTML-Demos und gegebenenfalls WebGL auslagern, README kürzen, `Math.random` entfernen, `load()` in ein Cache-Verzeichnis statt ins Paket | Schlankes Agent-Tool | 2 bis 4 Tage |
+| **0. Decisions** | Settle the open questions from section 7, measure a baseline (latency, tokens per task) | Clear scope | 0.5 to 1 day |
+| **1. Vertical slice** | Registry plus 5 ops (`validate`, `open`, `render`, `measure`, `edit`), session cache, structured errors, MCP server with exactly these tools | An agent can build and iterate on a scene without touching the CLI | 3 to 5 days |
+| **2. Breadth** | Migrate the remaining ops (sim, world, look, export, review). Switch the CLI to the registry, `--json` as default. Generate the catalog | Full coverage | 1 to 2 weeks |
+| **3. Plugin** | Skills, commands, subagent, hooks, docs as resources with frontmatter | Installable in Claude Code | 2 to 3 days |
+| **4. Evals** | 10 to 20 tasks (e.g. "build a lantern, `lint.orphans` < 1%", "repair a broken scene", "find a sim divergence"). Measure: success rate, tool calls, tokens, time | Objective yardstick for all further changes | 2 to 3 days, then ongoing |
+| **5. Cleanup** | Move out HTML demos and possibly WebGL, shorten the README, remove `Math.random`, `load()` into a cache directory instead of the package | Lean agent tool | 2 to 4 days |
 
-### Status Phase 1 (Branch `agent-first/phase-1`)
+### Status phase 1 (branch `agent-first/phase-1`)
 
-Umgesetzt in `agent/`, Nutzung siehe [AGENTS.md](AGENTS.md):
+Implemented in `agent/`, usage in [AGENTS.md](AGENTS.md):
 
-| Baustein | Datei | Stand |
+| Building block | File | Status |
 | --- | --- | --- |
-| Operation Registry, JSON-Schema-Subset, `OpError` | `agent/registry.js` | fertig |
-| Rundung, Revision-Hash, Diff, RFC 6902 Patch | `agent/data.js` | fertig |
-| Sessions mit Handles, Bake-Cache pro Revision und Seed | `agent/scenes.js` | fertig |
-| Ops `scene_validate`, `scene_open`, `scene_render`, `scene_measure`, `scene_edit`, `scene_save` | `agent/ops.js` | fertig |
-| MCP-Server (stdio, ohne Dependencies) | `agent/mcp-server.js`, `.mcp.json` | fertig |
-| CLI-Adapter `ink-studio agent list|call|mcp` | `agent/cli.js` | fertig |
-| Tests (Ops, CLI, MCP-Handshake) | `tests/agent-ops.test.js` | 8 Tests grün |
+| Operation Registry, JSON Schema subset, `OpError` | `agent/registry.js` | done |
+| Rounding, revision hash, diff, RFC 6902 patch | `agent/data.js` | done |
+| Sessions with handles, bake cache per revision and seed | `agent/scenes.js` | done |
+| Ops `scene_validate`, `scene_open`, `scene_render`, `scene_measure`, `scene_edit`, `scene_save` | `agent/ops.js` | done |
+| MCP server (stdio, no dependencies) | `agent/mcp-server.js`, `.mcp.json` | done |
+| CLI adapter `ink-studio agent list|call|mcp` | `agent/cli.js` | done |
+| Tests (ops, CLI, MCP handshake) | `tests/agent-ops.test.js` | 8 tests green |
 
-Abweichungen vom Plan:
-- **6 statt 5 Tools:** `scene_save` kam dazu, sonst geht die Arbeit eines Agenten am Sitzungsende verloren.
-- **MCP ohne SDK:** Der Server spricht den kleinen Teil des Protokolls selbst (initialize, ping, tools/list, tools/call), damit das Repo dependency-frei bleibt. Wenn später Ressourcen, Prompts oder Progress dazukommen, lohnt der Wechsel auf das offizielle SDK.
-- **JS-Szenen standardmäßig gesperrt**, freischalten mit `--allow-code` (Entscheidung 2 aus Abschnitt 7 als Default vorweggenommen).
+Deviations from the plan:
+- **6 tools instead of 5:** `scene_save` was added, otherwise an agent's work is lost at the end of the session.
+- **MCP without an SDK:** the server speaks the small part of the protocol itself (initialize, ping, tools/list, tools/call) so the repo stays dependency-free. If resources, prompts or progress are added later, switching to the official SDK is worth it.
+- **JS scenes locked by default**, unlock with `--allow-code` (decision 2 from section 7 anticipated as the default).
 
-Gemessen: `examples/scene.json` öffnen 15 ms, Render aus dem Cache 20 bis 30 ms; `watcher` einmalig 0,9 s Bake, danach etwa 180 ms pro Render statt 1,4 s Kaltstart pro CLI-Aufruf. Die Tool-Liste kostet etwa 13 KB Kontext.
+Measured: opening `examples/scene.json` takes 15 ms, a render from the cache 20 to 30 ms; `watcher` has a one-time 0.9 s bake, afterwards about 180 ms per render instead of a 1.4 s cold start per CLI call. The tool list costs about 13 KB of context.
 
-Bewusst offen für Phase 2: Brush-Ops, Prefab-Instanzen, `--params`, Paint-Korrekturen, Look-Overrides und die übrigen CLI-Commands; außerdem eine Eval-Aufgabe, die den Loop mit einem echten Agenten misst.
+Deliberately left open for phase 2: brush ops, prefab instances, `--params`, paint corrections, look overrides and the remaining CLI commands; also an eval task that measures the loop with a real agent.
 
-### Status Phase 2 bis 5 (Branch `agent-first/phase-2`, abgeschlossen)
+### Status phases 2 to 5 (branch `agent-first/phase-2`, completed)
 
-| Phase | Ergebnis | Commit |
+| Phase | Result | Commit |
 | --- | --- | --- |
-| 2. Breite | 17 Tools: Discovery (`ink_discover`, `ink_docs`), Szene (`scene_validate/open/render/measure/edit/save/query/export`), Welt (`world_open/step/query/sim`), Long Tail (`scene_review`, `look`, `ink_cli` für jedes CLI-Command). Katalog aus Registry und Hilfe generiert (91 auf 153 Einträge), `--json` für `stats`, `lint`, `crisp`, `values` | `1f1d683`, `2baa708`, `d8af761` |
-| 3. Plugin | Repo ist Plugin und lokaler Marketplace: MCP-Server, 5 Skills (3 Wissen, 2 Slash-Commands), Subagent `ink-art-director` (nur Lese-Tools), Hook zur Validierung beim Schreiben | `088e597` |
-| 4. Evals | 6 End-to-End-Fälle mit `claude plugin eval`; letzter Stand 6 von 6 bestanden, etwa 2 USD pro Gesamtlauf. Shell-Transport `ink-agent`, dateibasierte Varianten von `scene_edit` und `world_step`, Reparaturmodus für ungültige Dateien | `3e0fb66` |
-| 5. Aufräumen | README kurz und agent-first, voller Leitfaden in `docs/reference.md`; geseedeter Zufall in `kg-play.js`; Bundle-Fallback in einen nutzereigenen Cache | `d5ef004` |
+| 2. Breadth | 17 tools: discovery (`ink_discover`, `ink_docs`), scene (`scene_validate/open/render/measure/edit/save/query/export`), world (`world_open/step/query/sim`), long tail (`scene_review`, `look`, `ink_cli` for every CLI command). Catalog generated from the registry and help (91 to 153 entries), `--json` for `stats`, `lint`, `crisp`, `values` | `1f1d683`, `2baa708`, `d8af761` |
+| 3. Plugin | The repo is a plugin and a local marketplace: MCP server, 5 skills (3 knowledge, 2 slash commands), subagent `ink-art-director` (read-only tools), hook that validates on write | `088e597` |
+| 4. Evals | 6 end-to-end cases with `claude plugin eval`; latest result 6 of 6 passed, about 2 USD per full run. Shell transport `ink-agent`, file-based variants of `scene_edit` and `world_step`, repair mode for invalid files | `3e0fb66` |
+| 5. Cleanup | README short and agent-first, full guide in `docs/reference.md`; seeded randomness in `kg-play.js`; bundle fallback into a user-owned cache | `d5ef004` |
 
-Jede Phase lief mit Selbstreview (code-review, Stufe high), Fixes, Commit und Push. Die Reviews fanden 26 Punkte, davon 24 behoben, 1 bewusst offen (Hook lädt pro Schreibvorgang das Toolkit), 1 kein Fehler. Volle Suite am Ende: 2.055 bestanden, 0 Fehler, 60 übersprungen (wie vor den Änderungen).
+Every phase ran with a self-review (code-review, level high), fixes, commit and push. The reviews found 26 items, of which 24 were fixed, 1 deliberately left open (the hook loads the toolkit on every write), 1 was not a bug. Full suite at the end: 2,055 passed, 0 failed, 60 skipped (same as before the changes).
 
-**Was die Evals gefunden haben** (und was danach behoben wurde):
-- Ungültige Dioramen ließen sich mit den Tools nicht reparieren, weil Öffnen eine gültige Szene verlangte. Jetzt repariert `scene_edit` per Pfad mit `patch`-Operationen.
-- `ink-agent --help` war ein Fehler statt einer Hilfe.
+**What the evals found** (and what was fixed afterwards):
+- Invalid dioramas could not be repaired with the tools, because opening required a valid scene. Now `scene_edit` repairs by path with `patch` operations.
+- `ink-agent --help` was an error instead of a help text.
 
-**Wichtige Randbedingung auf diesem Rechner:** Die verwalteten Einstellungen der Organisation setzen `allowManagedMcpServersOnly: true`. Lokale MCP-Server, auch der des Plugins, starten dadurch nicht. Freischalten kann nur ein Admin, mit einem `allowedMcpServers`-Eintrag `{ "serverName": "ink-studio" }`. Bis dahin nutzen Agenten denselben Funktionsumfang über `ink-agent` in der Shell; die Skills beschreiben beide Wege. Die Evals laufen deshalb über die Shell. Der MCP-Weg ist durch automatisierte Tests abgedeckt (Handshake, Tool-Liste, Bild-Content).
+**Important constraint on this machine:** the organization's managed settings set `allowManagedMcpServersOnly: true`. As a result, local MCP servers, including the plugin's, do not start. Only an admin can unlock this, with an `allowedMcpServers` entry `{ "serverName": "ink-studio" }`. Until then, agents use the same functionality through `ink-agent` in the shell; the skills describe both paths. The evals therefore run through the shell. The MCP path is covered by automated tests (handshake, tool list, image content).
 
-**Bewusst nicht umgesetzt** (braucht deine Entscheidung, siehe Abschnitt 7):
-- HTML-Demos und WebGL-Renderer bleiben im Repo. Verschieben würde relative Imports der Demos brechen, und ob Browser-Hosts noch gebraucht werden, ist offen.
-- Die menschliche CLI läuft nicht vollständig über die Registry. Agenten erreichen jedes Command über `ink_cli`; ein Umbau aller 57 Commands lohnt erst, wenn die CLI für Menschen wegfallen soll.
-- Kein Merge nach `main`.
+**Deliberately not done** (needs your decision, see section 7):
+- HTML demos and the WebGL renderer stay in the repo. Moving them would break the demos' relative imports, and whether browser hosts are still needed is open.
+- The human CLI does not fully run through the registry. Agents reach every command through `ink_cli`; rebuilding all 57 commands only pays off once the human CLI is to be dropped.
+- No merge into `main`.
 
-### Quick Wins (unabhängig von der Roadmap)
+### Quick wins (independent of the roadmap)
 
-1. **Globales `--json`** im CLI-Parser plus ein `report()`-Helfer: sofort maschinenlesbare Ausgabe für `stats`, `validate`, `lint`, `crisp`, `check`.
-2. **`validate` strukturiert:** `K.diorama.check` liefert bereits Objekte mit `level`. Diese einfach als JSON ausgeben.
-3. **Float-Rundung** in JSON-Ausgaben (z. B. 4 signifikante Stellen): halbiert Tokens bei `inspect` grob.
-4. **`AGENTS.md`** im Repo-Root: 1 Seite mit Einstieg, Kernbefehlen und Diorama-Minimalbeispiel.
-5. **`catalog.json` reparieren**, sodass alle Commands enthalten sind.
+1. **Global `--json`** in the CLI parser plus a `report()` helper: machine-readable output right away for `stats`, `validate`, `lint`, `crisp`, `check`.
+2. **Structured `validate`:** `K.diorama.check` already returns objects with `level`. Simply print those as JSON.
+3. **Float rounding** in JSON output (e.g. 4 significant digits): roughly halves tokens for `inspect`.
+4. **`AGENTS.md`** in the repo root: 1 page with the entry point, core commands and a minimal diorama example.
+5. **Fix `catalog.json`** so that all commands are included.
 
 ---
 
-## 7. Offene Entscheidungen für dich
+## 7. Open decisions for you
 
-1. **Gibt es noch Browser-Hosts (Inkwell)?** Wenn nein, kann der WebGL-Renderer (ca. 8.500 Zeilen) raus aus dem Hauptpfad. Wenn ja, bleibt er, aber außerhalb des Agent-Fokus.
-2. **JS-Szenen erlauben?** Empfehlung: JSON als Standard, JS nur mit Opt-in (`allowCode: true`), weil JS-Szenen beliebigen Code ausführen.
-3. **Paketstruktur:** ein Monorepo mit `packages/core`, `packages/mcp`, `packages/plugin`, oder MCP und Plugin als eigenes Repo? Empfehlung: Monorepo, damit Schemas und Ops versioniert zusammenbleiben.
-4. **Welche Agent-Aufgaben sind das Ziel?** Assets für ein Spiel generieren? Szenen-Previews? Sim-Experimente? Das bestimmt die Reihenfolge in Phase 2 und die Eval-Suite.
-5. **Bildrückgabe:** inline (Base64-Content-Block, bei Art-Auflösung wenige KB) oder als Datei-Referenz? Empfehlung: inline bis ca. 256 × 256 Art-Pixel, darüber eine Referenz.
+1. **Are there still browser hosts (Inkwell)?** If not, the WebGL renderer (about 8,500 lines) can leave the main path. If yes, it stays, but outside the agent focus.
+2. **Allow JS scenes?** Recommendation: JSON as the default, JS only with opt-in (`allowCode: true`), because JS scenes run arbitrary code.
+3. **Package structure:** one monorepo with `packages/core`, `packages/mcp`, `packages/plugin`, or MCP and plugin as their own repo? Recommendation: monorepo, so schemas and ops stay versioned together.
+4. **Which agent tasks are the target?** Generating assets for a game? Scene previews? Sim experiments? This decides the order in phase 2 and the eval suite.
+5. **Image return:** inline (base64 content block, a few KB at art resolution) or as a file reference? Recommendation: inline up to about 256 × 256 art pixels, a reference above that.
 
 ---
 
-## Anhang: Kit-Domänen (Überblick)
+## Appendix: kit domains (overview)
 
-| Domäne | Dateien (Präfixe) | Wichtige Namespaces |
+| Domain | Files (prefixes) | Important namespaces |
 | --- | --- | --- |
-| Mathe und Daten | `k0-*`, `p00`, `p02`, `p04` | `K.V`, `K.M`, `K.Q`, `K.seed`, `K.procedural.data`, `K.timeDomains` |
-| Geometrie und Sculpt | `k3`, `kb`, `kt`, `kv`, `kx`, `kl`, `kp`, `p29`, `p59`, `p74..p76` | `K.sculpt`, `K.sdf`, `K.form`, `K.mesh`, `K.sweep`, `K.model` |
-| Szene und Stage | `k1`, `kc`, `ka`, `p24` | `K.diorama`, `K.build`, `K.sceneGraph` |
-| Look, Material, Pixel | `k4`, `k5`, `km`, `kpx`, `kr`, `p69..p72`, `p90..p94`, viele `src/*.js` | `K.look`, `K.pixel`, `K.palette`, `K.paint`, `PixelLook`, `ColorStack`, ... |
-| Animation und Charakter | `k2`, `kh`, `ki`, `kj`, `kk`, `kf`, `ku`, `ph*` | `K.clip`, `K.puppet`, `K.character`, `K.anim.*`, `K.timeline`, `K.cameraRig` |
-| Physik und Sim | `k6`, `k7`, `k9`, `kd`, `ks`, `kw`, `kz` | `K.particles`, `K.mpm`, `K.xpbd`, `K.cloth`, `K.destruction`, `K.weather` |
-| Prozedural | `p01..pcy` | `K.procedural.*` (ca. 75 Sub-Namespaces) |
-| World-Runtime | `pu0..pud` (ca. 120 Dateien) | `K.world.*` inkl. Sim-Agenten, Navigation, Logistik |
+| Math and data | `k0-*`, `p00`, `p02`, `p04` | `K.V`, `K.M`, `K.Q`, `K.seed`, `K.procedural.data`, `K.timeDomains` |
+| Geometry and sculpt | `k3`, `kb`, `kt`, `kv`, `kx`, `kl`, `kp`, `p29`, `p59`, `p74..p76` | `K.sculpt`, `K.sdf`, `K.form`, `K.mesh`, `K.sweep`, `K.model` |
+| Scene and stage | `k1`, `kc`, `ka`, `p24` | `K.diorama`, `K.build`, `K.sceneGraph` |
+| Look, material, pixel | `k4`, `k5`, `km`, `kpx`, `kr`, `p69..p72`, `p90..p94`, many `src/*.js` | `K.look`, `K.pixel`, `K.palette`, `K.paint`, `PixelLook`, `ColorStack`, ... |
+| Animation and character | `k2`, `kh`, `ki`, `kj`, `kk`, `kf`, `ku`, `ph*` | `K.clip`, `K.puppet`, `K.character`, `K.anim.*`, `K.timeline`, `K.cameraRig` |
+| Physics and sim | `k6`, `k7`, `k9`, `kd`, `ks`, `kw`, `kz` | `K.particles`, `K.mpm`, `K.xpbd`, `K.cloth`, `K.destruction`, `K.weather` |
+| Procedural | `p01..pcy` | `K.procedural.*` (about 75 sub-namespaces) |
+| World runtime | `pu0..pud` (about 120 files) | `K.world.*` incl. sim agents, navigation, logistics |
 | Authoring | `p23`, `p24`, `p25`, `p26`, `p77`, `p88` | `K.authoring.document`, `.sceneEditor`, `.scenePrefabs`, `.assetPacks` |
 | IO | `kb`, `p91`, `p28`, `pz`, `cli/export-glb.js`, `cli/png.js` | `K.mesh`, `K.depth`, `K.dataInputs`, `exportGlb` |
-| Inspektion | `kzz`, `kza`, `p84`, `pu8` | `K.inspection`, `K.ascii`, `K.comparison`, `K.fieldViews` |
+| Inspection | `kzz`, `kza`, `p84`, `pu8` | `K.inspection`, `K.ascii`, `K.comparison`, `K.fieldViews` |
