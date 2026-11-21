@@ -621,4 +621,4 @@ defineOp({
   }
 });
 
-module.exports = { METRICS, EDIT_OPS, measure, renderImage };
+module.exports = { METRICS, EDIT_OPS, measure, renderImage, renderEntry };

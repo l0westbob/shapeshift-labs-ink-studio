@@ -54,6 +54,7 @@ The classic `stats`, `lint`, `crisp` and `values` commands print the same JSON a
 | `scene_edit` | write | Atomic batch on an open diorama. `baseRevision` guards staleness, `dryRun` previews, `render`/`measure` return the result in the same call. |
 | `scene_save` | write | Write the current diorama JSON. Defaults to the source file; refuses to replace another file unless `overwrite`. |
 | `scene_export` | write | `format: "glb"` writes a UV-mapped model (JSON dioramas); `format: "atlas"` writes a directional sprite atlas with optional depth, normal, emission and silhouette maps and returns a preview. |
+| `model_three` | write | Run a three.js script (`({ THREE, addon }) => Object3D`) and write a diorama with one mesh solid per part, plus `model.glb` and a preview. Needs code allowed. See [docs/three-modeling.md](docs/three-modeling.md). |
 | `world_open` | read | Open a world manifest, checkpoint or run recording into a live simulation. Lists its fields, traces and action kinds. |
 | `world_step` | write | Schedule `actions` and advance by `ticks`, `steps` or `t`. Invalid actions are rejected before anything moves. Returns scenario status and new events. |
 | `world_query` | read | `inspect`, `spatial`, `select`, `probe`, `trace`, `export` on the current tick. |
@@ -66,7 +67,7 @@ Every scene-taking tool accepts `scene` as exactly one of `{ "handle" }`, `{ "pa
 
 ## The loop
 
-1. Write a diorama (start from `examples/scene.json`) and `scene_validate` it.
+1. Write a diorama (start from `examples/scene.json`) and `scene_validate` it. For hard-surface models it can be easier to write a three.js script and turn it into a diorama with `model_three`.
 2. `scene_open` it and keep the `handle` and `revision`.
 3. `scene_render` to look; `scene_measure` for numbers you can compare across edits.
 4. `scene_edit` with `baseRevision`, plus `render` and `measure`, until it looks right and the metrics hold.

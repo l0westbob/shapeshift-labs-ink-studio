@@ -20,5 +20,16 @@
   "engines": {
     "node": ">=18"
   },
-  "repository": "github:siliconjungle/shapeshift-labs-ink-studio"
+  "repository": "github:siliconjungle/shapeshift-labs-ink-studio",
+  "devDependencies": {
+    "three": "^0.187.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  }
 }

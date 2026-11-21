@@ -42,6 +42,10 @@ A diorama is JSON: `id` (lowercase, digits, dashes), `name`, `seed`, `style` (`s
 - `revert` with an earlier `revision` undoes a batch within the session.
 - A file that does not validate cannot be opened, but `scene_edit` with its `path` repairs it: send only `patch` operations; just the result has to validate.
 
+## Modelling with three.js instead
+
+For hard-surface objects (vehicles, buildings, machines) a three.js script is often easier than SDF solids. Write a `.mjs` file that exports `({ THREE, addon }) => Object3D` (use the `THREE` passed in, do not import it; name the meshes), then call `model_three` with `script`, `out` and usually `size`. It writes `out/scene.json` with one `mesh` solid per mesh, a palette from the material colours and a turnaround preview. Continue with `scene_open` on that scene. It needs code allowed; textures are not used. Details: `ink_docs` with `topic: "three-modeling"`, example `examples/three/tank.mjs`.
+
 ## When the ink-studio MCP tools are missing
 
 Some organizations allow only managed MCP servers, so the `scene_*` tools may not be available. Every tool also runs from the shell with the same JSON input and output:

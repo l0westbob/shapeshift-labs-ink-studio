@@ -1609,6 +1609,21 @@
       "generated": true
     },
     {
+      "id": "agent.model_three",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Model with three.js",
+      "what": "Build a model with the three.js API and turn it into a diorama.",
+      "use": "MCP tool model_three or: ink-studio agent call model_three '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "write"
+      ],
+      "generated": true
+    },
+    {
       "id": "agent.world_open",
       "kind": "agent",
       "status": "ready",
