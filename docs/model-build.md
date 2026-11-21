@@ -15,6 +15,7 @@ voxel model     ─┘
 | `cadquery` | `.py` defining `build()`, `result` or `show_object()` | Precise parts: fillets, chamfers, lofts, sweeps, cut details. | yes |
 | `blender` | `.blender.py` building objects with `bpy` | Bevelled hard surfaces and smooth organic forms: modifiers (bevel, subdivision, mirror, array, boolean) are applied. | yes |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
+| `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `carve` | `.views.json` with orthographic views drawn as letter grids | Pixel first: draw how the sprite should read, get the solid that matches. | no |
 
 The engine follows from the extension unless `engine` is given. `size`, `pixelSize`, `pixelStyle`, `shades`,
@@ -32,6 +33,7 @@ ink-agent call model_build '{"source":"/abs/examples/cadquery/tank.py","out":"/a
 | `raw.png` | That model before baking, flat-shaded on the CPU from the front and the back. |
 | `scene.json` | The diorama. Mesh engines: one `mesh` solid per part. Voxels: one `vox` solid, baked from the grid itself. |
 | `parts/` | Mesh engines: one GLB per part, referenced by the solids. |
+| `model.json` | Every part's name, role and bounds in scene units, for `model_check`. |
 | `preview.png` | A turnaround of the baked scene. |
 
 Every material becomes a palette role with its own ramp (see [three-modeling.md](three-modeling.md#materials-become-roles)):
@@ -131,6 +133,50 @@ Draw the model the way the finished pixel art should read, as two or more orthog
 - Hollows and undercuts no view can see are filled. The carved grid is written as `carved.vox.json`: edit it and build it
   with engine `vox` to cut them in. `views.png` shows the drawn views.
 - [examples/carve/tank.views.json](../examples/carve/tank.views.json) draws a tank in three views.
+
+## Composing parts from several engines
+
+```json
+{ "parts": [
+    { "source": "../cadquery/tank.py", "size": 6, "pixelSize": 1 },
+    { "source": "emblem.vox.json", "size": 0.6, "at": [-0.3, 1.3, 0.83] },
+    { "diorama": "sandbags.json", "at": [-2.05, 1.14, 0.25], "yaw": 1.5708, "scale": 0.9 } ] }
+```
+
+- `source` parts are built with their engine (from the extension, or `engine`) into `out/sources/`, with `size`,
+  `pixelSize` and further `options`; `diorama` parts are used as they are.
+- Every solid gets a `transform` (yaw, uniform `scale`, then `at`, around the origin). Palettes merge colour by colour,
+  index 0 stays the first part's background, roles keep their names (a clash with other colours gets the part number
+  appended), materials, raw ramps and voxel keys are rewritten, mesh assets point at each part's files.
+- `camera`, `light`, `finish` and `style` come from the composition, else from the first part. Motion, effects and
+  groups of the parts are not carried over (listed in `warnings`).
+- Code engines still need code allowed. A composition writes `scene.json` only; mesh it with `scene_export` for a GLB.
+- [examples/compose/tank.compose.json](../examples/compose/tank.compose.json): the CadQuery tank, a voxel star and SDF
+  sandbags.
+
+## Spec sheets
+
+Proportions are what agent models get wrong most, so write them down before building and check them after with
+`model_check`:
+
+```json
+{ "dir": "studio/out/tank",
+  "spec": { "size": { "x": [6.5, 7.2], "y": [2.2, 2.6] },
+            "parts": { "hull": { "x": [5.6, 6.2] }, "wheel*": { "x": [4.2, 4.8] } },
+            "ratios": [ { "a": "turret.x", "b": "hull.x", "range": [0.38, 0.46] } ] } }
+```
+
+`size` is measured from the baked splats, so it works for any diorama; `parts` and `ratios` use `model.json` (`*` matches
+several parts, measured as their union; `size` names the whole model in a ratio). Units are scene units: build with
+`size` equal to the real longest side, or without `size` to keep the source units. Each failed check carries the
+`scale` that would bring it into range.
+
+## Snapping to the pixel grid
+
+`snap` (mesh engines and voxels) says how many art pixels the model's longest side spans in the final sprite. Part
+positions and sizes (or voxel cells) round to whole pixels, so part edges land on the pixel grid instead of splitting
+pixels. On the CadQuery tank, `snap: 96` lowered noise from 0.198 to 0.139 and jaggies from 0.33 to 0 in an orthographic
+side view, and noise from 0.182 to 0.154 in the default three-quarter view.
 
 ## Fitting a scene to the drawing
 

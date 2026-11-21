@@ -1669,6 +1669,21 @@
       "generated": true
     },
     {
+      "id": "agent.model_check",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Check a model against a spec sheet",
+      "what": "Check a model against a spec sheet written before building: size { x, y, z: [min, max] } for the whole model (measured from the baked splats, so any diorama works), parts { \"turret\": { x: [min, max] }, \"wheel*\": { ...",
+      "use": "MCP tool model_check or: ink-studio agent call model_check '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
       "id": "agent.world_open",
       "kind": "agent",
       "status": "ready",

@@ -1,0 +1,9 @@
+{ "id": "sandbags", "seed": 3, "style": "moss",
+  "palette": [723984, 5917486, 7562054, 9601869, 11572340],
+  "roles": { "canvas": [1, 2, 3, 4] },
+  "camera": { "target": [0, 0.2, 0], "dist": 3 },
+  "solids": [
+    { "kind": "ball", "at": [-0.32, 0.12, 0], "r": [0.3, 0.13, 0.17], "mat": { "role": "canvas", "pixelStyle": { "dither": "none", "shadeSteps": 4 } } },
+    { "kind": "ball", "at": [0.32, 0.12, 0], "r": [0.3, 0.13, 0.17], "mat": { "role": "canvas", "pixelStyle": { "dither": "none", "shadeSteps": 4 } } },
+    { "kind": "ball", "at": [0, 0.33, 0], "r": [0.3, 0.13, 0.17], "mat": { "role": "canvas", "pixelStyle": { "dither": "none", "shadeSteps": 4 } } }
+  ] }

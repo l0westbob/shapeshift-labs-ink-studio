@@ -188,3 +188,60 @@ bpy.ops.object.light_add(type="SUN")
   assert.match(error.message, /no turret today/);
   assert.match(error.hint, /post\.blender\.py", line 3/);
 });
+
+test('model_build composes parts from different engines into one diorama, merging palettes and roles', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'crate.vox.json'), JSON.stringify({ cell: 0.5, colours: { w: { colour: '#8a5a2b', role: 'wood' } }, layers: ['ww/ww', 'ww/ww'] }));
+  fs.writeFileSync(path.join(dir, 'rock.json'), JSON.stringify({
+    id: 'rock', style: 'slate', camera: { target: [0, 0, 0], dist: 3 },
+    solids: [{ kind: 'ball', at: [0, 0.3, 0], r: 0.3, mat: 'stone' }, { kind: 'box', at: [0, 0.1, 0], half: [0.2, 0.1, 0.2], mat: { ramp: [3, 4, 5] } }]
+  }));
+  fs.writeFileSync(path.join(dir, 'pile.compose.json'), JSON.stringify({
+    parts: [{ source: 'crate.vox.json', size: 1 }, { diorama: 'rock.json', at: [1.2, 0, 0], yaw: 0.5, scale: 2 }]
+  }));
+  const result = ok(await call({ source: path.join(dir, 'pile.compose.json'), out: path.join(dir, 'pile'), preview: false }, {}));
+  assert.equal(result.engine, 'compose');
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.deepEqual(spec.solids.map(s => s.kind), ['vox', 'ball', 'box']);
+  assert.deepEqual(spec.solids[1].transform, { translation: [1.2, 0, 0], rotation: [0.5, 0, 0], scale: 2, pivot: [0, 0, 0] });
+  assert.equal(spec.palette[0], 0x0b0d10, 'the first part keeps the background');
+  const slate = Scenes.kit().KIT.diorama.styles.slate;
+  assert.deepEqual(spec.roles.stone.map(i => spec.palette[i]), slate.roles.stone.map(i => slate.palette[i]), 'a style role keeps its colours');
+  assert.deepEqual(spec.solids[2].mat.ramp.map(i => spec.palette[i]), [3, 4, 5].map(i => slate.palette[i]), 'raw ramps are remapped');
+  assert.equal((await validate(result.scene)).valid, true);
+  for (const style of ['slate', 'ember'])
+    assert.equal(ok(await registry.call('scene_validate', { scene: { spec: { ...spec, style } } }, { root: path.join(dir, 'pile') })).valid, true);
+
+  fs.writeFileSync(path.join(dir, 'pile.compose.json'), JSON.stringify({ parts: [{ source: path.join(root, 'examples/three/tank.mjs') }] }));
+  fails(await call({ source: path.join(dir, 'pile.compose.json'), out: path.join(dir, 'pile'), overwrite: true, preview: false }, {}), 'CODE_NOT_ALLOWED');
+});
+
+test('model_check measures a model against a spec sheet and says how to scale what is off', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'post.vox.json'), JSON.stringify({
+    cell: 0.5, colours: { b: { colour: '#3f4a22', role: 'base' }, p: { colour: '#777b72', role: 'pole' } },
+    layers: ['bbbb/bbbb', '..../.p..', '..../.p..', '..../.p..']
+  }));
+  ok(await call({ source: path.join(dir, 'post.vox.json'), out: path.join(dir, 'post'), preview: false }, {}));
+  const result = ok(await registry.call('model_check', {
+    dir: path.join(dir, 'post'),
+    spec: { size: { x: [1.8, 2.2], y: [3, 4] }, parts: { base: { x: [1.9, 2.1] }, 'po*': { y: [1, 2] } }, ratios: [{ a: 'pole.y', b: 'base.x', range: [0.7, 0.8] }] }
+  }, { root }));
+  const by = Object.fromEntries(result.checks.map(c => [c.what, c]));
+  assert.equal(by['size.x'].pass, true);
+  assert.equal(by['size.y'].pass, false);
+  assert.ok(Math.abs(by['size.y'].scale - 3 / by['size.y'].value) < 0.01, 'scale says how far to grow');
+  assert.equal(by['base.x'].pass, true);
+  assert.equal(by['po*.y'].pass, true);
+  assert.equal(by['pole.y / base.x'].pass, true);
+  assert.equal(result.pass, false);
+});
+
+test('snap rounds voxel cells and mesh placements to whole art pixels', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'bar.vox.json'), JSON.stringify({ cell: 0.1, colours: { o: '#5b6b2e' }, layers: ['ooooooo'] }));
+  const result = ok(await call({ source: path.join(dir, 'bar.vox.json'), out: path.join(dir, 'bar'), size: 1, snap: 20, preview: false }, {}));
+  const cell = JSON.parse(fs.readFileSync(result.scene, 'utf8')).solids[0].cell;
+  const unit = 1 / 20;
+  assert.ok(Math.abs(cell / unit - Math.round(cell / unit)) < 1e-6 && cell >= unit, 'cell ' + cell + ' is whole pixels of ' + unit);
+});

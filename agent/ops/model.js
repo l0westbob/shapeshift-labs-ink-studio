@@ -7,7 +7,8 @@
      cadquery  a CadQuery or build123d script (.py) defining build(), result or show_object()    runs code
      blender   a Blender script (.blender.py) building objects with bpy; modifiers are applied      runs code
      vox       a voxel model (.json): plans of letters and a colour per letter                    data only
-     carve     drawn views (.views.json): the sprite drawn from front, side and top, carved into voxels   data only */
+     carve     drawn views (.views.json): the sprite drawn from front, side and top, carved into voxels   data only
+     compose   a composition (.compose.json): parts from different engines and dioramas, placed together */
 const fs = require('node:fs');
 const path = require('node:path');
 const { defineOp, OpError } = require('../registry.js');
@@ -20,7 +21,8 @@ const ENGINES = {
   cadquery: { module: '../../cli/cadquery-model.js', extensions: ['.py'], code: true, label: 'CadQuery scripts' },
   blender: { module: '../../cli/blender-model.js', extensions: ['.blender.py'], code: true, label: 'Blender scripts' },
   vox: { module: '../../cli/vox-model.js', extensions: ['.vox.json', '.json'], code: false, label: 'voxel models' },
-  carve: { module: '../../cli/carve-model.js', extensions: ['.views.json'], code: false, label: 'drawn views' }
+  carve: { module: '../../cli/carve-model.js', extensions: ['.views.json'], code: false, label: 'drawn views' },
+  compose: { module: '../../cli/compose-model.js', extensions: ['.compose.json'], code: false, label: 'compositions' }
 };
 /* the engine whose longest matching extension ends the file name, so model.views.json carves and model.json is voxels */
 const matchOf = (file, name) => Math.max(0, ...ENGINES[name].extensions.filter(ext => file.toLowerCase().endsWith(ext)).map(ext => ext.length));
@@ -37,12 +39,13 @@ const COMMON = {
     anyOf: [{ type: 'boolean' }, { type: 'object' }],
     description: 'pixelStyle for every role material (default true: { dither: "none", shadeSteps: shades }, flat shade bands without speckle; false leaves the renderer default; an object is used as given).'
   },
+  snap: { type: 'integer', minimum: 8, maximum: 1024, description: 'Art pixels the longest side spans in the final sprite; positions and sizes round to whole pixels so part edges land on the pixel grid (mesh engines and voxels).' },
   overwrite: { type: 'boolean', description: 'Replace an earlier model in out.' },
   preview: { type: 'boolean', description: 'Return a turnaround image of the baked scene (default true).' },
   frames: { type: 'integer', minimum: 1, maximum: 8, description: 'Preview views (default 4).' }
 };
 
-async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, overwrite = false, preview = true, frames = 4 }, ctx, field) {
+async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, overwrite = false, preview = true, frames = 4 }, ctx, field) {
   const spec = ENGINES[engine];
   if (spec.code && !Scenes.codeAllowed(ctx))
     throw new OpError('CODE_NOT_ALLOWED', spec.label + ' run arbitrary code and are disabled', {
@@ -53,11 +56,21 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
   if (!matchOf(file, engine))
     throw new OpError('INVALID_INPUT', spec.label + ' end in ' + spec.extensions.join(', '), { path: '/' + field });
   if (!fs.existsSync(file)) throw new OpError('NOT_FOUND', 'No file at ' + file, { path: '/' + field });
+  /* a composition builds each of its parts with that part's engine; code engines still need code to be allowed */
+  const buildPart = async (partFile, partEngine, partOut, options) => {
+    const name = partEngine ?? engineFor(partFile);
+    if (!name || !ENGINES[name] || name === 'compose') throw new Error('Cannot tell the engine of ' + path.basename(partFile));
+    if (ENGINES[name].code && !Scenes.codeAllowed(ctx))
+      throw Object.assign(new Error(path.basename(partFile) + ' is a ' + ENGINES[name].label.replace(/s$/, '') + ', which runs code'), { code: 'CODE_NOT_ALLOWED' });
+    return require(ENGINES[name].module).buildModel(partFile, {
+      roots: [path.dirname(partFile), root], kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh, out: partOut, ...options
+    });
+  };
   let report;
   try {
     report = await require(spec.module).buildModel(file, {
-      out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, tolerance, overwrite,
-      kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh
+      out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, overwrite,
+      kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh, buildPart
     });
   } catch (error) {
     if (error.code === 'THREE_MISSING')
@@ -69,6 +82,8 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
         hint: 'uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-modelling.txt (or set INK_PYTHON)'
       });
     if (error.code === 'EXISTS') throw new OpError('EXISTS', error.message, { path: '/out', hint: 'pass overwrite: true' });
+    if (error.code === 'CODE_NOT_ALLOWED')
+      throw new OpError('CODE_NOT_ALLOWED', error.message, { path: '/' + field, hint: 'start the server with --allow-code or INK_AGENT_ALLOW_CODE=1' });
     throw new OpError('BUILD_FAILED', error.message, {
       path: '/' + field, hint: error.where ?? error.stack?.split('\n').find(line => line.includes(file))?.trim()
     });
@@ -95,7 +110,7 @@ defineOp({
   destructive: true,
   title: 'Build a model with another modeller',
   effects: 'write',
-  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "blender": a Blender script (.blender.py, Z up, headless, empty scene) building objects with bpy; modifiers (bevel, subdivision, mirror, array, boolean) are applied, parts split per object and material, role from the "role" property or name of the material, base colour from its Principled BSDF; good for smooth organic forms and bevelled hard surfaces. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. engine "carve" (.views.json): pixel first, draw the model as orthographic views { cell, colours, views: { front, right, top, (back, left, bottom): [rows of letters] } } the way the sprite should read; blocks stay where every view sees something and take the colours the views show, then it continues as voxels (writes carved.vox.json to refine and views.png). The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
+  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "blender": a Blender script (.blender.py, Z up, headless, empty scene) building objects with bpy; modifiers (bevel, subdivision, mirror, array, boolean) are applied, parts split per object and material, role from the "role" property or name of the material, base colour from its Principled BSDF; good for smooth organic forms and bevelled hard surfaces. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. engine "carve" (.views.json): pixel first, draw the model as orthographic views { cell, colours, views: { front, right, top, (back, left, bottom): [rows of letters] } } the way the sprite should read; blocks stay where every view sees something and take the colours the views show, then it continues as voxels (writes carved.vox.json to refine and views.png). engine "compose" (.compose.json): { parts: [{ source: file (built with its engine) | diorama: scene.json, at, yaw, scale, size }], camera?, light?, style? } merges parts from different engines into one diorama, the best tool for each part (palettes and roles merged, assets kept); it writes scene.json only (no model.glb). The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
   input: {
     type: 'object', required: ['source', 'out'],
     properties: {

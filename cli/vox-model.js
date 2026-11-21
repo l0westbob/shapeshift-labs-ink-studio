@@ -61,7 +61,7 @@ async function buildModel(file, options) {
 }
 
 /* the same from a voxel model already in memory (other front ends, such as carving, make one) */
-async function buildFromSource(source, { out, size, shades = 4, pixelSize, pixelStyle, overwrite = false, kit, prefix = 'vox' }) {
+async function buildFromSource(source, { out, size, shades = 4, pixelSize, pixelStyle, snap, overwrite = false, kit, prefix = 'vox' }) {
   const Core = require('./model-core.js');
   if (!source.colours || typeof source.colours !== 'object') throw new Error('A voxel model needs "colours": { letter: "#rrggbb", ... }');
   const roles = {};
@@ -71,7 +71,10 @@ async function buildFromSource(source, { out, size, shades = 4, pixelSize, pixel
 
   const cell0 = Array.isArray(source.cell) ? source.cell : [source.cell ?? 0.1, source.cell ?? 0.1, source.cell ?? 0.1];
   const extent0 = Math.max(grid.nx * cell0[0], grid.ny * cell0[1], grid.nz * cell0[2]);
-  const k = size ? size / extent0 : 1, cell = cell0.map(c => Core.round(c * k));
+  const k = size ? size / extent0 : 1;
+  /* snap: whole art pixels per block, with the longest side spanning about `snap` pixels */
+  const unit = snap ? (extent0 * k) / snap : 0;
+  const cell = cell0.map(c => Core.round(unit ? Math.max(1, Math.round((c * k) / unit)) * unit : c * k));
 
   const sceneFile = path.join(out, 'scene.json');
   if (fs.existsSync(sceneFile) && !overwrite) throw Object.assign(new Error('A model already exists in ' + out), { code: 'EXISTS' });
@@ -94,6 +97,10 @@ async function buildFromSource(source, { out, size, shades = 4, pixelSize, pixel
   const height = grid.ny * cell[1], span = Math.max(grid.nx * cell[0], grid.nz * cell[2], height);
   const spec = { ...header, camera: Core.cameraFor(height, span), solids: [solid] };
   fs.writeFileSync(sceneFile, JSON.stringify(spec, null, 2) + '\n');
+  Core.writeModelJson(out, parts.map(part => {
+    const { lo, hi } = Core.partBounds(part.pos);
+    return { name: part.role.key, role: part.role.key, lo: lo.map(Core.round), hi: hi.map(Core.round) };
+  }));
   return {
     directory: out, scene: sceneFile, model: path.join(out, 'model.glb'), raw: path.join(out, 'raw.png'),
     blocks: grid.grid.reduce((sum, v) => sum + (v > 0), 0), grid: [grid.nx, grid.ny, grid.nz],

@@ -190,16 +190,20 @@ function writeRaw(parts, file) {
 /* one mesh solid per part, fitted so the whole model is `size` across (or kept at source units), centred on x and z and
    standing on y = 0. kb-mesh fits each asset to its own size and rests it on `at`, so each part gets the shared scale
    through its own size and lands where it was through `at` */
-function dioramaFor(parts, { size, cells = 96, hues, pixelStyle, header, files }) {
+function dioramaFor(parts, { size, cells = 96, hues, pixelStyle, header, files, snap }) {
   const bounds = boundsOf(parts), extent = extentOf(bounds);
   const k = size ? size / extent : 1, h = extent / cells;
   const cx = (bounds.lo[0] + bounds.hi[0]) / 2, cz = (bounds.lo[2] + bounds.hi[2]) / 2, y0 = bounds.lo[1];
+  /* snap: the model's longest side spans `snap` art pixels, so positions and sizes round to whole pixels and part edges
+     land on the pixel grid instead of splitting pixels */
+  const unit = snap ? (extent * k) / snap : 0;
+  const grid = (v, least = 0) => (unit ? Math.max(least, Math.round(v / unit) * unit) : v);
   const solids = parts.map((part, i) => {
     const solid = {
       kind: 'mesh',
       asset: files[i],
-      size: round(extentOf(part) * k),
-      at: [round(((part.lo[0] + part.hi[0]) / 2 - cx) * k), round((part.lo[1] - y0) * k), round(((part.lo[2] + part.hi[2]) / 2 - cz) * k)],
+      size: round(grid(extentOf(part) * k, unit)),
+      at: [round(grid(((part.lo[0] + part.hi[0]) / 2 - cx) * k)), round(grid((part.lo[1] - y0) * k)), round(grid(((part.lo[2] + part.hi[2]) / 2 - cz) * k))],
       cells: Math.max(12, Math.ceil(extentOf(part) / h))
     };
     if (part.role) solid.mat = pixelStyle ? { role: part.role.key, pixelStyle } : part.role.key;
@@ -209,9 +213,21 @@ function dioramaFor(parts, { size, cells = 96, hues, pixelStyle, header, files }
   return { ...header, camera: cameraFor((bounds.hi[1] - bounds.lo[1]) * k, extent * k), solids };
 }
 
+/* a part's bounds where the diorama puts it: scaled to `size`, centred on x and z, standing on y = 0 */
+function placed(part, parts, size) {
+  const bounds = boundsOf(parts), k = size ? size / extentOf(bounds) : 1;
+  const offset = [(bounds.lo[0] + bounds.hi[0]) / 2, bounds.lo[1], (bounds.lo[2] + bounds.hi[2]) / 2];
+  return { lo: part.lo.map((v, i) => round((v - offset[i]) * k)), hi: part.hi.map((v, i) => round((v - offset[i]) * k)) };
+}
+
+/* model.json: every part's name, role and bounds in scene units, for model_check and other tools */
+function writeModelJson(out, parts) {
+  fs.writeFileSync(path.join(out, 'model.json'), JSON.stringify({ units: 'scene', parts }, null, 1) + '\n');
+}
+
 /* writes model.glb (every part), parts/NN-name.glb, raw.png and scene.json into `out`. kit is the loaded ink-studio KIT,
    used for the palette of vertex-coloured parts and the open-edge report; readMesh reads a GLB back the way scenes will. */
-async function buildFromParts(rawParts, { out, prefix, sun, warnings = [], size, cells, hues = 6, shades = 4, pixelSize, pixelStyle, overwrite = false, kit, readMesh }) {
+async function buildFromParts(rawParts, { out, prefix, sun, warnings = [], size, cells, hues = 6, shades = 4, pixelSize, pixelStyle, snap, overwrite = false, kit, readMesh }) {
   const extent0 = extentOf(boundsOf(rawParts.map(part => partBounds(part.pos))));
   const parts = rawParts
     .map(part => weld(part, Math.max(extent0 * 1e-6, 1e-9)))
@@ -249,8 +265,9 @@ async function buildFromParts(rawParts, { out, prefix, sun, warnings = [], size,
     return { name: part.name || undefined, file: files[i], triangles: part.triangles, open: round(info.open), role: part.role?.key };
   });
   const header = sceneHeader({ name: path.basename(out), prefix, palette, roles, pixelStyle: style, pixelSize, sun });
-  const spec = dioramaFor(parts, { size, cells, hues, pixelStyle: style, header, files });
+  const spec = dioramaFor(parts, { size, cells, hues, pixelStyle: style, header, files, snap });
   fs.writeFileSync(sceneFile, JSON.stringify(spec, null, 2) + '\n');
+  writeModelJson(out, parts.map(part => ({ name: part.name, role: part.role?.key, ...placed(part, parts, size) })));
   const extent = extentOf(boundsOf(parts));
   return {
     directory: out,
@@ -267,4 +284,4 @@ async function buildFromParts(rawParts, { out, prefix, sun, warnings = [], size,
   };
 }
 
-module.exports = { buildFromParts, toGlb, rolePalette, rampOf, roleFor, sceneHeader, cameraFor, pixelStyleOf, writeRaw, slugOf, round };
+module.exports = { buildFromParts, writeModelJson, partBounds, toGlb, rolePalette, rampOf, roleFor, sceneHeader, cameraFor, pixelStyleOf, writeRaw, slugOf, round };

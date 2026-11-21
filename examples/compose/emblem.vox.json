@@ -1,0 +1,3 @@
+{ "cell": 0.1, "hard": true,
+  "colours": { "w": { "colour": "#e8e4d8", "role": "marking" } },
+  "front": [ "..w..", ".www.", "wwwww", ".www.", ".w.w." ] }

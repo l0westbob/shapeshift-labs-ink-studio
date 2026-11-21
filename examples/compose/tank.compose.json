@@ -1,0 +1,4 @@
+{ "parts": [
+    { "source": "../cadquery/tank.py", "size": 6, "pixelSize": 1 },
+    { "source": "emblem.vox.json", "size": 0.6, "at": [-0.3, 1.3, 0.83] },
+    { "diorama": "sandbags.json", "at": [-2.05, 1.14, 0.25], "yaw": 1.5708, "scale": 0.9 } ] }
