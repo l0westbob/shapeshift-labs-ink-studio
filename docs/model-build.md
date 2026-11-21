@@ -461,6 +461,30 @@ the flat faces lost their blotches; from 128 to 384 pixels it fell from 0.18 to 
 renders every compared model at 64, 96, 128, 192 and 384 pixels with matched spacing; `/tools/sweep.html` shows them
 side by side. Dioramas that set `res` on their solids keep those values.
 
+### How much input detail a sprite wants
+
+`node scripts/detail-sweep.js [art]` measured it on the CadQuery tank at 128 × 96 art pixels, where the tank is about
+85 pixels wide. Fidelity is silhouette overlap and colour agreement with a reference render of the mesh at a fine field
+and spacing (the mesh rows therefore start with an advantage; compare rows within each table).
+
+| Voxelised at (blocks along the longest side) | 20 | 35 | 50 | 70 | 100 | 128 | 160 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Art pixels per block | 4.2 | 2.4 | 1.7 | 1.2 | 0.85 | 0.66 | 0.53 |
+| Silhouette, three-quarter / side | 0.88 / 0.74 | 0.92 / 0.79 | 0.91 / 0.90 | 0.93 / 0.90 | 0.93 / 0.84 | 0.93 / 0.92 | 0.93 / 0.87 |
+| Colour agreement, three-quarter / side | 0.44 / 0.51 | 0.63 / 0.74 | 0.66 / 0.77 | 0.70 / 0.81 | 0.61 / 0.60 | 0.51 / 0.66 | 0.48 / 0.60 |
+
+| Mesh (CadQuery), field cells and splat spacing | 48, 1 px | 96, 1 px | 96, 2 px | 128, 0.5 px | 192, 0.5 px |
+| --- | --- | --- | --- | --- | --- |
+| Silhouette, three-quarter / side | 0.95 / 0.98 | 0.99 / 0.99 | 0.96 / 0.77 | 0.99 / 1.00 | 1.00 / 1.00 |
+| Colour agreement, three-quarter / side | 0.82 / 0.91 | 0.91 / 0.92 | 0.82 / 0.74 | 0.94 / 0.93 | 0.97 / 0.97 |
+
+- Grids: about 1.2 to 1.7 art pixels per block was best. Finer grids (one block per pixel or less) added nothing to the
+  silhouette and lost colour agreement, because parts smaller than a pixel blend; much coarser grids lose shape. Plan
+  the grid from the pixels the object will span, not from the image size: for an object 85 pixels wide, 50 to 70 blocks.
+- Meshes: field cells at or above the object's pixel width (96 here) and splats one pixel apart hold the shape; half a
+  pixel adds a little colour fidelity for twice the splats; two pixels clearly loses it.
+- Noise alone misleads: the coarsest grid had the least noise because it is made of big flat blocks.
+
 `/tools/tune.html` (with `npm run serve`) changes the finished result live with sliders: art resolution, zoom and camera
 re-render the baked scene (about 0.1 to 0.3 s); splat spacing, shade steps, ramp and palette dithering, edge hardness,
 sun direction and height, ambient and sky bake a variant (about 0.5 to 1 s) that stays cached, so going back is

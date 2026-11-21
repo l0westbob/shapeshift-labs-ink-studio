@@ -80,7 +80,7 @@ const bounds = (w, h, filled) => {
 };
 
 /* how well a render matches a target. The render is scaled uniformly so its silhouette covers the same area as the
-   target's and centred on it, so framing and overall scale do not matter but proportions do. Colours compare by family:
+   target's and centred on it (centre of mass on centre of mass), so framing and overall scale do not matter but proportions do. Colours compare by family:
    a render pixel belongs to the target colour whose shade ramp holds the nearest shade */
 function compare(target, image, background, families) {
   const tb = bounds(target.w, target.h, (x, y) => target.cells[y * target.w + x] !== null);
@@ -89,11 +89,13 @@ function compare(target, image, background, families) {
   const filledAt = (x, y) => x >= 0 && y >= 0 && x < image.w && y < image.h && dist2(at(x, y), bg) > 30;
   const rb = bounds(image.w, image.h, filledAt);
   if (!tb || !rb) return { silhouette: 0, colour: 0 };
-  let targetArea = 0, renderArea = 0;
-  for (const c of target.cells) if (c !== null) targetArea++;
-  for (let y = rb.y0; y < rb.y0 + rb.h; y++) for (let x = rb.x0; x < rb.x0 + rb.w; x++) if (filledAt(x, y)) renderArea++;
+  /* areas and centroids: centring on the centre of mass, not the bounding box, keeps a thin part (an antenna) that one
+     side has and the other lacks from shifting the whole comparison */
+  let targetArea = 0, renderArea = 0, tcx = 0, tcy = 0, rcx = 0, rcy = 0;
+  for (let y = 0; y < target.h; y++) for (let x = 0; x < target.w; x++) if (target.cells[y * target.w + x] !== null) (targetArea++, (tcx += x + 0.5), (tcy += y + 0.5));
+  for (let y = rb.y0; y < rb.y0 + rb.h; y++) for (let x = rb.x0; x < rb.x0 + rb.w; x++) if (filledAt(x, y)) (renderArea++, (rcx += x + 0.5), (rcy += y + 0.5));
+  (tcx /= targetArea), (tcy /= targetArea), (rcx /= renderArea), (rcy /= renderArea);
   const k = Math.sqrt(targetArea / renderArea); /* target cells per render pixel */
-  const tcx = tb.x0 + tb.w / 2, tcy = tb.y0 + tb.h / 2, rcx = rb.x0 + rb.w / 2, rcy = rb.y0 + rb.h / 2;
   const x0 = Math.floor(Math.min(tb.x0, tcx - (rb.w * k) / 2)), x1 = Math.ceil(Math.max(tb.x0 + tb.w, tcx + (rb.w * k) / 2));
   const y0 = Math.floor(Math.min(tb.y0, tcy - (rb.h * k) / 2)), y1 = Math.ceil(Math.max(tb.y0 + tb.h, tcy + (rb.h * k) / 2));
   let both = 0, either = 0, same = 0;
