@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model method comparison</title>
+<!-- Made by scripts/compare-models.js. Serve the repository with `npm run serve`, then open
+     http://127.0.0.1:8765/tools/compare.html?manifest=/studio/out/compare-models/manifest.json -->
+<style>
+  :root { --bg: #14151a; --card: #1c1e24; --line: #2c2f38; --text: #e4e4e7; --muted: #9a9ca6; --accent: #9fd0ff; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { padding: 16px 16px 4px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 22px 16px 8px; }
+  p.lead { margin: 0 16px; color: var(--muted); max-width: 900px; }
+  .tools { display: flex; gap: 16px; align-items: center; padding: 8px 16px; color: var(--muted); flex-wrap: wrap; }
+  .grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(260px, 1fr); gap: 12px; padding: 0 16px 8px; overflow-x: auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .card h3 { font-size: 14px; margin: 0; padding: 10px 12px 2px; }
+  .card .by { font-size: 12px; color: var(--muted); padding: 0 12px 6px; }
+  .view { width: 100%; aspect-ratio: 4 / 3; display: block; background: #0b0d10; }
+  .baked { width: 100%; aspect-ratio: 1; display: block; image-rendering: pixelated; background: #0b0d10; object-fit: contain; }
+  .turn { width: 100%; display: block; image-rendering: pixelated; background: #0b0d10; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 3px 12px; border-top: 1px solid var(--line); }
+  td:first-child { color: var(--muted); width: 45%; }
+  .note { font-size: 12px; color: var(--muted); padding: 6px 12px 10px; }
+  .error { padding: 16px; color: #ffb4a8; }
+  code { color: var(--accent); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<header><h1>Modelling methods compared</h1></header>
+<p class="lead">Each method builds its own model and hands an extracted model (<code>model.glb</code>) to the same pipeline. Top: those extracted models, all in the same viewer, light and camera (drag to turn all of them together). Bottom: what ink-studio baked from them; that result also depends on how good each input was.</p>
+<div class="tools">
+  <label><input type="checkbox" id="wire"> wireframe</label>
+  <label><input type="checkbox" id="flat" checked> flat shading</label>
+  <span id="when"></span>
+</div>
+<h2>1 · Extracted model (GLB): the same hand-off for every method</h2>
+<div class="grid" id="raw"></div>
+<h2>2 · Baked by ink-studio (128 × 128): depends on the input above</h2>
+<div class="grid" id="baked"></div>
+<script>
+  if (location.protocol === 'file:')
+    document.getElementById('raw').innerHTML = '<p class="error">This page has to be served, not opened as a file. Run <code>npm run serve</code> in the repository and open <code>http://127.0.0.1:8765/tools/compare.html</code>.</p>';
+</script>
+<script type="module">
+if (location.protocol === 'file:') throw new Error('serve this page: npm run serve');
+const THREE = await import('three');
+const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+
+const manifestUrl = new URLSearchParams(location.search).get('manifest') || '/studio/out/compare-models/manifest.json';
+let manifest;
+try {
+  manifest = await (await fetch(manifestUrl, { cache: 'no-store' })).json();
+} catch {
+  document.getElementById('raw').innerHTML = `<p class="error">No manifest at <code>${manifestUrl}</code>. Run <code>node scripts/compare-models.js</code> first.</p>`;
+  throw new Error('no manifest');
+}
+document.getElementById('when').textContent = 'built ' + new Date(manifest.created).toLocaleString();
+
+const rows = (pairs) => '<table>' + pairs.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+const views = [];
+let syncing = false;
+const loader = new GLTFLoader();
+
+for (const entry of manifest.entries) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `<h3>${entry.label}</h3><div class="by">${entry.author ?? ''} · <code>${entry.source}</code></div>`;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'view';
+  card.append(canvas);
+  const x = entry.extract;
+  card.insertAdjacentHTML('beforeend', rows([
+    ['triangles', x.triangles?.toLocaleString()], ['parts', x.parts], ['blocks', x.blocks?.toLocaleString()],
+    ['roles', x.roles?.join(', ')], ['build time', x.buildSeconds + ' s'], ['warnings', x.warnings?.length ? x.warnings.join('; ') : undefined]
+  ]) + (x.note ? `<div class="note">${x.note}</div>` : ''));
+  document.getElementById('raw').append(card);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  renderer.setClearColor(0x0b0d10);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x302820, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(-4, 8, 5);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.01, 500);
+  const controls = new OrbitControls(camera, canvas);
+  const view = { renderer, scene, camera, controls, canvas, meshes: [], originals: new Map() };
+  views.push(view);
+  controls.addEventListener('change', () => {
+    if (syncing) return;
+    syncing = true;
+    for (const other of views) if (other !== view) {
+      /* same angle and relative distance, each around its own model */
+      const offset = camera.position.clone().sub(controls.target).divideScalar(view.radius);
+      other.camera.position.copy(other.controls.target).add(offset.multiplyScalar(other.radius));
+      other.controls.update();
+      draw(other);
+    }
+    syncing = false;
+    draw(view);
+  });
+
+  loader.load(entry.glb, gltf => {
+    const model = gltf.scene;
+    model.traverse(node => {
+      if (!node.isMesh) return;
+      if (!node.geometry.attributes.normal) node.geometry.computeVertexNormals();
+      view.meshes.push(node);
+      view.originals.set(node, node.material);
+    });
+    /* every model the same size: 6 units across, standing on y = 0, centred */
+    const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3());
+    const k = 6 / Math.max(size.x, size.y, size.z);
+    model.scale.setScalar(k);
+    const centre = box.getCenter(new THREE.Vector3()).multiplyScalar(k);
+    model.position.set(-centre.x, -box.min.y * k, -centre.z);
+    scene.add(model);
+    view.radius = 6;
+    controls.target.set(0, size.y * k / 2, 0);
+    camera.position.set(6.6, 4.2, 6.6).sub(new THREE.Vector3(0, 0, 0)).normalize().multiplyScalar(view.radius * 1.55).add(controls.target);
+    controls.update();
+    applyLook(view);
+  }, undefined, () => card.insertAdjacentHTML('beforeend', `<p class="error">Could not load ${entry.glb}</p>`));
+
+  const bakedCard = document.createElement('div');
+  bakedCard.className = 'card';
+  const b = entry.bake;
+  bakedCard.innerHTML = `<h3>${entry.label}</h3><div class="by">baked from the model above</div>
+    <img class="baked" src="${entry.baked}?v=${Date.parse(manifest.created)}" alt="">
+    <img class="turn" src="${entry.turn}?v=${Date.parse(manifest.created)}" alt="">` +
+    rows([['noise (reference ' + b.reference.noise + ')', b.noise], ['orphan pixels (reference ' + b.reference.orphans + ')', b.orphans],
+      ['tones', b.tones], ['colours used', b.colours], ['splats', b.splats?.toLocaleString()]]);
+  document.getElementById('baked').append(bakedCard);
+}
+
+function applyLook(view) {
+  const wire = document.getElementById('wire').checked, flat = document.getElementById('flat').checked;
+  for (const mesh of view.meshes) {
+    const original = view.originals.get(mesh);
+    mesh.material = wire ? new THREE.MeshBasicMaterial({ color: 0x9fd0ff, wireframe: true }) : original.clone();
+    if (!wire) mesh.material.flatShading = flat;
+    mesh.material.needsUpdate = true;
+  }
+  draw(view);
+}
+function draw(view) {
+  const { canvas, renderer, camera, scene } = view;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * renderer.getPixelRatio())) renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+}
+for (const id of ['wire', 'flat']) document.getElementById(id).addEventListener('change', () => views.forEach(applyLook));
+addEventListener('resize', () => views.forEach(draw));
+document.body.dataset.done = '1';
+</script>
+</body>
+</html>

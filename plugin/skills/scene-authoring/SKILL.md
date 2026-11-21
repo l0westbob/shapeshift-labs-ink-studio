@@ -42,9 +42,11 @@ A diorama is JSON: `id` (lowercase, digits, dashes), `name`, `seed`, `style` (`s
 - `revert` with an earlier `revision` undoes a batch within the session.
 - A file that does not validate cannot be opened, but `scene_edit` with its `path` repairs it: send only `patch` operations; just the result has to validate.
 
-## Modelling with three.js instead
+## Modelling with three.js, CadQuery or voxels instead
 
 For hard-surface objects (vehicles, buildings, machines) a three.js script is often easier than SDF solids. Write a `.mjs` file that exports `({ THREE, addon }) => Object3D` (use the `THREE` passed in, do not import it; name the meshes), then call `model_three` with `script`, `out` and usually `size`. It writes `out/scene.json` with one `mesh` solid per mesh, one palette role per material (named by `material.userData.role` or `material.name`; reuse one material per colour) and a turnaround preview. Pass `pixelSize: 1` for full-resolution sprites (the default 2 halves them). Continue with `scene_open` on that scene. It needs code allowed; textures are not used. Details: `ink_docs` with `topic: "three-modeling"`, example `examples/three/tank.mjs`.
+
+`model_build` takes the same options for other sources: a CadQuery/build123d `.py` script (Z up, define `build()` returning a `cq.Assembly` with names, colours and `metadata={"role": ...}`; precise fillets and chamfers) or a voxel `.json` (`colours` per letter plus `layers` of letter plans; exact colours for sprite-sized props, runs no code). Every engine writes `model.glb`, `raw.png` (the model before baking) and `scene.json`. Details: `ink_docs` with `topic: "model-build"`, examples in `examples/cadquery/` and `examples/vox/`.
 
 ## When the ink-studio MCP tools are missing
 

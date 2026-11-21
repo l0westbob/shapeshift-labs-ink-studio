@@ -19,8 +19,15 @@
 </head>
 <body>
 <div id="rows"></div>
+<script>
+  /* opened as a file, the browser refuses to load modules; say how to open it instead of failing in the console */
+  if (location.protocol === 'file:')
+    document.getElementById('rows').innerHTML = '<p style="padding:16px;font-size:15px">This page has to be served, not opened as a file.<br>' +
+      'In the repository run <code>npm run serve</code>, then open <a style="color:#9fd0ff" href="http://127.0.0.1:8765/tools/raw-viewer.html">http://127.0.0.1:8765/tools/raw-viewer.html</a>.</p>';
+</script>
 <script type="module">
-import * as THREE from 'three';
+if (location.protocol === 'file:') throw new Error('serve this page: npm run serve');
+const THREE = await import('three');
 const addon = name => import('/node_modules/three/examples/jsm/' + name.replace(/^\/+/, '').replace(/\.js$/, '') + '.js');
 /* ?script=/path/model.mjs&baked=/path/baked.png (repeat both for more rows); without them, the example tank */
 const query = new URLSearchParams(location.search);

@@ -67,7 +67,8 @@ The classic `stats`, `lint`, `crisp` and `values` commands print the same JSON a
 | `scene_edit` | write | Atomic batch on an open diorama. `baseRevision` guards staleness, `dryRun` previews, `render`/`measure` return the result in the same call. |
 | `scene_save` | write | Write the current diorama JSON. Defaults to the source file; refuses to replace another file unless `overwrite`. |
 | `scene_export` | write | `format: "glb"` writes a UV-mapped model (JSON dioramas); `format: "atlas"` writes a directional sprite atlas with optional depth, normal, emission and silhouette maps and returns a preview. |
-| `model_three` | write | Run a three.js script (`({ THREE, addon }) => Object3D`) and write a diorama with one mesh solid per part and one palette role per material, plus `model.glb` and a preview. Needs code allowed. See [docs/three-modeling.md](docs/three-modeling.md). |
+| `model_build` | write | Build a model with another modeller: `engine` `three` (three.js script), `cadquery` (CadQuery/build123d `.py`, runs in `.venv`) or `vox` (voxel JSON, no code needed). Writes `model.glb` (the shared hand-off), `raw.png` (before baking), a diorama with one palette role per material, and a preview. See [docs/model-build.md](docs/model-build.md). |
+| `model_three` | write | `model_build` with engine `three`: run a three.js script (`({ THREE, addon }) => Object3D`) and write a diorama with one mesh solid per part and one palette role per material, plus `model.glb` and a preview. Needs code allowed. See [docs/three-modeling.md](docs/three-modeling.md). |
 | `world_open` | read | Open a world manifest, checkpoint or run recording into a live simulation. Lists its fields, traces and action kinds. |
 | `world_step` | write | Schedule `actions` and advance by `ticks`, `steps` or `t`. Invalid actions are rejected before anything moves. Returns scenario status and new events. |
 | `world_query` | read | `inspect`, `spatial`, `select`, `probe`, `trace`, `export` on the current tick. |
@@ -80,7 +81,7 @@ Every scene-taking tool accepts `scene` as exactly one of `{ "handle" }`, `{ "pa
 
 ## The loop
 
-1. Write a diorama (start from `examples/scene.json`) and `scene_validate` it. For hard-surface models it can be easier to write a three.js script and turn it into a diorama with `model_three`.
+1. Write a diorama (start from `examples/scene.json`) and `scene_validate` it. For hard-surface models it can be easier to write a three.js or CadQuery script, and for sprite-sized props a voxel model, and turn it into a diorama with `model_build`.
 2. `scene_open` it and keep the `handle` and `revision`.
 3. `scene_render` to look; `scene_measure` for numbers you can compare across edits.
 4. `scene_edit` with `baseRevision`, plus `render` and `measure`, until it looks right and the metrics hold.
@@ -126,7 +127,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-mod
 
 Call the tools as `.venv/bin/python`, never a global Python. `.venv/` is not committed.
 
-To judge a model before it is baked, `model_three` writes `out/raw.png`: the meshes as the script built them, flat-shaded from the front and the back, rendered on the CPU. For an interactive look, `npm run serve` serves the repository on `http://127.0.0.1:8765/` (no dependencies) and `tools/raw-viewer.html?script=/path/model.mjs&baked=/path/preview.png` runs a three.js script in the browser next to its baked image.
+To judge a model before it is baked, `model_build` and `model_three` write `out/raw.png`: the meshes as the script built them, flat-shaded from the front and the back, rendered on the CPU. For an interactive look, `npm run serve` serves the repository on `http://127.0.0.1:8765/` (no dependencies) and `tools/raw-viewer.html?script=/path/model.mjs&baked=/path/preview.png` runs a three.js script in the browser next to its baked image. `node scripts/compare-models.js` builds the same model with every method and `tools/compare.html` shows each method's `model.glb` and baked result side by side.
 
 ## Evals
 

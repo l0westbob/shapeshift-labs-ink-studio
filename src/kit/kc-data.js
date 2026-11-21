@@ -161,7 +161,11 @@
     },
     stairs: { need: { at: 'vec3', dir: 'vec3', rise: 'pos' }, may: { width: 'pos', riser: 'pos', tread: 'pos' } },
     fence: { need: { a: 'vec3', b: 'vec3' }, may: { h: 'pos', bay: 'pos', pickets: 'num' } },
-    pipe: { need: { pts: 'pts' }, may: { r: 'pos', wall: 'pos', collar: 'pos' } }
+    pipe: { need: { pts: 'pts' }, may: { r: 'pos', wall: 'pos', collar: 'pos' } },
+    vox: {
+      need: { at: 'vec3', key: 'obj' },
+      may: { layers: 'list', front: 'list', cell: 'pos|vec3', mirror: ['x', 'xo'], hard: 'bool', round: 'num', yaw: 'num', anchor: ['base', 'centre'] }
+    }
   };
   const unaryKinds = ['fold', 'warp', 'shell', 'swell', 'rough', 'bubbles'];
   const modifierKinds = Object.fromEntries(unaryKinds.map(kind => {
@@ -992,6 +996,21 @@
             ? 'meshes: ' + Object.keys(assets).join(', ')
             : 'pass { assets: { "' + s.asset + '": mesh } } when building'
         );
+      if (s.kind === 'vox' && s.key && typeof s.key === 'object') {
+        if ((s.layers === undefined) === (s.front === undefined))
+          bad(path, 'a vox model needs exactly one of layers (plans from the bottom up) or front (pictures from the front back)');
+        for (const [letter, material] of Object.entries(s.key)) {
+          if ([...letter].length !== 1 || letter === '.' || letter === ' ')
+            bad(path + '.key.' + letter, 'a key is one letter (not "." or a space, which are empty)');
+          matOk(material, path + '.key.' + letter);
+        }
+        if ((s.layers === undefined) !== (s.front === undefined))
+          try {
+            K.vox.parse({ layers: s.layers, front: s.front, mirror: s.mirror, key: s.key });
+          } catch (error) {
+            bad(path, error.message.replace(/^vox: /, ''), 'every letter in the plans must be in key; "." and spaces are empty');
+          }
+      }
       if (s.kind === 'warp' && s.twist === undefined && s.bend === undefined && s.taper === undefined)
         bad(path, 'a warp needs one of twist, bend, taper');
       if (s.kind === 'fold' && s.polar === undefined && s.mirror === undefined && s.repeat === undefined)
@@ -1533,7 +1552,16 @@
           p = S.extrude(outline(s.outline), s.at, s.depth, m, Object.assign(s.round ? { rd: s.round } : {}, baseOptions));
         else if (k === 'revolve') p = S.revolve(outline(s.outline), s.at, m, baseOptions);
         else if (k === 'puff') p = S.puff(outline(s.outline), s.at, s.height, m, baseOptions);
-        else if (k === 'mesh') {
+        else if (k === 'vox') {
+          const key = Object.fromEntries(Object.entries(s.key).map(([letter, material]) => [letter, matOf(material)]));
+          const model = { layers: s.layers, front: s.front, mirror: s.mirror, cell: s.cell, hard: s.hard, round: s.round, key };
+          const place = { at: s.at, yaw: s.yaw, anchor: s.anchor, ...baseOptions };
+          /* one solid per letter; held (inside a join or with modifiers) they are unioned into one */
+          if (baseOptions.hold) {
+            const pieces = S.takeSolids(() => S.vox(model, place));
+            p = pieces.length === 1 ? pieces[0] : S.join('union', pieces[0], pieces.slice(1), { hold: true, r: 0, mat: m });
+          } else p = S.vox(model, place);
+        } else if (k === 'mesh') {
           const ml = meshLooks.get(s) || {
             mesh: K.mesh.fit(env.assets[s.asset], { size: s.size || 4, at: s.at, turn: s.spin, up: s.up })
           };

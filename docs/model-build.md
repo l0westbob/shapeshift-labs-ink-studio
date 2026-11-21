@@ -1,0 +1,99 @@
+# Building models with other modellers
+
+A diorama's own solids are one way to model. `model_build` adds others: a three.js script, a CadQuery or build123d script,
+or a voxel model. Each one ends in the same hand-off, so everything after it is shared:
+
+```text
+three.js script ─┐
+CadQuery script ─┼─> model.glb (+ raw.png) ──> palette roles, scene.json ──> bake, render, edit, export
+voxel model     ─┘
+```
+
+| Engine | Source | Good for | Runs code |
+| --- | --- | --- | --- |
+| `three` | `.mjs`, `.js`, `.cjs` exporting `({ THREE, addon }) => Object3D` | Quick low-poly hard surfaces. See [three-modeling.md](three-modeling.md). | yes |
+| `cadquery` | `.py` defining `build()`, `result` or `show_object()` | Precise parts: fillets, chamfers, lofts, sweeps, cut details. | yes |
+| `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
+
+The engine follows from the extension unless `engine` is given. `size`, `pixelSize`, `pixelStyle`, `shades`,
+`overwrite`, `preview` and `frames` work the same for every engine (see [three-modeling.md](three-modeling.md#running-it)).
+
+```bash
+ink-agent call model_build '{"source":"/abs/examples/cadquery/tank.py","out":"/abs/studio/out/tank","size":6,"pixelSize":1}' --allow-code
+```
+
+## What every engine writes
+
+| File | What it is |
+| --- | --- |
+| `model.glb` | The extracted model: one mesh per part, material colours as glTF materials. The same hand-off for every engine. |
+| `raw.png` | That model before baking, flat-shaded on the CPU from the front and the back. |
+| `scene.json` | The diorama. Mesh engines: one `mesh` solid per part. Voxels: one `vox` solid, baked from the grid itself. |
+| `parts/` | Mesh engines: one GLB per part, referenced by the solids. |
+| `preview.png` | A turnaround of the baked scene. |
+
+Every material becomes a palette role with its own ramp (see [three-modeling.md](three-modeling.md#materials-become-roles)):
+`material.userData.role` or `material.name` in three.js, `metadata={"role": ...}` in CadQuery (else the colour), the
+`role` of a colour entry in voxels (else the colour). Comparing `raw.png` with `preview.png` tells a modelling problem
+from a baking problem.
+
+## CadQuery and build123d
+
+The script runs in the project's `.venv` (or `$INK_PYTHON`); see `requirements-modelling.txt`. It makes the model in any
+of these ways, the first that applies wins:
+
+```python
+def build():               # a function returning the model
+    ...
+result = ...               # or a global called result
+show_object(shape, name="hull", options={"color": "#5b6b2e", "role": "olive"})   # or CQ-editor style calls
+```
+
+A model is a `cq.Assembly` (names, colours, locations and `metadata={"role": ...}` are kept), a `Workplane`, a `Shape`,
+a build123d object, a list of those, or a dict `{name: model | (model, colour) | {"shape", "color", "role"}}`. Colours
+are `"#rrggbb"`, `0xrrggbb`, a colour name, an `(r, g, b)` tuple in 0..1 or a `cq.Color`.
+
+```python
+import cadquery as cq
+
+def build():
+    assy = cq.Assembly()
+    hull = cq.Workplane().box(4, 2, 0.8).edges("|Z").fillet(0.2)
+    assy.add(hull, name="hull", color=cq.Color("#5b6b2e"), metadata={"role": "olive"})
+    return assy
+```
+
+- CAD is Z up; the model is turned so Z becomes Y. Units are kept unless `size` is given.
+- `tolerance` (default 0.0015) is the largest chord error of the triangles as a share of the model's size. Lower it for
+  smoother curves, raise it for fewer triangles.
+- Python errors come back as `BUILD_FAILED` with the line of the script in `hint`. A shape OpenCascade reports as invalid
+  is listed in `warnings`; it usually still bakes.
+- [examples/cadquery/tank.py](../examples/cadquery/tank.py) is a complete assembly with 24 parts.
+
+## Voxels
+
+```json
+{ "cell": 0.125, "hard": true,
+  "colours": { "o": { "colour": "#5b6b2e", "role": "olive" }, "t": "#2b2b2b" },
+  "layers": [ "tttt/tttt", ["toot/t..t", 2], "oooo/oooo" ] }
+```
+
+- `layers` are plans from the bottom up: rows run from the back to the front, letters from left to right; a plan is a list
+  of rows or one string with rows parted by `/`; `[plan, n]` repeats a plan n layers. `front` instead takes pictures seen
+  from the front, nearest first. `.` and spaces are empty.
+- `colours` gives every letter a colour, or `{ "colour", "role" }`. Letters of one colour share a role.
+- `cell` is the block size (or `[x, y, z]`), `hard: true` (the default here) keeps flat faces and square corners; `false`
+  rounds them into one soft solid. `mirror: "x"` finishes each row with itself reversed.
+- [examples/vox/tank.json](../examples/vox/tank.json) is a 50 × 16 × 24 tank; generating the plans with a short script
+  is easier than typing them.
+
+The diorama gets one `vox` solid with the same fields and a `key` of materials, so it can also be written by hand:
+`{ "kind": "vox", "at": [0, 0, 0], "cell": 0.1, "key": { "s": "stone" }, "layers": ["ss/ss"] }`.
+
+## Comparing methods
+
+`node scripts/compare-models.js` builds the same model with every method (by default the tanks in `examples/`) and
+writes `studio/out/compare-models/manifest.json`. `npm run serve` and
+`http://127.0.0.1:8765/tools/compare.html` then show, per method, the extracted `model.glb` in one viewer (drag to turn
+them all together) and below it the baked result with its numbers. A diorama of SDF solids has no extracted model, so the
+script meshes it with `scene_export` for the top row; its baking still uses the distance field.
