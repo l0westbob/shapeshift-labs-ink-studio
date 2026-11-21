@@ -16,6 +16,8 @@ voxel model     ─┘
 | `blender` | `.blender.py` building objects with `bpy` | Bevelled hard surfaces and smooth organic forms: modifiers (bevel, subdivision, mirror, array, boolean) are applied. | yes |
 | `openscad` | `.scad`, parts named in `PARTS` and drawn by `module part(name)` | CSG with robust booleans (Manifold); a huge body of examples. | yes |
 | `sdf` | `.sdf.mjs` returning distance functions built from `library/sdf.mjs` | Smooth blends, repeats, twists and noise in the Shadertoy style. | yes |
+| `subd` | `.subd.json`, or `.subd.mjs` with cage helpers | Characters and soft organic forms: Catmull-Clark subdivision, creased edges stay sharp. | `.mjs` only |
+| `loft` | `.loft.json` or `.loft.mjs` with sections or revolved profiles | Taut, smooth bodies: hulls, fuselages, car bodies, barrels. | `.mjs` only |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
@@ -125,6 +127,41 @@ export default ({ sdf }) => ({
   `noise`/`fbm`.
 - Each field is meshed with the kit's implicit surface mesher and continues as a mesh part.
 - [examples/sdf-code/tank.sdf.mjs](../examples/sdf-code/tank.sdf.mjs) builds a tank from 30 lines of functions.
+
+## Subdivision cages
+
+```json
+{ "cages": [ { "name": "body", "colour": "#5b6b2e", "role": "olive", "levels": 3,
+               "vertices": [[0, 0, 0], ...], "faces": [[0, 1, 2, 3], ...], "creases": [[0, 1], ...] } ] }
+```
+
+- A cage is a coarse polygon mesh (quads are best), faces counter-clockwise seen from outside. Each is subdivided
+  `levels` times (default 3, at most 5) by Catmull-Clark; creased edges and the open borders stay sharp.
+- A `.subd.mjs` script exports `({ cage }) => ({ cages })` and gets helpers: `cage.box(centre, half)`,
+  `cage.prism(sides, radius, y0, y1, centre)`, `cage.outline(points, z0, z1)` (a 2D outline extruded, with its two
+  `rings` to crease), `cage.ring(loop)` (crease pairs for a loop), `cage.extrude(mesh, faces, distance)` and
+  `cage.map(mesh, f)`.
+- Crease the outline loops of a flat-sided part and leave the rest smooth: the outline rounds, the faces stay flat.
+- [examples/subd/tank.subd.mjs](../examples/subd/tank.subd.mjs) builds the tank from creased cages.
+
+## Lofted surfaces
+
+```json
+{ "parts": [
+    { "name": "hull", "axis": "x", "sections": [ { "at": -2.6, "rect": [0.6, 1.9], "round": 0.08, "centre": [1, 0] },
+                                                 { "at": 0, "rect": [0.85, 2], "round": 0.08, "centre": [0.88, 0] },
+                                                 { "at": 2.7, "ellipse": [0.15, 0.9] } ] },
+    { "name": "barrel", "axis": "x", "at": [0, 1.6, 0], "revolve": [[0.12, 0.9], [0.085, 1.3], [0.085, 3.3]] } ] }
+```
+
+- A section is a closed ring across the axis: `points` [[up, across], ...], `ellipse` [half height, half width] or `rect`
+  [height, width] with `round`, plus an optional `centre` [up, across]. Axis `x` has up = Y and across = Z; `y` has
+  up = X, across = Z; `z` has up = Y, across = X.
+- The surface is a uniform cubic B-spline, periodic around each ring and clamped along the sections, so it starts and
+  ends exactly at the first and last; both ends are capped, so it is closed. `around` and `along` set the sampling.
+- `revolve` turns a profile of [radius, position] points around the axis (through `at`).
+- [examples/loft/tank.loft.json](../examples/loft/tank.loft.json) lofts the hull, tracks and turret and revolves the gun,
+  cupola and wheels.
 
 ## Voxels
 

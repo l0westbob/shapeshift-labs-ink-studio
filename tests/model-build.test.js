@@ -324,3 +324,42 @@ test('model_build meshes signed distance functions written as code', async t => 
   const error = fails(await call({ source: script, out, overwrite: true, preview: false }), 'BUILD_FAILED');
   assert.match(error.message, /needs bounds/);
 });
+
+test('Catmull-Clark subdivision: counts, smoothing, creases and the subd engine', async t => {
+  const { subdivide, cage } = require('../cli/subd-model.js');
+  const cube = cage.box([0, 0, 0], [1, 1, 1]);
+  const once = subdivide(cube);
+  assert.equal(once.vertices.length, 8 + 12 + 6);
+  assert.equal(once.faces.length, 24);
+  const radius = mesh => Math.max(...mesh.vertices.map(p => Math.hypot(...p)));
+  assert.ok(radius(once) < Math.sqrt(3) - 0.1, 'smooth corners pull in');
+  const sharp = subdivide({ ...cube, creases: [[0, 1], [0, 2], [0, 4]] });
+  /* vertex points follow the 12 edge points, so corner 0 lands at index 12 */
+  assert.deepEqual(sharp.vertices[12], [-1, -1, -1], 'a corner with three creased edges stays put');
+  assert.notDeepEqual(once.vertices[12], [-1, -1, -1]);
+
+  const dir = tempDir(t), source = path.join(dir, 'pebble.subd.json');
+  fs.writeFileSync(source, JSON.stringify({ cages: [{ name: 'pebble', colour: '#777b72', levels: 2, ...cage.box([0, 0.5, 0], [1, 0.5, 0.7]) }] }));
+  const result = ok(await call({ source, out: path.join(dir, 'pebble'), preview: false }, {}));
+  assert.equal(result.engine, 'subd');
+  assert.equal(result.parts[0].open, 0);
+  assert.equal(result.parts[0].triangles, 6 * 16 * 2);
+  fs.writeFileSync(path.join(dir, 'pebble.subd.mjs'), 'export default ({ cage }) => ({ cages: [cage.box()] });\n');
+  fails(await call({ source: path.join(dir, 'pebble.subd.mjs'), out: path.join(dir, 'p2') }, {}), 'CODE_NOT_ALLOWED');
+});
+
+test('the loft engine skins sections and revolves profiles into closed surfaces', async t => {
+  const dir = tempDir(t), source = path.join(dir, 'boat.loft.json');
+  fs.writeFileSync(source, JSON.stringify({ parts: [
+    { name: 'hull', colour: '#8a5a2b', role: 'wood', axis: 'x', around: 24, along: 20,
+      sections: [{ at: -1, ellipse: [0.2, 0.3] }, { at: 0, rect: [0.6, 0.8], round: 0.15, centre: [0.1, 0] }, { at: 1, ellipse: [0.15, 0.1] }] },
+    { name: 'mast', colour: '#5a3a20', axis: 'y', at: [0, 0, 0], revolve: [[0.05, 0.3], [0.05, 1.6]] }
+  ] }));
+  const result = ok(await call({ source, out: path.join(dir, 'boat'), preview: false }, {}));
+  assert.equal(result.engine, 'loft');
+  assert.ok(result.parts.every(p => p.open === 0), 'capped surfaces are closed');
+  const bounds = JSON.parse(fs.readFileSync(path.join(dir, 'boat', 'model.json'), 'utf8')).parts;
+  const hull = bounds.find(p => p.name === 'hull');
+  assert.ok(Math.abs(hull.hi[0] - hull.lo[0] - 2) < 0.01, 'clamped ends reach the first and last section');
+  assert.equal((await validate(result.scene)).valid, true);
+});
