@@ -18,6 +18,8 @@ voxel model     ─┘
 | `sdf` | `.sdf.mjs` returning distance functions built from `library/sdf.mjs` | Smooth blends, repeats, twists and noise in the Shadertoy style. | yes |
 | `subd` | `.subd.json`, or `.subd.mjs` with cage helpers | Characters and soft organic forms: Catmull-Clark subdivision, creased edges stay sharp. | `.mjs` only |
 | `loft` | `.loft.json` or `.loft.mjs` with sections or revolved profiles | Taut, smooth bodies: hulls, fuselages, car bodies, barrels. | `.mjs` only |
+| `grammar` | `.grammar.json`: an L-system or a split grammar | Rules instead of pieces: plants and branching things; buildings, shelves, fences. | no |
+| `stack` | `.stack.json` naming PNG slices | Sprite stacking: draw horizontal slices in a pixel editor, keep every colour exact. | no |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
@@ -162,6 +164,47 @@ export default ({ sdf }) => ({
 - `revolve` turns a profile of [radius, position] points around the axis (through `at`).
 - [examples/loft/tank.loft.json](../examples/loft/tank.loft.json) lofts the hull, tracks and turret and revolves the gun,
   cupola and wheels.
+
+## Grammars
+
+**L-systems** grow branching forms from an axiom and rewriting rules; a 3D turtle draws them and the result is painted
+with splat strokes (see painting):
+
+```json
+{ "kind": "lsystem", "axiom": "FFA", "iterations": 4, "angle": 28, "step": 0.42, "width": 0.24, "seed": 5,
+  "rules": { "A": [["F[&+AL][&-AL][^AL]/A", 0.6], ["F[&+AL][^-AL]\\A", 0.4]] },
+  "shrink": { "step": 0.82, "width": 0.66 },
+  "colours": { "wood": "#5a3a20", "leaf": "#4f7a2a" }, "wood": "wood", "leaf": { "colour": "leaf", "size": 0.22 } }
+```
+
+`F` draws forward, `f` moves, `+ -` turn, `& ^` pitch, `\ /` roll, `|` turns around, `[ ]` push and pop (each level
+shrinks by `shrink`), `L` places a leaf. A rule is a string or a weighted list chosen by `seed`.
+
+**Split grammars** (in the style of CGA shape grammars) divide boxes by rules until terminals emit geometry:
+
+```json
+{ "kind": "split", "axiom": "Lot", "size": [8, 7.5, 6], "colours": { "wall": "#c8b88a", "roof": "#8a3324", "glass": "#3a5a6a" },
+  "rules": { "Lot": { "split": "y", "sizes": [3, 2.6, "~"], "into": ["Ground", "Floor", "Roof"] },
+             "Floor": { "repeat": "x", "size": 2, "into": "Bay" },
+             "Bay": [ { "box": "wall" }, { "inset": [0.5, 0.6, 0], "face": "front", "depth": 0.12, "into": "Window" } ],
+             "Window": { "box": "glass" }, "Roof": { "roof": "gable", "colour": "roof", "overhang": 0.35 } } }
+```
+
+`split` divides along an axis (numbers are absolute, `"~"` and `"2~"` share what is left, `null` leaves a gap),
+`repeat` fits as many parts of about `size` as fit, `inset` shrinks (with `face` and `depth` it makes a slab standing
+proud of that face), `box` and `roof` (`gable` or `hip`) are terminals. Boxes become native box solids (exact, seamless),
+roofs mesh parts. [examples/grammar/](../examples/grammar/) has a tree and a two-storey house.
+
+## Sprite stacking
+
+```json
+{ "slices": "tank-slices.png", "slice": [50, 24], "cell": 0.125, "roles": { "#5b6b2e": "olive" } }
+```
+
+Slices are horizontal top-down pictures, bottom first: one sheet cut into `slice` [width, height] pieces (left to right,
+top to bottom) or a list of files. In each, the top row is the back. Transparent pixels (or `background`) are empty;
+every other colour stays exact, becomes a letter and a role (named by `roles`, else by its colour), and the stack
+continues as a voxel model. [examples/stack/](../examples/stack/) stacks the voxel tank's 16 slices.
 
 ## Voxels
 

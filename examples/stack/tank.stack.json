@@ -1,0 +1,2 @@
+{ "slices": "tank-slices.png", "slice": [50, 24], "cell": 0.125, "hard": true,
+  "roles": { "#5b6b2e": "olive", "#3f4a22": "dark-olive", "#2b2b2b": "track", "#777b72": "steel", "#a5a99c": "light-steel" } }

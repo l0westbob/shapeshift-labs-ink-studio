@@ -1,0 +1,18 @@
+{ "kind": "split", "axiom": "Lot", "size": [8, 7.5, 6],
+  "colours": {
+    "wall": { "colour": "#c8b88a", "role": "wall" }, "base": { "colour": "#7a6a58", "role": "stone" },
+    "roof": { "colour": "#8a3324", "role": "roof" }, "glass": { "colour": "#3a5a6a", "role": "glass" },
+    "frame": { "colour": "#e8e4d8", "role": "trim" }, "door": { "colour": "#5a3a20", "role": "door" } },
+  "rules": {
+    "Lot": { "split": "y", "sizes": [0.4, 2.6, 2.4, "~"], "into": ["Plinth", "Ground", "Floor", "Roof"] },
+    "Plinth": { "box": "base" },
+    "Ground": { "split": "x", "sizes": ["~", 1.6, "~"], "into": ["Bays", "Entrance", "Bays"] },
+    "Bays": { "repeat": "x", "size": 2, "into": "Bay" },
+    "Floor": { "repeat": "x", "size": 2, "into": "Bay" },
+    "Bay": [ { "box": "wall" }, { "inset": [0.5, 0.6, 0], "face": "front", "depth": 0.12, "into": "Window" } ],
+    "Window": [ { "box": "frame" }, { "inset": [0.08, 0.08, 0], "face": "front", "depth": 0.16, "into": "Glass" } ],
+    "Glass": { "box": "glass" },
+    "Entrance": [ { "box": "wall" }, { "inset": [0.3, 0, 0], "face": "front", "depth": 0.14, "into": "DoorBox" } ],
+    "DoorBox": { "split": "y", "sizes": [2.1, "~"], "into": ["Door", null] },
+    "Door": { "box": "door" },
+    "Roof": { "roof": "gable", "colour": "roof", "overhang": 0.35 } } }

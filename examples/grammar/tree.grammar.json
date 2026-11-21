@@ -1,0 +1,5 @@
+{ "kind": "lsystem", "axiom": "FFA", "iterations": 4, "angle": 28, "step": 0.42, "width": 0.24, "seed": 5,
+  "rules": { "A": [["F[&+AL][&-AL][^AL]/A", 0.6], ["F[&+AL][^-AL]\\A", 0.4]] },
+  "shrink": { "step": 0.82, "width": 0.66 },
+  "colours": { "wood": { "colour": "#5a3a20", "role": "bark" }, "leaf": { "colour": "#4f7a2a", "role": "leaf" } },
+  "wood": "wood", "leaf": { "colour": "leaf", "size": 0.22 }, "blend": 0.03 }

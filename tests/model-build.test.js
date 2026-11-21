@@ -363,3 +363,57 @@ test('the loft engine skins sections and revolves profiles into closed surfaces'
   assert.ok(Math.abs(hull.hi[0] - hull.lo[0] - 2) < 0.01, 'clamped ends reach the first and last section');
   assert.equal((await validate(result.scene)).valid, true);
 });
+
+test('grammars: an L-system grows a painted plant, a split grammar builds boxes and roofs', async t => {
+  const { expand, turtle, derive } = require('../cli/grammar-model.js');
+  assert.equal(expand({ axiom: 'A', rules: { A: 'AB', B: 'A' }, iterations: 4 }), 'ABAABABA');
+  const { branches, leaves } = turtle('F[+F]F[-FL]', { angle: 90, step: 1 });
+  assert.equal(branches.length, 3);
+  assert.equal(leaves.length, 1);
+  assert.deepEqual(branches[0].points.at(-1).map(v => Math.round(v * 1e6) / 1e6), [0, 2, 0], 'the trunk keeps going after the side branch');
+
+  const terminals = derive({
+    axiom: 'Lot', size: [6, 4, 4], colours: {},
+    rules: { Lot: { split: 'y', sizes: [3, '~'], into: ['Walls', 'Roof'] }, Walls: { repeat: 'x', size: 2, into: 'Bay' }, Bay: { box: 'wall' }, Roof: { roof: 'gable', colour: 'roof' } }
+  });
+  assert.deepEqual(terminals.map(t => t.kind), ['box', 'box', 'box', 'gable']);
+  assert.deepEqual(terminals[3].lo, [-3, 3, -2]);
+
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'hut.grammar.json'), JSON.stringify({
+    kind: 'split', axiom: 'Lot', size: [4, 3, 3], colours: { wall: '#c8b88a', roof: { colour: '#8a3324', role: 'roof' } },
+    rules: { Lot: { split: 'y', sizes: [2, '~'], into: ['Wall', 'Roof'] }, Wall: { box: 'wall' }, Roof: { roof: 'hip', colour: 'roof', overhang: 0.2 } }
+  }));
+  const hut = ok(await call({ source: path.join(dir, 'hut.grammar.json'), out: path.join(dir, 'hut'), preview: false }, {}));
+  assert.equal(hut.engine, 'grammar');
+  const spec = JSON.parse(fs.readFileSync(hut.scene, 'utf8'));
+  assert.deepEqual(spec.solids.map(s => s.kind), ['box', 'mesh'], 'boxes are native, roofs are meshes');
+  assert.ok(hut.parts.every(p => p.open === 0));
+  assert.equal((await validate(hut.scene)).valid, true);
+
+  fs.writeFileSync(path.join(dir, 'weed.grammar.json'), JSON.stringify({
+    kind: 'lsystem', axiom: 'A', iterations: 2, angle: 30, step: 0.3, width: 0.06, rules: { A: 'F[+AL][-AL]' },
+    colours: { stem: '#4f7a2a', bud: '#e8b4c0' }, leaf: { colour: 'bud', size: 0.05 }
+  }));
+  const weed = ok(await call({ source: path.join(dir, 'weed.grammar.json'), out: path.join(dir, 'weed'), preview: false }, {}));
+  const weedSpec = JSON.parse(fs.readFileSync(weed.scene, 'utf8'));
+  assert.ok(weedSpec.solids.some(s => s.kind === 'stroke') && weedSpec.solids.some(s => s.kind === 'ball'));
+});
+
+test('sprite stacking turns PNG slices into voxels with exact colours', async t => {
+  const dir = tempDir(t), png = require('../cli/png.js');
+  /* two 3 x 2 slices side by side: a full slab, then a single block on top in another colour */
+  const w = 6, h = 2, rgb = new Uint8Array(w * h * 3), alpha = new Uint8Array(w * h);
+  for (let y = 0; y < 2; y++) for (let x = 0; x < 3; x++) rgb.set([0x5b, 0x6b, 0x2e], (y * w + x) * 3), (alpha[y * w + x] = 255);
+  rgb.set([0xe8, 0xe4, 0xd8], (0 * w + 4) * 3);
+  alpha[0 * w + 4] = 255;
+  png.write(path.join(dir, 'slices.png'), w, h, rgb, alpha);
+  fs.writeFileSync(path.join(dir, 'slab.stack.json'), JSON.stringify({ slices: 'slices.png', slice: [3, 2], cell: 0.5, roles: { '#5b6b2e': 'olive' } }));
+  const result = ok(await call({ source: path.join(dir, 'slab.stack.json'), out: path.join(dir, 'slab'), preview: false }, {}));
+  assert.equal(result.engine, 'stack');
+  assert.equal(result.slices, 2);
+  assert.equal(result.blocks, 7);
+  assert.deepEqual(result.roles, ['olive', 'paint-e8e4d8']);
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.deepEqual(spec.solids[0].layers, ['aaa/aaa', '.b./...']);
+});
