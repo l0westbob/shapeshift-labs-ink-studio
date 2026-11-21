@@ -5,6 +5,7 @@ require('./scene.js');
 require('./query.js');
 require('./export.js');
 require('./model.js');
+require('./fit.js');
 require('./world.js');
 require('./bridge.js');
 module.exports = require('../registry.js');

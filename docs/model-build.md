@@ -118,6 +118,29 @@ Draw the model the way the finished pixel art should read, as two or more orthog
   with engine `vox` to cut them in. `views.png` shows the drawn views.
 - [examples/carve/tank.views.json](../examples/carve/tank.views.json) draws a tank in three views.
 
+## Fitting a scene to the drawing
+
+`scene_fit` closes the loop from the other side: it tunes numbers in any diorama (from any engine, or hand-written)
+until its orthographic renders match target views.
+
+```json
+{ "scene": { "path": "studio/out/hut/scene.json" },
+  "targets": [ { "views": "examples/carve/tank.views.json" } ],
+  "params": [ { "path": "/solids/1/half/1", "min": 0.1, "max": 1.5 },
+              { "paths": ["/solids/4/at/0", "/solids/5/at/0"], "min": -2, "max": 2 } ],
+  "out": "studio/out/hut-fit", "iterations": 30, "population": 8 }
+```
+
+- `params` are JSON pointers to numbers with a range; `paths` moves several fields together (mirrored parts), `step`
+  rounds values (cells, counts).
+- `targets` are the views of a carve source, letter grids `{ view, rows, colours }` or PNGs `{ view, image }`.
+- The score is silhouette overlap plus colour agreement (`weights`, default 1 and 0.5; `lint` adds a pixel-art noise
+  penalty). Each render is scaled to the area of its target and centred, so framing and overall scale do not matter but
+  proportions do.
+- A (1+λ) evolution strategy searches the box; every candidate is baked and rendered from every view, so it is slow by
+  design. `budget` caps the seconds. `out/fit.png` shows per view the target, the start and the best; `out/fit.json` the
+  values and the score history.
+
 ## Comparing methods
 
 `node scripts/compare-models.js` builds the same model with every method (by default the tanks in `examples/`) and

@@ -272,5 +272,5 @@ function describe(entry) {
 
 module.exports = {
   kit, studio, sceneSchema, open, close, sessions, specOf, revisionFor, worldAt, pose, descriptorOf, describe, makeEditor,
-  environmentFor, problemsOf, errorsOf, codeAllowed, HISTORY_LIMIT
+  environmentFor, problemsOf, errorsOf, codeAllowed, openDiorama, HISTORY_LIMIT
 };

@@ -1639,6 +1639,21 @@
       "generated": true
     },
     {
+      "id": "agent.scene_fit",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Fit a scene to target views",
+      "what": "Inverse modelling: tune numbers in a diorama until orthographic renders match target views.",
+      "use": "MCP tool scene_fit or: ink-studio agent call scene_fit '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
       "id": "agent.world_open",
       "kind": "agent",
       "status": "ready",
