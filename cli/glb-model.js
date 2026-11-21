@@ -9,7 +9,9 @@
 
    A vertex colour can only hold what the texture shows at that vertex, so textured triangles are first split until no
    edge is longer than about 1.5 art pixels of the finished sprite (`objectPixels` across the model): a twelve-triangle crate
-   keeps its painted planks, and a dense generated mesh is left almost as it is. Textures must be PNG (trellis2mlx, trimesh
+   keeps its painted planks, and a dense generated mesh is left almost as it is. Each vertex then takes the texture
+   averaged over its triangles and over half an art pixel around it, so detail finer than a pixel (a 4K map on a dense
+   generated mesh) does not come back as speckle. Textures must be PNG (trellis2mlx, trimesh
    and Blender write PNG by default); compressed meshes (Draco, meshopt) and other image formats are refused with a hint.
    colourSpace "linear" reads textures that hold linear values (trellis2mlx output); yaw turns the model about Y. */
 const fs = require('node:fs');
@@ -223,6 +225,78 @@ function refine(pos, index, limit, maxTriangles, attributes = []) {
   return { pos: Float32Array.from(P), index: Uint32Array.from(tris), attributes: A.map(data => Float32Array.from(data)), capped };
 }
 
+/* --- colours per vertex ----------------------------------------------------------------------------------------------- */
+
+/* the texture averaged over each triangle (a grid of samples, more for triangles that cover more texels), handed to its
+   corners by area: a vertex gets the mean of the surface around it instead of whatever texel it happens to sit on */
+function textureColours(part, fine, toLinear) {
+  const [uv, tint] = fine.attributes, lanes = part.colour0?.lanes, { pos, index } = fine, { image } = part;
+  const n = pos.length / 3, sum = new Float64Array(n * 3), weight = new Float64Array(n), texel = [0, 0, 0];
+  const uvOf = i => (part.transform ? part.transform.apply(uv[i * 2], uv[i * 2 + 1]) : [uv[i * 2], uv[i * 2 + 1]]);
+  for (let t = 0; t < index.length; t += 3) {
+    const [a, b, c] = [index[t], index[t + 1], index[t + 2]];
+    const e1 = [0, 1, 2].map(k => pos[b * 3 + k] - pos[a * 3 + k]), e2 = [0, 1, 2].map(k => pos[c * 3 + k] - pos[a * 3 + k]);
+    const area = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]) / 2;
+    if (!(area > 0)) continue;
+    const [ua, ub, uc] = [uvOf(a), uvOf(b), uvOf(c)];
+    const texels = (Math.abs((ub[0] - ua[0]) * (uc[1] - ua[1]) - (uc[0] - ua[0]) * (ub[1] - ua[1])) / 2) * image.w * image.h;
+    /* m x m samples spread evenly over the triangle, about one per four texels, at most 16 */
+    const m = Math.max(1, Math.min(4, Math.round(Math.sqrt(texels) / 2)));
+    const mean = [0, 0, 0];
+    let count = 0;
+    const at = (wb, wc) => {
+      const wa = 1 - wb - wc;
+      sample(image, wa * ua[0] + wb * ub[0] + wc * uc[0], wa * ua[1] + wb * ub[1] + wc * uc[1], part.wrapS, part.wrapT, texel, toLinear);
+      for (let k = 0; k < 3; k++) mean[k] += texel[k] * (tint ? wa * tint[a * lanes + k] + wb * tint[b * lanes + k] + wc * tint[c * lanes + k] : 1);
+      count++;
+    };
+    for (let i = 0; i < m; i++)
+      for (let j = 0; i + j < m; j++) {
+        at((i + 1 / 3) / m, (j + 1 / 3) / m);
+        if (i + j < m - 1) at((i + 2 / 3) / m, (j + 2 / 3) / m);
+      }
+    for (const v of [a, b, c]) {
+      for (let k = 0; k < 3; k++) sum[v * 3 + k] += (mean[k] / count) * area;
+      weight[v] += area;
+    }
+  }
+  const colours = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) colours[i * 3 + k] = weight[i] ? Math.min(1, (part.factor[k] * sum[i * 3 + k]) / weight[i]) : 0;
+  return { colours, weight };
+}
+
+/* each vertex colour becomes the mean of the colours within `radius` (half an art pixel), weighted by the surface each
+   vertex stands for and falling off with distance. Dense generated meshes carry texture detail far below a pixel, which
+   would otherwise come back as speckle; the two sides of a UV seam meet here too. */
+function smoothColours(pos, colours, weight, radius) {
+  const n = pos.length / 3, cell = radius, grid = new Map(), r2 = radius * radius;
+  const key = (x, y, z) => x + ',' + y + ',' + z;
+  for (let i = 0; i < n; i++) {
+    const k = key(Math.floor(pos[i * 3] / cell), Math.floor(pos[i * 3 + 1] / cell), Math.floor(pos[i * 3 + 2] / cell));
+    let list = grid.get(k);
+    if (!list) grid.set(k, (list = []));
+    list.push(i);
+  }
+  const out = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const [x, y, z] = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]], [cx, cy, cz] = [x, y, z].map(v => Math.floor(v / cell));
+    const sum = [0, 0, 0];
+    let total = 0;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++)
+          for (const j of grid.get(key(cx + dx, cy + dy, cz + dz)) ?? []) {
+            const d2 = (pos[j * 3] - x) ** 2 + (pos[j * 3 + 1] - y) ** 2 + (pos[j * 3 + 2] - z) ** 2;
+            if (d2 > r2) continue;
+            const w = (weight ? weight[j] || 1e-12 : 1) * (1 - d2 / r2) + (j === i ? 1e-12 : 0);
+            for (let k = 0; k < 3; k++) sum[k] += colours[j * 3 + k] * w;
+            total += w;
+          }
+    for (let k = 0; k < 3; k++) out[i * 3 + k] = total ? sum[k] / total : colours[i * 3 + k];
+  }
+  return out;
+}
+
 /* --- primitives to parts ----------------------------------------------------------------------------------------------- */
 
 const MODES = { 4: 'triangles', 5: 'strip', 6: 'fan' };
@@ -305,26 +379,20 @@ function partsOf(doc, { objectPixels = 84, colourSpace = 'srgb', yaw = 0 } = {})
     const b = partBounds(part.pos);
     for (let k = 0; k < 3; k++) (lo[k] = Math.min(lo[k], b.lo[k])), (hi[k] = Math.max(hi[k], b.hi[k]));
   }
-  /* vertices about 1.5 art pixels apart at most: finer only multiplies triangles, the bake samples between them anyway */
-  const pixel = (1.5 * Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])) / objectPixels;
+  /* vertices about 1.5 art pixels apart at most: finer only multiplies triangles, the bake samples between them anyway;
+     colours are averaged over half a pixel around each vertex */
+  const art = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / objectPixels, pixel = 1.5 * art;
   let budget = MAX_TRIANGLES;
   return {
     warnings,
     parts: raw.map(part => {
-      if (!part.image) return part;
+      if (!part.image) return part.colours ? { ...part, colours: smoothColours(part.pos, part.colours, null, art / 2) } : part;
       const before = part.index.length / 3;
       const fine = refine(part.pos, part.index, pixel, Math.max(before, budget), [part.uv, ...(part.colour0 ? [part.colour0] : [])]);
       budget = Math.max(0, budget - fine.index.length / 3);
       if (fine.capped) warnings.push(part.name + ': stopped splitting at ' + Math.round(fine.index.length / 3) + ' triangles; texture detail finer than that is averaged away');
-      const [uv, tint] = fine.attributes, lanes = part.colour0?.lanes;
-      const n = fine.pos.length / 3, colours = new Float32Array(n * 3), texel = [0, 0, 0];
-      for (let i = 0; i < n; i++) {
-        let [u, v] = [uv[i * 2], uv[i * 2 + 1]];
-        if (part.transform) [u, v] = part.transform.apply(u, v);
-        sample(part.image, u, v, part.wrapS, part.wrapT, texel, toLinear);
-        for (let k = 0; k < 3; k++) colours[i * 3 + k] = Math.min(1, part.factor[k] * texel[k] * (tint ? tint[i * lanes + k] : 1));
-      }
-      return { name: part.name, pos: fine.pos, index: fine.index, colours, role: null, split: fine.index.length / 3 - before };
+      const { colours, weight } = textureColours(part, fine, toLinear);
+      return { name: part.name, pos: fine.pos, index: fine.index, colours: smoothColours(fine.pos, colours, weight, art / 2), role: null, split: fine.index.length / 3 - before };
     })
   };
 }
@@ -332,9 +400,12 @@ function partsOf(doc, { objectPixels = 84, colourSpace = 'srgb', yaw = 0 } = {})
 async function buildModel(file, { objectPixels, colourSpace, yaw, ...options }) {
   const doc = documentOf(file);
   const { parts, warnings } = partsOf(doc, { objectPixels, colourSpace, yaw });
-  const split = parts.reduce((sum, part) => sum + (part.split ?? 0), 0);
-  const report = await require('./model-core.js').buildFromParts(parts, { ...options, prefix: 'glb', warnings });
-  return { ...report, glb: { generator: doc.gltf.asset?.generator, textured: parts.filter(part => part.split !== undefined).length, splitTriangles: split } };
+  const split = parts.reduce((sum, part) => sum + (part.split ?? 0), 0), textured = parts.filter(part => part.split !== undefined).length;
+  /* generated textures are mottled: with six families every blotch gets its own, three read cleaner (measured on TRELLIS.2
+     tanks: noise 0.29 at six, 0.20 at three) */
+  const hues = options.hues ?? (textured ? 3 : undefined);
+  const report = await require('./model-core.js').buildFromParts(parts, { ...options, hues, prefix: 'glb', warnings });
+  return { ...report, glb: { generator: doc.gltf.asset?.generator, textured, splitTriangles: split, hues: hues ?? 6 } };
 }
 
 module.exports = { buildModel, partsOf, documentOf, refine };

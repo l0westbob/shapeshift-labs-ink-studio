@@ -683,6 +683,7 @@ test('the glb engine keeps texture colours on finished meshes, splitting texture
   assert.ok(result.triangles > 2000, 'twelve triangles are split towards the pixel size: ' + result.triangles);
   assert.equal(result.parts[0].open, 0, 'both sides of every seam split alike, so the welded cube is closed');
   assert.deepEqual(result.roles, [], 'textured parts take colour families, not roles');
+  assert.equal(result.glb.hues, 3, 'textured models default to three colour families');
 
   const mesh = Scenes.studio().readMesh(path.join(result.directory, result.parts[0].file));
   let red = 0, blue = 0;
@@ -710,6 +711,7 @@ test('the glb engine: plain materials become roles, COLOR_0 becomes vertex colou
   const mesh = Scenes.studio().readMesh(path.join(tinted.directory, tinted.parts[0].file));
   assert.ok(mesh.vcol[1] > mesh.vcol[0] * 2, 'the vertex colour is kept (readMesh gives sRGB): ' + Array.from(mesh.vcol.slice(0, 3)));
   assert.equal(tinted.triangles, 12, 'untextured meshes are not split');
+  assert.equal(tinted.glb.hues, 6, 'untextured models keep the usual six families');
 
   const jpeg = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]), mime: 'image/jpeg' };
   assert.match(fails(await call({ source: glbOf(path.join(dir, 'jpeg.glb'), { texture: jpeg }), out: path.join(dir, 'jpeg'), preview: false }, {}), 'BUILD_FAILED').message, /only PNG textures/);
@@ -766,4 +768,16 @@ test('the glb engine reads linear textures when told (trellis2mlx output) and tu
   const turned = partBounds(partsOf(doc, { yaw: Math.PI / 2 }).parts[0].pos);
   assert.ok(turned.hi[2] - turned.lo[2] > 5.9 && turned.hi[0] - turned.lo[0] < 2.1, JSON.stringify(turned));
   fails(await call({ source, out: path.join(dir, 'bad'), colourSpace: 'gamma', preview: false }, {}), 'INVALID_INPUT');
+});
+
+test('the glb engine averages texture detail finer than an art pixel instead of point-sampling it', async t => {
+  const dir = tempDir(t), w = 512, rgb = new Uint8Array(w * w * 3);
+  /* a one-texel checkerboard: point samples land on black or white, the mean is mid grey */
+  for (let i = 0; i < w * w; i++) rgb.fill((i % w) % 2 ^ Math.floor(i / w) % 2 ? 255 : 0, i * 3, i * 3 + 3);
+  const result = ok(await call({ source: glbOf(path.join(dir, 'checker.glb'), { texture: { w, h: w, rgb } }), out: path.join(dir, 'checker'), preview: false }, {}));
+  const mesh = Scenes.studio().readMesh(path.join(result.directory, result.parts[0].file));
+  let extreme = 0;
+  for (let i = 0; i < mesh.vcol.length; i += 3) if (mesh.vcol[i] < 0.5 || mesh.vcol[i] > 0.9) extreme++;
+  /* linear mean 0.5 shows as about 0.735 in sRGB */
+  assert.ok(extreme / (mesh.vcol.length / 3) < 0.02, Math.round((100 * extreme) / (mesh.vcol.length / 3)) + '% of vertices kept a black or white texel');
 });

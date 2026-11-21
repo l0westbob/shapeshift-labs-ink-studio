@@ -239,10 +239,13 @@ continues as a voxel model. [examples/stack/](../examples/stack/) stacks the vox
 transforms of the default scene. Every triangle primitive becomes a part:
 
 - **Textured or vertex-coloured**: the colour at each vertex (base colour factor × base colour texture × `COLOR_0`) goes
-  in as a vertex colour, and the automatic mesh look clusters those colours into `hues` families. A vertex can only
+  in as a vertex colour, and the automatic mesh look clusters those colours into `hues` families (3 for textured
+  models unless given: generated textures are mottled, and with six families every blotch gets its own). A vertex can only
   carry what the texture shows at that vertex, so textured triangles are split first until no edge is longer than about
   1.5 art pixels of the finished sprite (from `art`). A twelve-triangle crate keeps its painted planks; a dense
-  generated mesh is left almost as it is. Splitting stops at 2 million triangles, with a warning.
+  generated mesh is left almost as it is. Splitting stops at 2 million triangles, with a warning. Each vertex then takes
+  the texture averaged over its triangles and over half an art pixel around it, so a 4K map on a dense mesh does not
+  come back as speckle.
 - **Plain material**: one palette role, named after the material, as with the other mesh engines.
 
 `colourSpace` says how textures store colour: glTF says sRGB (the default), but trellis2mlx writes TRELLIS.2's linear
@@ -265,7 +268,11 @@ ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/s
 
 [examples/glb/tank-trellis.glb](../examples/glb/tank-trellis.glb) is a trellis2mlx preview (512, 8 steps, 68 s on an M5
 Ultra, 18 GB peak) made from [a render of the three.js tank](../examples/glb/tank-trellis-input.png); it is the TRELLIS.2
-entry in the method comparison (`colourSpace: "linear"`, `yaw: -1.5708`).
+entry in the method comparison (`colourSpace: "linear"`, `yaw: -1.5708`). For pixel art at the default `art` of 128, the 512 preview is enough: a
+768 cascade with 4K maps (about 2 minutes, 33 to 41 GB peak) gives finer geometry that the sprite cannot show, and its
+paler colours drift towards khaki. At `art` 256 the detail run pays off: noise 0.144 against 0.185 for the preview,
+close to the hand-written three.js tank's 0.135. TRELLIS.2 does not face its output the same way every time, so check
+`yaw` per model.
 
 ## Depth maps (layered depth)
 
