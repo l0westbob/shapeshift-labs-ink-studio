@@ -271,3 +271,56 @@ test('model_build paints with strokes, dabs and scatters; one blend group per co
   const error = fails(await call({ source, out: path.join(dir, 'bush'), overwrite: true, preview: false }, {}), 'BUILD_FAILED');
   assert.match(error.message, /No colour called "bark"/);
 });
+
+const hasOpenscad = (() => {
+  try {
+    execFileSync(require('../cli/openscad-model.js').openscadBinary(), ['--version'], { stdio: 'ignore', timeout: 60000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test('model_build renders OpenSCAD parts named in PARTS, or the whole file as one part', { skip: hasOpenscad ? false : 'OpenSCAD is not installed', timeout: 240000 }, async t => {
+  const dir = tempDir(t), script = path.join(dir, 'post.scad'), out = path.join(dir, 'post');
+  fs.writeFileSync(script, `PARTS = [["base", "#3f4a22", "paint"], ["pole", "#777b72"]];
+module part(name) {
+  if (name == "base") translate([0, 0, 0.1]) cube([1, 1, 0.2], center = true);
+  if (name == "pole") translate([0, 0, 0.2]) cylinder(r = 0.1, h = 2, $fn = 16);
+}
+if (is_undef(INK)) for (p = PARTS) color(p[1]) part(p[0]);
+`);
+  const result = ok(await call({ source: script, out, preview: false }));
+  assert.equal(result.engine, 'openscad');
+  assert.deepEqual(result.parts.map(p => [p.name, p.role]), [['base', 'paint'], ['pole', 'paint-777b72']]);
+  assert.ok(result.parts.every(p => p.open === 0));
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.ok(Math.abs(spec.solids[1].size - 2) < 0.01 && Math.abs(spec.solids[1].at[1] - 0.2) < 0.01, 'the pole stands on the base, Z up to Y up');
+
+  fs.writeFileSync(script, 'difference() { cube(2, center = true); sphere(1.3, $fn = 24); }\n');
+  const single = ok(await call({ source: script, out, overwrite: true, preview: false }));
+  assert.deepEqual(single.parts.map(p => p.name), ['post']);
+
+  fs.writeFileSync(script, 'cube(1);\nfoo(;\n');
+  const error = fails(await call({ source: script, out, overwrite: true, preview: false }), 'BUILD_FAILED');
+  assert.match(error.message + ' ' + (error.hint ?? ''), /line 2/);
+});
+
+test('model_build meshes signed distance functions written as code', async t => {
+  const dir = tempDir(t), script = path.join(dir, 'blob.sdf.mjs'), out = path.join(dir, 'blob');
+  fs.writeFileSync(script, `export default ({ sdf }) => ({ parts: [
+  { name: 'body', colour: '#5b6b2e', role: 'olive', field: sdf.smoothUnion(0.2, sdf.sphere(0.6), sdf.move(sdf.box([0.4, 0.2, 0.4]), [0, 0.6, 0])), bounds: [[-1, -1, -1], [1, 1.2, 1]] },
+  { name: 'ring', colour: '#777b72', field: sdf.move(sdf.torus(0.7, 0.08), [0, 0.1, 0]), bounds: [[-1, -0.2, -1], [1, 0.4, 1]] }
+] });
+`);
+  const result = ok(await call({ source: script, out, cells: 48, preview: false }));
+  assert.equal(result.engine, 'sdf');
+  assert.deepEqual(result.parts.map(p => [p.name, p.role]), [['body', 'olive'], ['ring', 'paint-777b72']]);
+  assert.ok(result.parts.every(p => p.open < 0.02), 'meshed fields are closed');
+  assert.equal((await validate(result.scene)).valid, true);
+
+  fs.writeFileSync(script, 'export default ({ sdf }) => ({ parts: [{ name: "x", field: sdf.sphere(1) }] });\n');
+  fs.utimesSync(script, new Date(), new Date(Date.now() + 2000));
+  const error = fails(await call({ source: script, out, overwrite: true, preview: false }), 'BUILD_FAILED');
+  assert.match(error.message, /needs bounds/);
+});

@@ -14,6 +14,8 @@ voxel model     ─┘
 | `three` | `.mjs`, `.js`, `.cjs` exporting `({ THREE, addon }) => Object3D` | Quick low-poly hard surfaces. See [three-modeling.md](three-modeling.md). | yes |
 | `cadquery` | `.py` defining `build()`, `result` or `show_object()` | Precise parts: fillets, chamfers, lofts, sweeps, cut details. | yes |
 | `blender` | `.blender.py` building objects with `bpy` | Bevelled hard surfaces and smooth organic forms: modifiers (bevel, subdivision, mirror, array, boolean) are applied. | yes |
+| `openscad` | `.scad`, parts named in `PARTS` and drawn by `module part(name)` | CSG with robust booleans (Manifold); a huge body of examples. | yes |
+| `sdf` | `.sdf.mjs` returning distance functions built from `library/sdf.mjs` | Smooth blends, repeats, twists and noise in the Shadertoy style. | yes |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
@@ -87,6 +89,42 @@ application. It builds objects with `bpy` (or defines `build()`, which is then c
 - Blender is Z up; the model is turned so Z becomes Y. The first sun lamp becomes the diorama's sun.
 - [examples/blender/tank.blender.py](../examples/blender/tank.blender.py) uses bevels, an array and a mirror modifier and
   a bmesh prism for the tracks.
+
+## OpenSCAD
+
+```openscad
+PARTS = [["hull", "#5b6b2e", "olive"], ["tracks", "#2b2b2b", "track"]];   // name, colour, optional role
+module part(name) {
+  if (name == "hull") hull_shape();
+  if (name == "tracks") for (s = [1, -1]) track(s);
+}
+if (is_undef(INK)) for (p = PARTS) color(p[1]) part(p[0]);              // what the OpenSCAD window shows
+```
+
+- Each part is rendered on its own to binary STL. `INK` is defined while rendering, so the preview line stays out of the
+  parts. A file without `PARTS` is one grey part.
+- OpenSCAD is found as `$INK_OPENSCAD`, `openscad` on the PATH or the macOS application. Recent development snapshots
+  use the Manifold backend, which is many times faster on booleans than the 2021 release.
+- Z up becomes Y up. Errors come back with the file and line in `hint`.
+- [examples/openscad/tank.scad](../examples/openscad/tank.scad) uses `hull()` and `minkowski()` for soft edges.
+
+## Distance functions as code
+
+```js
+export default ({ sdf }) => ({
+  parts: [{ name: 'body', colour: '#5b6b2e', role: 'olive',
+            field: sdf.smoothUnion(0.2, sdf.sphere(0.6), sdf.move(sdf.box([0.4, 0.2, 0.4]), [0, 0.6, 0])),
+            bounds: [[-1, -1, -1], [1, 1.2, 1]] }] });
+```
+
+- `field` is a function of a point `[x, y, z]` (Y up), negative inside. `bounds` must hold the whole part, or the mesh is
+  cut open at the box. `cells` (default 96) sets the meshing resolution along the longest side of all parts.
+- [library/sdf.mjs](../library/sdf.mjs) has primitives (`sphere`, `box`, `roundBox`, `cylinder`, `capsule`, `torus`,
+  `roundCone`, `ellipsoid`, `halfSpace`), combinations (`union`, `intersect`, `subtract` and their smooth forms, `round`,
+  `shell`, `displace`), placement (`move`, `rotateX/Y/Z`, `scale`, `mirror`, `repeat`, `elongate`, `twist`, `bend`) and
+  `noise`/`fbm`.
+- Each field is meshed with the kit's implicit surface mesher and continues as a mesh part.
+- [examples/sdf-code/tank.sdf.mjs](../examples/sdf-code/tank.sdf.mjs) builds a tank from 30 lines of functions.
 
 ## Voxels
 
