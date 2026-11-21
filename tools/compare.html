@@ -4,29 +4,40 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Model method comparison</title>
-<!-- Made by scripts/compare-models.js. Serve the repository with `npm run serve`, then open
+<!-- Made by scripts/compare-models.js (or model_rank). Serve the repository with `npm run serve`, then open
      http://127.0.0.1:8765/tools/compare.html?manifest=/studio/out/compare-models/manifest.json -->
 <style>
-  :root { --bg: #14151a; --card: #1c1e24; --line: #2c2f38; --text: #e4e4e7; --muted: #9a9ca6; --accent: #9fd0ff; }
+  :root { --bg: #14151a; --card: #1c1e24; --line: #2c2f38; --text: #e4e4e7; --muted: #9a9ca6; --accent: #9fd0ff; --good: #8fd18f; --bad: #e8a08a; }
+  * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
   header { padding: 16px 16px 4px; }
   h1 { font-size: 18px; margin: 0 0 4px; }
-  h2 { font-size: 15px; margin: 22px 16px 8px; }
-  p.lead { margin: 0 16px; color: var(--muted); max-width: 900px; }
-  .tools { display: flex; gap: 16px; align-items: center; padding: 8px 16px; color: var(--muted); flex-wrap: wrap; }
-  .grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(260px, 1fr); gap: 12px; padding: 0 16px 8px; overflow-x: auto; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .card h3 { font-size: 14px; margin: 0; padding: 10px 12px 2px; }
-  .card .by { font-size: 12px; color: var(--muted); padding: 0 12px 6px; }
+  h2 { font-size: 15px; margin: 24px 16px 8px; }
+  p.lead { margin: 0 16px; color: var(--muted); max-width: 980px; }
+  .tools { display: flex; gap: 16px; align-items: center; padding: 8px 16px; color: var(--muted); flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 2; border-bottom: 1px solid var(--line); }
+  .rows { display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }
+  .row { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(260px, 2fr) minmax(240px, 2fr) minmax(200px, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .row > div { border-left: 1px solid var(--line); min-width: 0; }
+  .row > div:first-child { border-left: 0; padding: 10px 12px; }
+  .row h3 { font-size: 14px; margin: 0 0 2px; }
+  .by { font-size: 12px; color: var(--muted); }
+  .src { font-size: 11px; color: var(--accent); word-break: break-all; margin-top: 4px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .cap { font-size: 11px; color: var(--muted); padding: 4px 8px; }
+  .glb { background: #0b0d10; }
   .view { width: 100%; aspect-ratio: 4 / 3; display: block; background: #0b0d10; }
-  .baked { width: 100%; aspect-ratio: 1; display: block; image-rendering: pixelated; background: #0b0d10; object-fit: contain; }
-  .turn { width: 100%; display: block; image-rendering: pixelated; background: #0b0d10; }
+  .bakedbox { display: flex; flex-direction: column; background: #0b0d10; height: 100%; }
+  .baked { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; image-rendering: pixelated; display: block; }
+  .turn { width: 100%; display: block; image-rendering: pixelated; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  td { padding: 3px 12px; border-top: 1px solid var(--line); }
-  td:first-child { color: var(--muted); width: 45%; }
-  .note { font-size: 12px; color: var(--muted); padding: 6px 12px 10px; }
+  td { padding: 3px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--muted); width: 50%; }
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
   .error { padding: 16px; color: #ffb4a8; }
   code { color: var(--accent); }
+  @media (max-width: 900px) { .row { grid-template-columns: 1fr 1fr; } .row > div:nth-child(3) { border-left: 0; } }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } .row > div { border-left: 0; border-top: 1px solid var(--line); } }
 </style>
 <script type="importmap">
 { "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
@@ -34,19 +45,16 @@
 </head>
 <body>
 <header><h1>Modelling methods compared</h1></header>
-<p class="lead">Each method builds its own model and hands an extracted model (<code>model.glb</code>) to the same pipeline. Top: those extracted models, all in the same viewer, light and camera (drag to turn all of them together). Bottom: what ink-studio baked from them; that result also depends on how good each input was.</p>
+<p class="lead">One row per method. Second column: the extracted model (<code>model.glb</code>), the hand-off every method shares, all in the same viewer, light and size; drag any of them to turn them all. Third column: what ink-studio baked from it, at 128 × 128 and from four sides. The baked result depends on how good each input was, so judge the second column first.</p>
 <div class="tools">
   <label><input type="checkbox" id="wire"> wireframe</label>
   <label><input type="checkbox" id="flat" checked> flat shading</label>
   <span id="when"></span>
 </div>
-<h2>1 · Extracted model (GLB): the same hand-off for every method</h2>
-<div class="grid" id="raw"></div>
-<h2>2 · Baked by ink-studio (128 × 128): depends on the input above</h2>
-<div class="grid" id="baked"></div>
+<div id="groups"></div>
 <script>
   if (location.protocol === 'file:')
-    document.getElementById('raw').innerHTML = '<p class="error">This page has to be served, not opened as a file. Run <code>npm run serve</code> in the repository and open <code>http://127.0.0.1:8765/tools/compare.html</code>.</p>';
+    document.getElementById('groups').innerHTML = '<p class="error">This page has to be served, not opened as a file. Run <code>npm run serve</code> in the repository and open <code>http://127.0.0.1:8765/tools/compare.html</code>.</p>';
 </script>
 <script type="module">
 if (location.protocol === 'file:') throw new Error('serve this page: npm run serve');
@@ -59,30 +67,54 @@ let manifest;
 try {
   manifest = await (await fetch(manifestUrl, { cache: 'no-store' })).json();
 } catch {
-  document.getElementById('raw').innerHTML = `<p class="error">No manifest at <code>${manifestUrl}</code>. Run <code>node scripts/compare-models.js</code> first.</p>`;
+  document.getElementById('groups').innerHTML = `<p class="error">No manifest at <code>${manifestUrl}</code>. Run <code>node scripts/compare-models.js</code> first.</p>`;
   throw new Error('no manifest');
 }
 document.getElementById('when').textContent = 'built ' + new Date(manifest.created).toLocaleString();
+const bust = '?v=' + Date.parse(manifest.created);
 
-const rows = (pairs) => '<table>' + pairs.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+const rows = pairs => '<table>' + pairs.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+const grade = (value, reference) => (typeof value === 'number' && reference ? `<span class="${value <= reference * 1.25 ? 'good' : 'bad'}">${value}</span>` : value);
 const views = [];
 let syncing = false;
 const loader = new GLTFLoader();
 
+const groups = new Map();
 for (const entry of manifest.entries) {
-  const card = document.createElement('div');
-  card.className = 'card';
-  card.innerHTML = `<h3>${entry.label}</h3><div class="by">${entry.author ?? ''} · <code>${entry.source}</code></div>`;
+  const name = entry.group ?? 'Models';
+  if (!groups.has(name)) groups.set(name, []);
+  groups.get(name).push(entry);
+}
+for (const [name, entries] of groups) {
+  const heading = document.createElement('h2');
+  heading.textContent = name + ' (' + entries.length + ')';
+  const list = document.createElement('div');
+  list.className = 'rows';
+  document.getElementById('groups').append(heading, list);
+  for (const entry of entries) list.append(makeRow(entry));
+}
+
+function makeRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const x = entry.extract ?? {}, b = entry.bake ?? {};
+  row.innerHTML = `<div><h3>${entry.label}</h3><div class="by">${entry.author ?? ''}</div><div class="src">${entry.source ?? ''}</div>${x.note ? `<div class="note">${x.note}</div>` : ''}</div>
+    <div class="glb"></div>
+    <div><div class="bakedbox"><img class="baked" src="${entry.baked}${bust}" alt=""><img class="turn" src="${entry.turn}${bust}" alt=""></div></div>
+    <div>${rows([
+      ['triangles in GLB', x.triangles?.toLocaleString()], ['parts', x.parts], ['blocks', x.blocks?.toLocaleString()], ['build time', x.buildSeconds !== undefined ? x.buildSeconds + ' s' : undefined],
+      ['noise (ref ' + (b.reference?.noise ?? '') + ')', grade(b.noise, b.reference?.noise)], ['orphans (ref ' + (b.reference?.orphans ?? '') + ')', grade(b.orphans, b.reference?.orphans)],
+      ['tones', b.tones], ['colours used', b.colours], ['splats', b.splats?.toLocaleString()],
+      ['roles', x.roles?.join(', ')], ['warnings', x.warnings?.join('; ')]
+    ])}</div>`;
+  const cell = row.querySelector('.glb');
+  if (!entry.glb) {
+    cell.innerHTML = '<p class="cap">no model.glb</p>';
+    return row;
+  }
   const canvas = document.createElement('canvas');
   canvas.className = 'view';
-  card.append(canvas);
-  const x = entry.extract;
-  card.insertAdjacentHTML('beforeend', rows([
-    ['triangles', x.triangles?.toLocaleString()], ['parts', x.parts], ['blocks', x.blocks?.toLocaleString()],
-    ['roles', x.roles?.join(', ')], ['build time', x.buildSeconds + ' s'], ['warnings', x.warnings?.length ? x.warnings.join('; ') : undefined]
-  ]) + (x.note ? `<div class="note">${x.note}</div>` : ''));
-  document.getElementById('raw').append(card);
-
+  cell.append(canvas);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(2, devicePixelRatio));
   renderer.setClearColor(0x0b0d10);
@@ -93,23 +125,27 @@ for (const entry of manifest.entries) {
   scene.add(sun);
   const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.01, 500);
   const controls = new OrbitControls(camera, canvas);
-  const view = { renderer, scene, camera, controls, canvas, meshes: [], originals: new Map() };
+  const view = { renderer, scene, camera, controls, canvas, meshes: [], originals: new Map(), radius: 6, visible: false };
   views.push(view);
   controls.addEventListener('change', () => {
     if (syncing) return;
     syncing = true;
-    for (const other of views) if (other !== view) {
-      /* same angle and relative distance, each around its own model */
+    for (const other of views) if (other !== view && other.ready) {
+      /* the same angle and relative distance, each around its own model */
       const offset = camera.position.clone().sub(controls.target).divideScalar(view.radius);
       other.camera.position.copy(other.controls.target).add(offset.multiplyScalar(other.radius));
       other.controls.update();
-      draw(other);
+      if (other.visible) draw(other);
     }
     syncing = false;
     draw(view);
   });
-
-  loader.load(entry.glb, gltf => {
+  /* only draw what is on screen; there can be many viewers */
+  new IntersectionObserver(([e]) => {
+    view.visible = e.isIntersecting;
+    if (view.visible && view.ready) draw(view);
+  }).observe(canvas);
+  loader.load(entry.glb + bust, gltf => {
     const model = gltf.scene;
     model.traverse(node => {
       if (!node.isMesh) return;
@@ -124,22 +160,13 @@ for (const entry of manifest.entries) {
     const centre = box.getCenter(new THREE.Vector3()).multiplyScalar(k);
     model.position.set(-centre.x, -box.min.y * k, -centre.z);
     scene.add(model);
-    view.radius = 6;
-    controls.target.set(0, size.y * k / 2, 0);
-    camera.position.set(6.6, 4.2, 6.6).sub(new THREE.Vector3(0, 0, 0)).normalize().multiplyScalar(view.radius * 1.55).add(controls.target);
+    controls.target.set(0, (size.y * k) / 2, 0);
+    camera.position.set(6.6, 4.2, 6.6).normalize().multiplyScalar(view.radius * 1.55).add(controls.target);
     controls.update();
+    view.ready = true;
     applyLook(view);
-  }, undefined, () => card.insertAdjacentHTML('beforeend', `<p class="error">Could not load ${entry.glb}</p>`));
-
-  const bakedCard = document.createElement('div');
-  bakedCard.className = 'card';
-  const b = entry.bake;
-  bakedCard.innerHTML = `<h3>${entry.label}</h3><div class="by">baked from the model above</div>
-    <img class="baked" src="${entry.baked}?v=${Date.parse(manifest.created)}" alt="">
-    <img class="turn" src="${entry.turn}?v=${Date.parse(manifest.created)}" alt="">` +
-    rows([['noise (reference ' + b.reference.noise + ')', b.noise], ['orphan pixels (reference ' + b.reference.orphans + ')', b.orphans],
-      ['tones', b.tones], ['colours used', b.colours], ['splats', b.splats?.toLocaleString()]]);
-  document.getElementById('baked').append(bakedCard);
+  }, undefined, () => (cell.innerHTML = `<p class="error">Could not load ${entry.glb}</p>`));
+  return row;
 }
 
 function applyLook(view) {
@@ -150,18 +177,19 @@ function applyLook(view) {
     if (!wire) mesh.material.flatShading = flat;
     mesh.material.needsUpdate = true;
   }
-  draw(view);
+  if (view.visible) draw(view);
 }
 function draw(view) {
   const { canvas, renderer, camera, scene } = view;
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
   if (canvas.width !== Math.round(w * renderer.getPixelRatio())) renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.render(scene, camera);
 }
-for (const id of ['wire', 'flat']) document.getElementById(id).addEventListener('change', () => views.forEach(applyLook));
-addEventListener('resize', () => views.forEach(draw));
+for (const id of ['wire', 'flat']) document.getElementById(id).addEventListener('change', () => views.forEach(v => v.ready && applyLook(v)));
+addEventListener('resize', () => views.forEach(v => v.visible && draw(v)));
 document.body.dataset.done = '1';
 </script>
 </body>

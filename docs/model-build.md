@@ -396,8 +396,11 @@ per engine in parallel, then the ranking, then `scene_fit` and look tuning on th
 
 ## Comparing methods
 
-`node scripts/compare-models.js` builds the same model with every method (by default the tanks in `examples/`) and
-writes `studio/out/compare-models/manifest.json`. `npm run serve` and
-`http://127.0.0.1:8765/tools/compare.html` then show, per method, the extracted `model.glb` in one viewer (drag to turn
-them all together) and below it the baked result with its numbers. A diorama of SDF solids has no extracted model, so the
-script meshes it with `scene_export` for the top row; its baking still uses the distance field.
+`node scripts/compare-models.js` builds a model with every method from the examples (thirteen tanks, plus a painted tree,
+an L-system tree and a split-grammar house for the methods made for other subjects) and writes
+`studio/out/compare-models/manifest.json`. `npm run serve` and `http://127.0.0.1:8765/tools/compare.html` then show one
+row per method: what it is and who wrote it, the extracted `model.glb` in one shared viewer (drag any to turn them all),
+the baked result from four sides, and the numbers for both. Methods that hand off no mesh (SDF dioramas, compositions,
+paintings, L-systems) are meshed with `scene_export` for the viewer; their baking uses the scene itself. A config file
+(`node scripts/compare-models.js my-methods.json out-dir`) compares your own sources; `model_rank` writes the same kind of
+manifest for candidates of one brief.
