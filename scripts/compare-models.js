@@ -31,10 +31,13 @@ const DEFAULT = [
   { method: 'carve', label: 'Carved from drawn views', author: 'written in the session', source: 'examples/carve/tank.views.json', group: TANK },
   { method: 'stack', label: 'Sprite stacking', author: 'slices of the voxel tank', source: 'examples/stack/tank.stack.json', group: TANK },
   { method: 'splat', label: 'Capture (point cloud)', author: 'stand-in sampled from the CadQuery tank', source: 'examples/splat/tank.splat.json', group: TANK },
+  { method: 'depth', label: 'Depth maps (front and back)', author: 'drawn from the voxel tank', source: 'examples/depth/tank.depth.json', group: TANK },
   { method: 'compose', label: 'Composition', author: 'CadQuery hull, voxel star, SDF sandbags', source: 'examples/compose/tank.compose.json', group: TANK },
   { method: 'paint', label: 'Painting with splats', author: 'written in the session', source: 'examples/paint/tree.paint.json', group: OTHER },
   { method: 'grammar', label: 'L-system', author: 'written in the session', source: 'examples/grammar/tree.grammar.json', group: OTHER, out: 'lsystem' },
-  { method: 'grammar', label: 'Split grammar', author: 'written in the session', source: 'examples/grammar/house.grammar.json', group: OTHER, out: 'split' }
+  { method: 'grammar', label: 'Split grammar', author: 'written in the session', source: 'examples/grammar/house.grammar.json', group: OTHER, out: 'split' },
+  { method: 'terrain', label: 'Height-map terrain', author: 'written in the session', source: 'examples/terrain/island.terrain.json', group: OTHER },
+  { method: 'level', label: '2.5D level (tiles and sectors)', author: 'written in the session', source: 'examples/level/dungeon.level.json', group: OTHER }
 ];
 
 const ctx = { root: ROOT, allowCode: true };

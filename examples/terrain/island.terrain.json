@@ -1,0 +1,9 @@
+{ "height": { "noise": { "seed": 7, "size": [56, 56], "scale": 0.075, "octaves": 5, "island": 0.9 } },
+  "levels": 14, "cell": 0.1, "water": 0.22,
+  "bands": [ { "below": 0.3, "colour": "#d8c890", "role": "sand" },
+             { "below": 0.62, "colour": "#5f8f3a", "role": "grass" },
+             { "below": 0.82, "colour": "#3f6a2a", "role": "forest" },
+             { "below": 1.01, "colour": "#e8ecef", "role": "snow" } ],
+  "slope": { "above": 2, "colour": "#7a7470", "role": "rock" },
+  "soil": { "colour": "#6a4a30", "role": "soil" },
+  "waterColour": { "colour": "#3a6a9a", "role": "water" } }

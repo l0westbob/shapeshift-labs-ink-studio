@@ -456,3 +456,68 @@ test('captures: 3DGS and point-cloud PLY files become voxel models with filled i
   const slab = ok(await call({ source: path.join(dir, 'slab.splat.json'), out: path.join(dir, 'slab'), preview: false }, {}));
   assert.deepEqual(slab.roles.sort(), ['bottom', 'top']);
 });
+
+test('depth maps: a drawn sprite with depth becomes columns, closed by a mirrored, flat or drawn back', async t => {
+  const dir = tempDir(t), png = require('../cli/png.js');
+  /* a 3 x 2 sprite: the middle column stands out fully, the others half; one pixel empty */
+  const rgb = new Uint8Array(3 * 2 * 3).fill(0), alpha = new Uint8Array(6).fill(255), depth = new Uint8Array(6 * 3);
+  for (let i = 0; i < 6; i++) rgb.set([0x5b, 0x6b, 0x2e], i * 3);
+  const set = (i, v) => depth.set([v, v, v], i * 3);
+  [0, 2, 3, 5].forEach(i => set(i, 128));
+  [1, 4].forEach(i => set(i, 255));
+  alpha[3] = 0;
+  png.write(path.join(dir, 'front.png'), 3, 2, rgb, alpha);
+  png.write(path.join(dir, 'depth.png'), 3, 2, depth, new Uint8Array(6).fill(255));
+  const build = async back => {
+    fs.writeFileSync(path.join(dir, 'b.depth.json'), JSON.stringify({ image: 'front.png', depth: 'depth.png', layers: 4, back }));
+    return ok(await call({ source: path.join(dir, 'b.depth.json'), out: path.join(dir, 'out-' + back), preview: false }, {}));
+  };
+  const flat = await build('flat');
+  assert.equal(flat.engine, 'depth');
+  assert.equal(flat.blocks, 3 * 3 + 2 * 5, 'three half columns of 0..2 (one pixel is empty) and two full ones of 0..4');
+  const mirror = await build('mirror');
+  assert.equal(mirror.blocks, 3 * 5 + 2 * 9, 'mirrored columns reach as far behind as in front');
+});
+
+test('terrain: heights in coloured bands, rock on steep slopes, water up to its level', async t => {
+  const dir = tempDir(t), png = require('../cli/png.js');
+  /* a 4 x 1 ramp: 0, 1/3, 2/3, 1 */
+  const grey = [0, 85, 170, 255], rgb = new Uint8Array(12);
+  grey.forEach((g, i) => rgb.set([g, g, g], i * 3));
+  png.write(path.join(dir, 'ramp.png'), 4, 1, rgb, new Uint8Array(4).fill(255));
+  fs.writeFileSync(path.join(dir, 'ramp.terrain.json'), JSON.stringify({
+    height: 'ramp.png', levels: 6, water: 0.4,
+    bands: [{ below: 0.5, colour: '#d8c890', role: 'sand' }, { below: 1.01, colour: '#5f8f3a', role: 'grass' }],
+    slope: { above: 1, colour: '#7a7470', role: 'rock' }
+  }));
+  const result = ok(await call({ source: path.join(dir, 'ramp.terrain.json'), out: path.join(dir, 'ramp'), preview: false }, {}));
+  assert.equal(result.engine, 'terrain');
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8')), vox = spec.solids[0];
+  const letter = role => Object.entries(vox.key).find(([, m]) => (m.role ?? m) === role)?.[0];
+  const column = x => vox.layers.map(l => l.split('/')[0][x]).join('');
+  assert.equal(column(0)[0], letter('sand'));
+  assert.equal(column(0).slice(1, 3), letter('water').repeat(2), 'water fills the low column up to its level');
+  assert.equal(column(3)[6], letter('rock'), 'the top of the steep end is rock');
+  assert.equal(spec.camera.pitch, 0.6);
+});
+
+test('levels: tile maps and sectors become floors, walls, doors and pools', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'room.level.json'), JSON.stringify({
+    tile: 1, block: 0.5, wall: 2,
+    tiles: { '#': { wall: true, colour: '#7a6a58', role: 'stone' }, '.': { floor: 0, colour: '#5a4a3a', role: 'floor' },
+      '+': { door: 1, colour: '#7a6a58', floorColour: '#5a4a3a' }, '~': { floor: -0.5, liquid: 0, colour: '#4a3a2a', liquidColour: '#3a6a9a', liquidRole: 'water' } },
+    map: ['###', '#~+', '###'],
+    sectors: [{ points: [[3, 0], [5, 0], [5, 3], [3, 3]], floor: 0.5, colour: '#6a7a4a', role: 'yard' }]
+  }));
+  const result = ok(await call({ source: path.join(dir, 'room.level.json'), out: path.join(dir, 'room'), preview: false }, {}));
+  assert.equal(result.engine, 'level');
+  /* the door's floor has the floor colour but no role of its own, and no '.' tile is on this map to lend one */
+  assert.deepEqual([...result.roles].sort(), ['paint-4a3a2a', 'paint-5a4a3a', 'stone', 'water', 'yard'].sort());
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.equal(spec.camera.pitch, 1);
+  assert.equal((await validate(result.scene)).valid, true);
+  fs.writeFileSync(path.join(dir, 'room.level.json'), JSON.stringify({ tiles: {}, map: ['#'] }));
+  const error = fails(await call({ source: path.join(dir, 'room.level.json'), out: path.join(dir, 'room'), overwrite: true, preview: false }, {}), 'BUILD_FAILED');
+  assert.match(error.message, /"#" is not in tiles/);
+});

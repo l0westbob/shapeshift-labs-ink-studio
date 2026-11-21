@@ -1,0 +1,21 @@
+{ "tile": 1, "block": 0.25, "wall": 2.5,
+  "tiles": {
+    "#": { "wall": true, "colour": "#7a6a58", "role": "stone" },
+    ".": { "floor": 0, "colour": "#5a4a3a", "role": "floor" },
+    "=": { "floor": 0.75, "colour": "#8a7a68", "role": "dais" },
+    "s": { "floor": 0.25, "colour": "#8a7a68" },
+    "t": { "floor": 0.5, "colour": "#8a7a68" },
+    "+": { "door": 1.75, "colour": "#7a6a58", "floorColour": "#5a4a3a" },
+    "~": { "floor": -0.5, "liquid": -0.1, "colour": "#4a3a2a", "role": "pool-floor", "liquidColour": "#3a6a9a", "liquidRole": "water" },
+    "c": { "floor": 1.25, "colour": "#b08a3a", "role": "gold" }
+  },
+  "map": [
+    "###########",
+    "#....#....#",
+    "#.~~.#.st=#",
+    "#.~~.+..=c#",
+    "#....#.st=#",
+    "##+###....#",
+    "#.........#",
+    "###########" ],
+  "sectors": [ { "points": [[11, 1], [16, 1], [16, 7], [11, 7]], "floor": 0, "colour": "#6a7a4a", "role": "courtyard", "walls": 1, "wallColour": "#9a8a78", "wallRole": "low-wall" } ] }

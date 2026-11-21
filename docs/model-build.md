@@ -21,6 +21,9 @@ voxel model     ─┘
 | `grammar` | `.grammar.json`: an L-system or a split grammar | Rules instead of pieces: plants and branching things; buildings, shelves, fences. | no |
 | `stack` | `.stack.json` naming PNG slices | Sprite stacking: draw horizontal slices in a pixel editor, keep every colour exact. | no |
 | `splat` | `.ply` (Gaussian splats or a coloured point cloud), or `.splat.json` with settings | Real objects from photogrammetry or a splat trainer, turned into pixel art. | no |
+| `depth` | `.depth.json`: a drawn sprite plus a grey depth map, mirrored, flat or with a drawn back | Pixel first with relief: one picture says what it looks like, one how far each pixel stands out. | no |
+| `terrain` | `.terrain.json`: a height picture or noise, colour bands, slope rock, water | Landscape tiles, islands, hills. | no |
+| `level` | `.level.json`: a tile map and sectors with floor heights | Dungeons, interiors, town plans, in the manner of Wolfenstein's grids and Doom's sectors. | no |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
@@ -225,6 +228,55 @@ continues as a voxel model. [examples/stack/](../examples/stack/) stacks the vox
 - Captures come from your own photos (for example with OpenSplat, which runs on Apple GPUs) or any 3DGS trainer.
   [examples/splat/tank.ply](../examples/splat/tank.ply) is a stand-in: 28,000 points sampled from the CadQuery tank.
 
+## Depth maps (layered depth)
+
+```json
+{ "image": "tank-front.png", "depth": "tank-front-depth.png", "layers": 12, "cell": 0.125,
+  "back": { "image": "tank-back.png", "depth": "tank-back-depth.png" },
+  "roles": { "#5b6b2e": "olive" } }
+```
+
+Every opaque pixel becomes a column of blocks along z. The front depth (white near, unless `whiteNear: false`) says how
+far it stands out, in `layers` steps; `back` closes it: `"flat"` (a relief on a plate), `"mirror"` (the same behind, for
+round things) or its own picture and depth seen from behind, a second layer as in layered depth images (Shade et al.,
+1998). Colours stay exact (or `colours: n` reduces them); `roles` names them. Carving needs silhouettes only and fills
+hollows; depth maps say where the surface is, so they show dents and relief from one side. The CLI's `depth` command
+is the other way in: it turns a photo-like depth map into a lit relief mesh. [examples/depth/](../examples/depth/) has
+a tank drawn front and back.
+
+## Terrain from height maps
+
+```json
+{ "height": { "noise": { "seed": 7, "size": [56, 56], "scale": 0.075, "octaves": 5, "island": 0.9 } },
+  "levels": 14, "water": 0.22,
+  "bands": [ { "below": 0.3, "colour": "#d8c890", "role": "sand" }, { "below": 0.62, "colour": "#5f8f3a", "role": "grass" },
+             { "below": 1.01, "colour": "#e8ecef", "role": "snow" } ],
+  "slope": { "above": 2, "colour": "#7a7470", "role": "rock" }, "soil": { "colour": "#6a4a30", "role": "soil" } }
+```
+
+`height` is a grey picture (white high, transparent pixels empty) or seeded noise (`island` sinks the edges into the
+sea). Heights 0..1 map to `levels` blocks; a column's top takes the band of its height, or `slope` rock where it rises
+more than `slope.above` blocks over a neighbour; below it is soil; water fills up to `water`. A heightfield cannot
+overhang (edit the written voxel model for caves). The camera looks down at 0.6 unless `camera` says otherwise.
+[examples/terrain/island.terrain.json](../examples/terrain/island.terrain.json).
+
+## Levels from plans (2.5D)
+
+```json
+{ "tile": 1, "block": 0.25, "wall": 2.5,
+  "tiles": { "#": { "wall": true, "colour": "#7a6a58", "role": "stone" }, ".": { "floor": 0, "colour": "#5a4a3a" },
+             "=": { "floor": 0.75, "colour": "#8a7a68" }, "+": { "door": 1.75, "colour": "#7a6a58", "floorColour": "#5a4a3a" },
+             "~": { "floor": -0.5, "liquid": -0.1, "colour": "#4a3a2a", "liquidColour": "#3a6a9a" } },
+  "map": [ "#######", "#..=..#", "#~~+..#", "#######" ],
+  "sectors": [ { "points": [[7, 0], [11, 0], [11, 4], [7, 4]], "floor": 0, "colour": "#6a7a4a", "walls": 1 } ] }
+```
+
+Tiles are `tile` metres square, built from blocks `block` metres across. Walls rise to `wall` (or their own `height`),
+floors are slabs topped at `floor` (steps and platforms are higher floors), doors are walls with an opening up to
+`door`, liquids fill a sunken floor up to `liquid`. Map rows run from the back to the front. Sectors are polygons on the
+ground in metres with a floor height and, with `walls`, walls along their edges, drawn over the tiles in order. The
+camera looks down at 1.0 so rooms read from above. [examples/level/dungeon.level.json](../examples/level/dungeon.level.json).
+
 ## Voxels
 
 ```json
@@ -424,7 +476,7 @@ to 2 bakes about four times fewer splats: a full pass then took 20 s, at a small
 
 ## Comparing methods
 
-`node scripts/compare-models.js` builds a model with every method from the examples (thirteen tanks, plus a painted tree,
+`node scripts/compare-models.js` builds a model with every method from the examples (fourteen tanks, plus a painted tree, an island, a dungeon,
 an L-system tree and a split-grammar house for the methods made for other subjects) and writes
 `studio/out/compare-models/manifest.json`. `npm run serve` and `http://127.0.0.1:8765/tools/compare.html` then show one
 row per method: what it is and who wrote it, the extracted `model.glb` in one shared viewer (drag any to turn them all),
