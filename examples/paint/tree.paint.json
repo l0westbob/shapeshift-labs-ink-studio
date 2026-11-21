@@ -1,0 +1,19 @@
+{ "colours": {
+    "bark": { "colour": "#5a3a20", "role": "bark" },
+    "leaf": { "colour": "#4f7a2a", "role": "leaf" },
+    "light-leaf": { "colour": "#86a83a", "role": "light-leaf" },
+    "blossom": { "colour": "#e8b4c0", "role": "blossom" }
+  },
+  "blend": 0.08,
+  "strokes": [
+    { "colour": "bark", "points": [[0, 0, 0], [0.05, 0.8, 0.02], [-0.05, 1.5, 0], [0.05, 2.1, 0.05]], "width": 0.42, "taper": [1, 0.45] },
+    { "colour": "bark", "points": [[0, 1.4, 0], [0.4, 1.9, 0.1], [0.8, 2.2, 0.2]], "width": 0.2, "taper": [1, 0.3] },
+    { "colour": "bark", "points": [[0, 1.6, 0], [-0.45, 2.0, -0.1], [-0.75, 2.35, -0.2]], "width": 0.18, "taper": [1, 0.3] },
+    { "colour": "bark", "points": [[0.05, 0.05, 0], [0.35, 0.02, 0.15]], "width": 0.16, "taper": [1, 0.2] },
+    { "colour": "bark", "points": [[0, 0.05, 0], [-0.3, 0.02, -0.25]], "width": 0.15, "taper": [1, 0.2] },
+    { "colour": "leaf", "dab": [0, 2.55, 0], "r": [1.05, 0.75, 0.95] },
+    { "colour": "leaf", "dab": [0.75, 2.3, 0.2], "r": [0.6, 0.5, 0.6] },
+    { "colour": "leaf", "dab": [-0.8, 2.4, -0.15], "r": [0.6, 0.5, 0.55] },
+    { "colour": "light-leaf", "scatter": { "around": [0.1, 2.85, 0.25], "radius": 0.85, "count": 26, "size": [0.18, 0.3], "seed": 7, "flatten": 0.6 } },
+    { "colour": "blossom", "scatter": { "around": [0, 2.7, 0.2], "radius": 1.05, "count": 18, "size": [0.06, 0.1], "seed": 11, "flatten": 0.75 } }
+  ] }

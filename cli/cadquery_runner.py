@@ -95,8 +95,12 @@ def parts_of(model, cq, name="", colour=None, role=None):
 def main():
     script, out_file = sys.argv[1], sys.argv[2]
     tolerance = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0015
+    import os
+
     import cadquery as cq
 
+    # the parts library (library/ink_parts.py) is importable from every script
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "library"))
     shown = []
 
     def show_object(obj, name=None, options=None, **_):

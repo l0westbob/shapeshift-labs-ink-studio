@@ -2,7 +2,8 @@
 /* three.js as a modelling front end. A script builds an Object3D with the three.js API; it is welded and written as GLB,
    and a diorama that places it is written next to it, so baking, rendering, editing and export carry on as for any scene.
 
-     module.exports = ({ THREE, addon }) => group          (or export default; may be async)
+     module.exports = ({ THREE, addon, parts }) => group   (or export default; may be async)
+     parts.roadWheel({ radius }, material)                  tested parts from library/ink-parts.mjs
      addon('geometries/RoundedBoxGeometry')                 imports a three.js addon from the same three install
 
    Each visible mesh becomes a part for model-core.js (its own GLB and its own `mesh` solid). Normals and UVs are dropped
@@ -36,6 +37,13 @@ async function loadThree(roots = []) {
   return { THREE, addon, dir, revision: THREE.REVISION };
 }
 
+/* the parts library (library/ink-parts.mjs), bound to this three.js */
+async function partsFor(three) {
+  const { makeParts } = await import(pathToFileURL(path.join(PACKAGE, 'library', 'ink-parts.mjs')).href);
+  const { RoundedBoxGeometry } = await three.addon('geometries/RoundedBoxGeometry');
+  return makeParts(three.THREE, { RoundedBoxGeometry });
+}
+
 async function runScript(file, three) {
   /* the modification time in the URL makes import() read an edited ES module again instead of its cached first version;
      a CommonJS script is cached by file name alone, so that entry is dropped */
@@ -43,7 +51,7 @@ async function runScript(file, three) {
   const mod = await import(pathToFileURL(file).href + '?v=' + fs.statSync(file).mtimeMs);
   const build = typeof mod.default === 'function' ? mod.default : typeof mod === 'function' ? mod : null;
   if (!build) throw new Error('The script must export a function ({ THREE, addon }) => Object3D');
-  const object = await build({ THREE: three.THREE, addon: three.addon });
+  const object = await build({ THREE: three.THREE, addon: three.addon, parts: await partsFor(three) });
   if (!object?.isObject3D) throw new Error('The script must return a THREE.Object3D (a Mesh, Group or Scene)');
   return object;
 }

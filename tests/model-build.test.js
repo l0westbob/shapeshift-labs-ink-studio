@@ -245,3 +245,29 @@ test('snap rounds voxel cells and mesh placements to whole art pixels', async t 
   const unit = 1 / 20;
   assert.ok(Math.abs(cell / unit - Math.round(cell / unit)) < 1e-6 && cell >= unit, 'cell ' + cell + ' is whole pixels of ' + unit);
 });
+
+test('model_build paints with strokes, dabs and scatters; one blend group per colour', async t => {
+  const dir = tempDir(t), source = path.join(dir, 'bush.paint.json');
+  fs.writeFileSync(source, JSON.stringify({
+    colours: { stem: '#5a3a20', leaf: { colour: '#4f7a2a', role: 'foliage' } }, blend: 0.05,
+    strokes: [
+      { colour: 'stem', points: [[0, 0, 0], [0, 0.5, 0]], width: 0.1, taper: [1, 0.5] },
+      { colour: 'leaf', dab: [0, 0.7, 0], r: [0.4, 0.3, 0.4] },
+      { colour: 'leaf', scatter: { around: [0, 0.8, 0], radius: 0.3, count: 5, size: [0.05, 0.1], seed: 2 } }
+    ]
+  }));
+  const result = ok(await call({ source, out: path.join(dir, 'bush'), preview: false }, {}));
+  assert.equal(result.engine, 'paint');
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.deepEqual(spec.solids.map(s => s.kind), ['stroke', 'ball', 'ball', 'ball', 'ball', 'ball', 'ball']);
+  assert.deepEqual(Object.keys(spec.groups).sort(), ['paint-foliage', 'paint-stem']);
+  assert.equal(spec.solids[1].group, 'paint-foliage');
+  assert.deepEqual(result.roles, ['stem', 'foliage']);
+  assert.equal((await validate(result.scene)).valid, true);
+  const again = ok(await call({ source, out: path.join(dir, 'bush'), overwrite: true, preview: false }, {}));
+  assert.deepEqual(JSON.parse(fs.readFileSync(again.scene, 'utf8')).solids, spec.solids, 'scatters follow their seed');
+
+  fs.writeFileSync(source, JSON.stringify({ colours: { stem: '#5a3a20' }, strokes: [{ colour: 'bark', dab: [0, 0, 0] }] }));
+  const error = fails(await call({ source, out: path.join(dir, 'bush'), overwrite: true, preview: false }, {}), 'BUILD_FAILED');
+  assert.match(error.message, /No colour called "bark"/);
+});

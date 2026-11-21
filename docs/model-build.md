@@ -16,6 +16,7 @@ voxel model     ─┘
 | `blender` | `.blender.py` building objects with `bpy` | Bevelled hard surfaces and smooth organic forms: modifiers (bevel, subdivision, mirror, array, boolean) are applied. | yes |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
+| `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
 | `carve` | `.views.json` with orthographic views drawn as letter grids | Pixel first: draw how the sprite should read, get the solid that matches. | no |
 
 The engine follows from the extension unless `engine` is given. `size`, `pixelSize`, `pixelStyle`, `shades`,
@@ -133,6 +134,45 @@ Draw the model the way the finished pixel art should read, as two or more orthog
 - Hollows and undercuts no view can see are filled. The carved grid is written as `carved.vox.json`: edit it and build it
   with engine `vox` to cut them in. `views.png` shows the drawn views.
 - [examples/carve/tank.views.json](../examples/carve/tank.views.json) draws a tank in three views.
+
+## The parts library
+
+Tested, parametric parts so models start from pieces that already read well at sprite size, instead of from scratch each
+time. Each part builds closed (checked by `tests/parts-library.test.js`).
+
+| Part | CadQuery (`from ink_parts import ...`) | three.js (`parts.<name>(options, material)`) |
+| --- | --- | --- |
+| Rounded box | `rounded_box(length, width, height, radius)` | `roundedBox({ length, width, height, radius })` |
+| Road wheel with hub | `road_wheel(radius, width, hub, rim)` | `roadWheel({ radius, width, hub })` |
+| Track loop with pads | `track_loop(length, height, width, pad_pitch, pad_depth)` | `trackLoop({ length, height, width })` |
+| Barrel, sleeve, brake | `barrel(length, radius, brake, sleeve)` | `barrel({ length, radius, brake, sleeve })` |
+| Hatch on a ring | `hatch(radius, thickness, ring)` | `hatch({ radius, thickness, ring })` |
+| Crate with rails | `crate(length, width, height, frame)` | `crate({ length, width, height, frame })` |
+| Door or window panel | `panel(width, height, depth, frame, inset)` | `panel({ width, height, depth, frame, inset })` |
+| Bolt ring | `bolt_ring(radius, count, bolt, height)` | |
+
+CadQuery parts are Z up ([library/ink_parts.py](../library/ink_parts.py)); three.js parts are Y up and named
+([library/ink-parts.mjs](../library/ink-parts.mjs)). Each file documents where every part sits. Add a part with a test
+when a model needed it and it came out well.
+
+## Painting with splats
+
+```json
+{ "colours": { "bark": "#5a3a20", "leaf": { "colour": "#4f7a2a", "role": "leaf" } },
+  "blend": 0.08,
+  "strokes": [
+    { "colour": "bark", "points": [[0, 0, 0], [0.05, 1, 0], [0, 2, 0.05]], "width": 0.4, "taper": [1, 0.45] },
+    { "colour": "leaf", "dab": [0, 2.5, 0], "r": [1, 0.75, 0.95] },
+    { "colour": "leaf", "scatter": { "around": [0, 2.8, 0.2], "radius": 0.9, "count": 26, "size": [0.18, 0.3], "seed": 7, "flatten": 0.6 } } ] }
+```
+
+- A stroke is a tube along its points: `width`, `depth` (a flat brush when smaller), `taper` [start, end] and `pressure`
+  per point. A dab is a ball (`r` a number or [x, y, z]). A scatter places `count` dabs inside a ball by its `seed`;
+  `flatten` below 1 squashes it vertically.
+- Strokes of one colour melt into each other (`blend` is the softness); different colours meet with a hard edge. Every
+  colour becomes a role with its own ramp.
+- The diorama is the model; there is no mesh hand-off (mesh it with `scene_export` to compare).
+- [examples/paint/tree.paint.json](../examples/paint/tree.paint.json) paints a tree in four colours.
 
 ## Composing parts from several engines
 
