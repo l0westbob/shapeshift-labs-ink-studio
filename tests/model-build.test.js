@@ -116,3 +116,29 @@ def build():
   const error = fails(await call({ source: script, out, overwrite: true, preview: false }), 'BUILD_FAILED');
   assert.match(error.hint, /post\.py", line 2/);
 });
+
+test('model_build carves drawn views into voxels: visual hull, colours from the views, unseen sides mirrored', async t => {
+  const dir = tempDir(t), source = path.join(dir, 'hut.views.json'), out = path.join(dir, 'hut');
+  const views = {
+    front: ['.rr.', 'rrrr', 'wdgw', 'wdww'],
+    right: ['.rr.', 'rrrr', 'wwww', 'wwww'],
+    top: ['rrrr', 'rrrr', 'rrrr', 'rrrr']
+  };
+  fs.writeFileSync(source, JSON.stringify({ cell: 0.5, colours: { w: '#c8b88a', r: { colour: '#8a3324', role: 'roof' }, d: '#5a3a20', g: '#9fc3d6' }, views }));
+  const result = ok(await call({ source, out, preview: false }, {}));
+  assert.equal(result.engine, 'carve');
+  assert.deepEqual(result.grid, [4, 4, 4]);
+  /* walls: 4 x 4 x 2 layers; roof: the full slab, then where both gables meet, the middle 2 x 2 */
+  assert.equal(result.blocks, 32 + 16 + 4);
+  const vox = JSON.parse(fs.readFileSync(result.carved, 'utf8'));
+  const at = (x, y, z) => vox.layers[y].split('/')[z][x];
+  assert.equal(at(1, 0, 3), 'd', 'the front shows the door');
+  assert.equal(at(1, 0, 0), 'd', 'the back, which no view sees, is painted like the front');
+  assert.equal(at(1, 3, 1), 'r');
+  assert.ok(fs.existsSync(result.views));
+  assert.equal((await validate(result.scene)).valid, true);
+
+  fs.writeFileSync(source, JSON.stringify({ colours: { w: '#ffffff' }, views: { front: ['ww', 'ww'], right: ['www', 'www', 'www'], top: ['ww', 'ww'] } }));
+  const error = fails(await call({ source, out, overwrite: true, preview: false }, {}), 'BUILD_FAILED');
+  assert.match(error.message, /disagree on the size along y/);
+});

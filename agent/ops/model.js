@@ -5,7 +5,8 @@
 
      three     a three.js script (.mjs, .js, .cjs) exporting ({ THREE, addon }) => Object3D      runs code
      cadquery  a CadQuery or build123d script (.py) defining build(), result or show_object()    runs code
-     vox       a voxel model (.json): plans of letters and a colour per letter                    data only */
+     vox       a voxel model (.json): plans of letters and a colour per letter                    data only
+     carve     drawn views (.views.json): the sprite drawn from front, side and top, carved into voxels   data only */
 const fs = require('node:fs');
 const path = require('node:path');
 const { defineOp, OpError } = require('../registry.js');
@@ -16,9 +17,12 @@ const SceneOps = () => require('./scene.js');
 const ENGINES = {
   three: { module: '../../cli/three-model.js', extensions: ['.mjs', '.js', '.cjs'], code: true, label: 'three.js scripts' },
   cadquery: { module: '../../cli/cadquery-model.js', extensions: ['.py'], code: true, label: 'CadQuery scripts' },
-  vox: { module: '../../cli/vox-model.js', extensions: ['.json'], code: false, label: 'voxel models' }
+  vox: { module: '../../cli/vox-model.js', extensions: ['.vox.json', '.json'], code: false, label: 'voxel models' },
+  carve: { module: '../../cli/carve-model.js', extensions: ['.views.json'], code: false, label: 'drawn views' }
 };
-const engineFor = file => Object.keys(ENGINES).find(name => ENGINES[name].extensions.includes(path.extname(file).toLowerCase()));
+/* the engine whose longest matching extension ends the file name, so model.views.json carves and model.json is voxels */
+const matchOf = (file, name) => Math.max(0, ...ENGINES[name].extensions.filter(ext => file.toLowerCase().endsWith(ext)).map(ext => ext.length));
+const engineFor = file => Object.keys(ENGINES).filter(name => matchOf(file, name)).sort((a, b) => matchOf(file, b) - matchOf(file, a))[0];
 
 const COMMON = {
   out: { type: 'string', description: 'Directory for scene.json, model.glb, raw.png, preview.png and parts/.' },
@@ -44,7 +48,7 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
     });
   const root = ctx.root ?? process.cwd();
   const file = path.resolve(root, source), dir = path.resolve(root, out);
-  if (!spec.extensions.includes(path.extname(file).toLowerCase()))
+  if (!matchOf(file, engine))
     throw new OpError('INVALID_INPUT', spec.label + ' end in ' + spec.extensions.join(', '), { path: '/' + field });
   if (!fs.existsSync(file)) throw new OpError('NOT_FOUND', 'No file at ' + file, { path: '/' + field });
   let report;
@@ -87,12 +91,12 @@ defineOp({
   destructive: true,
   title: 'Build a model with another modeller',
   effects: 'write',
-  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
+  description: 'Build a model outside the diorama format and turn it into a diorama. engine "three": a three.js script (.mjs/.js/.cjs) exporting ({ THREE, addon }) => Object3D, good for quick low-poly hard surfaces. engine "cadquery": a CadQuery or build123d script (.py, Z up, run in .venv) defining build() or result (an Assembly with names, colours and metadata={"role": ...} keeps them), good for precise parts with fillets, chamfers, lofts and cut details. engine "vox": a voxel JSON { cell, hard, colours: { letter: "#rrggbb" | { colour, role } }, layers | front: [plans of letters] }, good for small props and characters at sprite size; it needs no code. engine "carve" (.views.json): pixel first, draw the model as orthographic views { cell, colours, views: { front, right, top, (back, left, bottom): [rows of letters] } } the way the sprite should read; blocks stay where every view sees something and take the colours the views show, then it continues as voxels (writes carved.vox.json to refine and views.png). The engine follows from the file extension unless given. Mesh engines make one mesh solid per part (overlaps are unioned as distance fields); voxels make one vox solid. ' + RESULT + ' three and cadquery run code, so they need code to be allowed.',
   input: {
     type: 'object', required: ['source', 'out'],
     properties: {
       source: { type: 'string', description: 'The model source: a three.js script, a CadQuery/build123d .py script or a voxel .json file.' },
-      engine: { type: 'string', enum: Object.keys(ENGINES), description: 'three, cadquery or vox (default: from the file extension).' },
+      engine: { type: 'string', enum: Object.keys(ENGINES), description: Object.keys(ENGINES).join(', ') + ' (default: from the file extension, longest match first).' },
       tolerance: { type: 'number', minimum: 0.0001, maximum: 0.05, description: 'cadquery: largest triangle chord error as a share of the model size (default 0.0015).' },
       ...COMMON
     },

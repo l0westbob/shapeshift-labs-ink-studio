@@ -50,14 +50,19 @@ function blockParts({ nx, ny, nz, grid, keys }, cell, roles) {
     .filter(part => part.index.length);
 }
 
-async function buildModel(file, { out, size, shades = 4, pixelSize, pixelStyle, overwrite = false, kit }) {
-  const Core = require('./model-core.js');
+async function buildModel(file, options) {
   let source;
   try {
     source = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (error) {
     throw new Error('The voxel file is not JSON: ' + error.message);
   }
+  return buildFromSource(source, options);
+}
+
+/* the same from a voxel model already in memory (other front ends, such as carving, make one) */
+async function buildFromSource(source, { out, size, shades = 4, pixelSize, pixelStyle, overwrite = false, kit, prefix = 'vox' }) {
+  const Core = require('./model-core.js');
   if (!source.colours || typeof source.colours !== 'object') throw new Error('A voxel model needs "colours": { letter: "#rrggbb", ... }');
   const roles = {};
   for (const [letter, value] of Object.entries(source.colours)) roles[letter] = Core.roleFor(value?.role, colourOf(value));
@@ -78,7 +83,7 @@ async function buildModel(file, { out, size, shades = 4, pixelSize, pixelStyle, 
 
   const { palette, roles: ramps, named } = Core.rolePalette(Object.values(roles), { shades, styles: kit.diorama?.styles });
   const style = Core.pixelStyleOf(pixelStyle, shades);
-  const header = Core.sceneHeader({ name: path.basename(out), prefix: 'vox', palette, roles: ramps, pixelStyle: style, pixelSize });
+  const header = Core.sceneHeader({ name: path.basename(out), prefix, palette, roles: ramps, pixelStyle: style, pixelSize });
   const solid = {
     kind: 'vox', at: [0, 0, 0], cell: cell[0] === cell[1] && cell[1] === cell[2] ? cell[0] : cell,
     hard: source.hard ?? true, ...(source.round !== undefined ? { round: source.round } : {}),
@@ -97,4 +102,4 @@ async function buildModel(file, { out, size, shades = 4, pixelSize, pixelStyle, 
   };
 }
 
-module.exports = { buildModel };
+module.exports = { buildModel, buildFromSource };

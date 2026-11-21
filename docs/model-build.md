@@ -14,6 +14,7 @@ voxel model     ─┘
 | `three` | `.mjs`, `.js`, `.cjs` exporting `({ THREE, addon }) => Object3D` | Quick low-poly hard surfaces. See [three-modeling.md](three-modeling.md). | yes |
 | `cadquery` | `.py` defining `build()`, `result` or `show_object()` | Precise parts: fillets, chamfers, lofts, sweeps, cut details. | yes |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
+| `carve` | `.views.json` with orthographic views drawn as letter grids | Pixel first: draw how the sprite should read, get the solid that matches. | no |
 
 The engine follows from the extension unless `engine` is given. `size`, `pixelSize`, `pixelStyle`, `shades`,
 `overwrite`, `preview` and `frames` work the same for every engine (see [three-modeling.md](three-modeling.md#running-it)).
@@ -89,6 +90,33 @@ def build():
 
 The diorama gets one `vox` solid with the same fields and a `key` of materials, so it can also be written by hand:
 `{ "kind": "vox", "at": [0, 0, 0], "cell": 0.1, "key": { "s": "stone" }, "layers": ["ss/ss"] }`.
+
+## Carving drawn views (pixel first)
+
+Draw the model the way the finished pixel art should read, as two or more orthographic views, and let the solid follow:
+
+```json
+{ "cell": 0.125,
+  "colours": { "o": { "colour": "#5b6b2e", "role": "olive" }, "t": "#2b2b2b" },
+  "views": { "front": ["..oo..", "tttttt"], "right": ["oo", "tt"], "top": ["tttttt", "tttttt"] } }
+```
+
+| View | Seen from | Letters run along | Rows run |
+| --- | --- | --- | --- |
+| `front` | +Z | +x | top to bottom (y) |
+| `back` | -Z | -x | top to bottom |
+| `right` | +X | -z | top to bottom |
+| `left` | -X | +z | top to bottom |
+| `top` | +Y | +x | back (-z) to front (+z) |
+| `bottom` | -Y | +x | front to back |
+
+- A block stays where every view sees something (the visual hull). Every axis must be seen by some view, and views that
+  share an axis must agree on its length (pad with `.`).
+- Each surface block takes the letter of the view that sees it; where several do, the majority wins, ties go to top,
+  front, right, left, back, bottom. A side without its own view is painted like the opposite one.
+- Hollows and undercuts no view can see are filled. The carved grid is written as `carved.vox.json`: edit it and build it
+  with engine `vox` to cut them in. `views.png` shows the drawn views.
+- [examples/carve/tank.views.json](../examples/carve/tank.views.json) draws a tank in three views.
 
 ## Comparing methods
 

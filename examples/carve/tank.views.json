@@ -1,0 +1,90 @@
+{
+ "cell": 0.125,
+ "hard": true,
+ "colours": {
+  "o": {
+   "colour": "#5b6b2e",
+   "role": "olive"
+  },
+  "d": {
+   "colour": "#3f4a22",
+   "role": "dark-olive"
+  },
+  "t": {
+   "colour": "#2b2b2b",
+   "role": "track"
+  },
+  "w": {
+   "colour": "#777b72",
+   "role": "steel"
+  },
+  "s": {
+   "colour": "#a5a99c",
+   "role": "light-steel"
+  }
+ },
+ "views": {
+  "front": [
+   "................s.................................",
+   "................s.................................",
+   "................s.................................",
+   "................s.s...............................",
+   "................sddd..............................",
+   "...............oooooooooooo.......................",
+   "...............oooooooooooo.dd................ddd.",
+   "..............ooooooooooooooddddddddddddddddddddd.",
+   "..............oooooooooooooodd................ddd.",
+   "..oooooooooooooooooooooooooooooooooooooo..........",
+   "..dddddddddddddddddddddddddddddddddddddddd........",
+   "...tttttttttttttttttttttttttttttttttttttt.........",
+   "..ttttwwwtttwwwtttwwwtttwwwtttwwwtttwwwttt........",
+   ".tttttwswtttwswtttwswtttwswtttwswtttwswtttt.......",
+   "..ttttwwwtttwwwtttwwwtttwwwtttwwwtttwwwttt........",
+   "...tttttttttttttttttttttttttttttttttttttt........."
+  ],
+  "right": [
+   "...............s........",
+   "...............s........",
+   "...............s........",
+   "..........s....s........",
+   ".........ddd...s........",
+   ".......oooooooooo.......",
+   "......ooooddddoooo......",
+   "......ooooddddoooo......",
+   "......ooooddddoooo......",
+   ".oooooooooooooooooooooo.",
+   "dddddooooooooooooooddddd",
+   "tttttoooooooooooooottttt",
+   "tttttoooooooooooooottttt",
+   "tttttoooooooooooooottttt",
+   "tttttoooooooooooooottttt",
+   "ttttt..............ttttt"
+  ],
+  "top": [
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   "..oooooooooooooooooooooooooooooooooooooooooo......",
+   "..oooooooooooooooooooooooooooooooooooooooooo......",
+   "..ooodododoooooooooooooooooooooooooooooooooo......",
+   "..oodododooooooosooooooooooooooooooooooooooo......",
+   "..ooodododoooooooooooooooooooooooooooooooooo......",
+   "..oodododoooooooooooooooooooddoooooooooooooo..ddd.",
+   "..ooodododooooooooooooooooooddddddddddddddddddddd.",
+   "..oodododoooooooodddooooooooddddddddddddddddddddd.",
+   "..ooodododooooooodsdooooooooddoooooooooooooo..ddd.",
+   "..oodododoooooooodddoooooooooooooooooooooooo......",
+   "..ooodododoooooooooooooooooooooooooooooooooo......",
+   "..oodododooooooooooooooooooooooooooooooooooo......",
+   "..oooooooooooooooooooooooooooooooooooooooooo......",
+   "..oooooooooooooooooooooooooooooooooooooooooo......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd.......",
+   ".dddddddddddddddddddddddddddddddddddddddddd......."
+  ]
+ }
+}
