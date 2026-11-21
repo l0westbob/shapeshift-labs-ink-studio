@@ -99,7 +99,7 @@ def main():
 
     import cadquery as cq
 
-    # the parts library (library/ink_parts.py) is importable from every script
+    # the parts library (library/inkparts.py) is importable from every script
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "library"))
     shown = []
 

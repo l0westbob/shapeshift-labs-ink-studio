@@ -30,7 +30,7 @@ const build = async (t, name, text) => {
 
 test('every CadQuery library part builds closed', { skip: hasCadquery ? false : 'cadquery is not installed', timeout: 240000 }, async t => {
   const result = await build(t, 'parts.py', `import cadquery as cq
-from ink_parts import road_wheel, track_loop, barrel, hatch, crate, panel, rounded_box, bolt_ring
+from inkparts import road_wheel, track_loop, barrel, hatch, crate, panel, rounded_box, bolt_ring
 def build():
     assy = cq.Assembly()
     for i, (name, shape) in enumerate([("rounded-box", rounded_box(1, 0.6, 0.4)), ("road-wheel", road_wheel()), ("track-loop", track_loop()),

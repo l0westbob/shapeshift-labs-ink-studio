@@ -26,7 +26,7 @@ test('the plugin manifest, marketplace and components point at real files', () =
 
   const skills = path.join(root, manifest.skills);
   const names = fs.readdirSync(skills);
-  assert.deepEqual(names.sort(), ['look-tuning', 'new-scene', 'review', 'scene-authoring', 'world-sim']);
+  assert.deepEqual(names.sort(), ['best-of-n', 'look-tuning', 'new-scene', 'review', 'scene-authoring', 'world-sim']);
   for (const name of names) {
     const meta = frontmatter(path.join(skills, name, 'SKILL.md'));
     assert.equal(meta.name, name);

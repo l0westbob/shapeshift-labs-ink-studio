@@ -1,6 +1,6 @@
 """Reusable, tested parts for CadQuery models (model_build engine "cadquery"). A script imports them directly:
 
-    from ink_parts import road_wheel, track_loop, barrel, hatch, crate, panel, rounded_box
+    from inkparts import road_wheel, track_loop, barrel, hatch, crate, panel, rounded_box
 
 Every function returns a closed cq.Workplane in metres, Z up, centred as documented, so parts can be placed with
 .translate() and added to an Assembly. tests/parts-library.test.js builds each one and checks it is closed. Sizes are

@@ -24,6 +24,9 @@ Start one subagent per candidate (default 4) in a single message, so they run at
 | `blender` | `.blender.py` (bpy, modifiers applied) | bevels, smooth and organic forms |
 | `three` | `.mjs` (three.js, named materials) | quick low-poly hard surfaces |
 | `vox` | `.json` (letter layers, colour per letter) | exact sprite-scale detail |
+| `openscad` | `.scad` with `PARTS` | CSG, many examples to lean on |
+| `subd` / `loft` | cages or sections (JSON) | smooth characters, taut hulls and bodies |
+| `sdf` | `.sdf.mjs` distance functions | soft blends, repeats, organic detail |
 | `carve` | the target views themselves | matches the drawing by construction |
 | diorama | SDF solids JSON | soft forms, native to the renderer |
 

@@ -277,7 +277,7 @@ Draw the model the way the finished pixel art should read, as two or more orthog
 Tested, parametric parts so models start from pieces that already read well at sprite size, instead of from scratch each
 time. Each part builds closed (checked by `tests/parts-library.test.js`).
 
-| Part | CadQuery (`from ink_parts import ...`) | three.js (`parts.<name>(options, material)`) |
+| Part | CadQuery (`from inkparts import ...`) | three.js (`parts.<name>(options, material)`) |
 | --- | --- | --- |
 | Rounded box | `rounded_box(length, width, height, radius)` | `roundedBox({ length, width, height, radius })` |
 | Road wheel with hub | `road_wheel(radius, width, hub, rim)` | `roadWheel({ radius, width, hub })` |
@@ -288,7 +288,7 @@ time. Each part builds closed (checked by `tests/parts-library.test.js`).
 | Door or window panel | `panel(width, height, depth, frame, inset)` | `panel({ width, height, depth, frame, inset })` |
 | Bolt ring | `bolt_ring(radius, count, bolt, height)` | |
 
-CadQuery parts are Z up ([library/ink_parts.py](../library/ink_parts.py)); three.js parts are Y up and named
+CadQuery parts are Z up ([library/inkparts.py](../library/inkparts.py)); three.js parts are Y up and named
 ([library/ink-parts.mjs](../library/ink-parts.mjs)). Each file documents where every part sits. Add a part with a test
 when a model needed it and it came out well.
 
