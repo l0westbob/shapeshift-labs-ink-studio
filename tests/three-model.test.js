@@ -95,3 +95,51 @@ test('model_three reports scripts that return no model', { skip }, async t => {
   fails(await call({ script, out: path.join(dir, 'out') }), 'BUILD_FAILED');
   fails(await call({ script: path.join(dir, 'missing.mjs'), out: dir }), 'NOT_FOUND');
 });
+
+test('model_three gives each material a stable role, keeps vertex colours automatic and survives a style change', { skip }, async t => {
+  const dir = tempDir(t), script = path.join(dir, 'roles.mjs'), out = path.join(dir, 'model');
+  fs.writeFileSync(script, `export default ({ THREE }) => {
+    const group = new THREE.Group();
+    const add = (material, x, geometry = new THREE.BoxGeometry(1, 1, 1)) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, 0.5, 0);
+      group.add(mesh);
+    };
+    const paint = new THREE.MeshStandardMaterial({ color: 0x5b6b2e });
+    paint.userData.role = 'Hull Paint';
+    add(paint, 0);
+    add(paint, 1.5);
+    add(new THREE.MeshStandardMaterial({ color: 0x777b72, name: 'steel' }), 3);
+    add(new THREE.MeshStandardMaterial({ color: 0xc8321e }), 4.5);
+    const tinted = new THREE.BoxGeometry(1, 1, 1);
+    tinted.setAttribute('color', new THREE.Float32BufferAttribute(new Array(tinted.attributes.position.count * 3).fill(0.6), 3));
+    add(new THREE.MeshStandardMaterial({ vertexColors: true }), 6, tinted);
+    const sun = new THREE.DirectionalLight(0xffffff, 2);
+    sun.position.set(0, 10, 0);
+    group.add(sun);
+    return group;
+  };\n`);
+  const result = ok(await call({ script, out, shades: 3, pixelSize: 1, preview: false }));
+  assert.deepEqual(result.roles, ['hull-paint', 'steel', 'paint-c8321e']);
+  assert.deepEqual(result.parts.map(part => part.role), ['hull-paint', 'hull-paint', 'steel', 'paint-c8321e', undefined]);
+
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.deepEqual(spec.solids[0].mat, { role: 'hull-paint', pixelStyle: { dither: 'none', shadeSteps: 3 } });
+  assert.equal(spec.solids[4].mat, undefined, 'vertex colours keep the automatic look');
+  assert.deepEqual(spec.roles['hull-paint'], [1, 2, 3]);
+  assert.equal(spec.palette[2], 0x5b6b2e, 'the material colour is the lit shade of its ramp');
+  assert.ok(spec.palette.length > 10, 'the vertex-coloured part adds its own families');
+  assert.deepEqual(spec.light, { sun: [0, 1, 0] });
+  assert.deepEqual(spec.finish, { dither: 0, look: { pixelSize: 1 } });
+
+  /* every built-in role points into this palette, so another style still validates */
+  for (const style of ['slate', 'ember', 'moss']) {
+    const valid = ok(await registry.call('scene_validate', { scene: { spec: { ...spec, style } } }, { root: out }));
+    assert.equal(valid.valid, true, style + ': ' + JSON.stringify(valid.errors));
+  }
+
+  const plain = ok(await call({ script, out, overwrite: true, pixelStyle: false, preview: false }));
+  const plainSpec = JSON.parse(fs.readFileSync(plain.scene, 'utf8'));
+  assert.equal(plainSpec.solids[0].mat, 'hull-paint');
+  assert.equal(plainSpec.finish, undefined);
+});

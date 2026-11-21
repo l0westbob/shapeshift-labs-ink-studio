@@ -1,10 +1,10 @@
 // A small tank modelled with three.js. Run it through model_three (or `ink-studio agent call model_three`) to get a
 // diorama with one mesh solid per part. Units are metres; model_three can rescale with `size`.
 export default ({ THREE }) => {
-  const olive = new THREE.MeshStandardMaterial({ color: 0x5b6b2e });
-  const darkOlive = new THREE.MeshStandardMaterial({ color: 0x3f4a22 });
-  const track = new THREE.MeshStandardMaterial({ color: 0x2b2b2b });
-  const steel = new THREE.MeshStandardMaterial({ color: 0x777b72 });
+  const olive = new THREE.MeshStandardMaterial({ color: 0x5b6b2e, name: 'olive' });
+  const darkOlive = new THREE.MeshStandardMaterial({ color: 0x3f4a22, name: 'dark-olive' });
+  const track = new THREE.MeshStandardMaterial({ color: 0x2b2b2b, name: 'track' });
+  const steel = new THREE.MeshStandardMaterial({ color: 0x777b72, name: 'steel' });
   const tank = new THREE.Group();
 
   // hull: a side profile with sloped front and back, extruded across the width

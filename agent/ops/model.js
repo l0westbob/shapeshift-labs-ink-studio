@@ -16,7 +16,7 @@ defineOp({
   destructive: true,
   title: 'Model with three.js',
   effects: 'write',
-  description: 'Build a model with the three.js API and turn it into a diorama. The script (.mjs or .js) exports a function ({ THREE, addon }) => Object3D; addon("geometries/RoundedBoxGeometry") imports a three.js addon. Every visible mesh becomes its own GLB under out/parts and its own mesh solid in out/scene.json (overlaps are unioned as distance fields), plus out/model.glb for the whole model. Material and vertex colours become one palette; textures, instanced and skinned meshes are not used. Returns the parts, warnings for open surfaces and a turnaround preview (also written to out/preview.png). Continue with scene_open on the returned scene path. Runs the script, so it needs code to be allowed.',
+  description: 'Build a model with the three.js API and turn it into a diorama. The script (.mjs or .js) exports a function ({ THREE, addon }) => Object3D; addon("geometries/RoundedBoxGeometry") imports a three.js addon. Every visible mesh becomes its own GLB under out/parts and its own mesh solid in out/scene.json (overlaps are unioned as distance fields), plus out/model.glb for the whole model. Each material becomes a palette role (named by material.userData.role, else material.name, else its colour) with its own ramp, so parts sharing a material shade alike and roles stay stable across runs; meshes with vertex colours get automatic colour families instead. A directional light in the script becomes the sun. Textures, instanced and skinned meshes are not used. Returns the parts, warnings for open surfaces and a turnaround preview (also written to out/preview.png). Continue with scene_open on the returned scene path. Runs the script, so it needs code to be allowed.',
   input: {
     type: 'object', required: ['script', 'out'],
     properties: {
@@ -24,15 +24,20 @@ defineOp({
       out: { type: 'string', description: 'Directory for scene.json, model.glb and parts/.' },
       size: { type: 'number', minimum: 0.1, maximum: 200, description: 'Largest side of the whole model in scene units (default: keep three.js units).' },
       cells: { type: 'integer', minimum: 16, maximum: 256, description: 'Distance-field cells along the whole model\'s longest side (default 96); small parts get the same cell size.' },
-      hues: { type: 'integer', minimum: 1, maximum: 12, description: 'Colour families taken from the materials (default 6).' },
-      shades: { type: 'integer', minimum: 2, maximum: 8, description: 'Shades per colour family (default 4).' },
+      hues: { type: 'integer', minimum: 1, maximum: 12, description: 'Colour families for meshes with vertex colours (default 6).' },
+      shades: { type: 'integer', minimum: 2, maximum: 8, description: 'Shades per role ramp (default 4).' },
+      pixelSize: { type: 'integer', minimum: 1, maximum: 16, description: 'Screen pixels per art pixel, written to finish.look.pixelSize (default: the renderer\'s 2, so a 128 px render is a 64 px sprite; 1 draws every pixel).' },
+      pixelStyle: {
+        anyOf: [{ type: 'boolean' }, { type: 'object' }],
+        description: 'pixelStyle for every role material (default true: { dither: "none", shadeSteps: shades }, flat shade bands without speckle; false leaves the renderer default; an object is used as given).'
+      },
       overwrite: { type: 'boolean', description: 'Replace an earlier model in out.' },
       preview: { type: 'boolean', description: 'Return a turnaround image of the scene (default true).' },
       frames: { type: 'integer', minimum: 1, maximum: 8, description: 'Preview views (default 4).' }
     },
     additionalProperties: false
   },
-  async run({ script, out, size, cells, hues, shades, overwrite = false, preview = true, frames = 4 }, ctx) {
+  async run({ script, out, size, cells, hues, shades, pixelSize, pixelStyle, overwrite = false, preview = true, frames = 4 }, ctx) {
     if (!Scenes.codeAllowed(ctx))
       throw new OpError('CODE_NOT_ALLOWED', 'three.js scripts run arbitrary code and are disabled', {
         path: '/script', hint: 'start the server with --allow-code or INK_AGENT_ALLOW_CODE=1'
@@ -44,7 +49,7 @@ defineOp({
     let report;
     try {
       report = await Three().buildModel(file, {
-        out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, overwrite,
+        out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, overwrite,
         kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh
       });
     } catch (error) {
@@ -59,7 +64,9 @@ defineOp({
       const entry = Scenes.open({ path: report.scene }, { ...ctx, persist: false });
       /* written as preview.png too, because the shell transport returns no image content */
       const file = path.join(dir, 'preview.png');
-      const shot = SceneOps().renderEntry(entry, { mode: frames > 1 ? 'turn' : 'single', frames, out: file, overwrite: true }, ctx);
+      const shot = SceneOps().renderEntry(entry, {
+        mode: frames > 1 ? 'turn' : 'single', frames, size: { w: 256, h: 256 }, scale: frames > 2 ? 2 : 3, out: file, overwrite: true
+      }, ctx);
       result.preview = file;
       result.image = shot.image;
     }

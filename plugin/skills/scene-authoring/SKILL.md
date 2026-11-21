@@ -44,7 +44,7 @@ A diorama is JSON: `id` (lowercase, digits, dashes), `name`, `seed`, `style` (`s
 
 ## Modelling with three.js instead
 
-For hard-surface objects (vehicles, buildings, machines) a three.js script is often easier than SDF solids. Write a `.mjs` file that exports `({ THREE, addon }) => Object3D` (use the `THREE` passed in, do not import it; name the meshes), then call `model_three` with `script`, `out` and usually `size`. It writes `out/scene.json` with one `mesh` solid per mesh, a palette from the material colours and a turnaround preview. Continue with `scene_open` on that scene. It needs code allowed; textures are not used. Details: `ink_docs` with `topic: "three-modeling"`, example `examples/three/tank.mjs`.
+For hard-surface objects (vehicles, buildings, machines) a three.js script is often easier than SDF solids. Write a `.mjs` file that exports `({ THREE, addon }) => Object3D` (use the `THREE` passed in, do not import it; name the meshes), then call `model_three` with `script`, `out` and usually `size`. It writes `out/scene.json` with one `mesh` solid per mesh, one palette role per material (named by `material.userData.role` or `material.name`; reuse one material per colour) and a turnaround preview. Pass `pixelSize: 1` for full-resolution sprites (the default 2 halves them). Continue with `scene_open` on that scene. It needs code allowed; textures are not used. Details: `ink_docs` with `topic: "three-modeling"`, example `examples/three/tank.mjs`.
 
 ## When the ink-studio MCP tools are missing
 
