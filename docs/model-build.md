@@ -21,6 +21,7 @@ voxel model     ─┘
 | `grammar` | `.grammar.json`: an L-system or a split grammar | Rules instead of pieces: plants and branching things; buildings, shelves, fences. | no |
 | `stack` | `.stack.json` naming PNG slices | Sprite stacking: draw horizontal slices in a pixel editor, keep every colour exact. | no |
 | `splat` | `.ply` (Gaussian splats or a coloured point cloud), or `.splat.json` with settings | Real objects from photogrammetry or a splat trainer, turned into pixel art. | no |
+| `glb` | `.glb` or `.gltf`: a finished mesh, textured, vertex-coloured or with plain materials | Meshes made elsewhere: image-to-3D generators (TRELLIS.2, Hunyuan3D), photogrammetry, asset packs, other 3D tools. | no |
 | `depth` | `.depth.json`: a drawn sprite plus a grey depth map, mirrored, flat or with a drawn back | Pixel first with relief: one picture says what it looks like, one how far each pixel stands out. | no |
 | `terrain` | `.terrain.json`: a height picture or noise, colour bands, slope rock, water | Landscape tiles, islands, hills. | no |
 | `level` | `.level.json`: a tile map and sectors with floor heights | Dungeons, interiors, town plans, in the manner of Wolfenstein's grids and Doom's sectors. | no |
@@ -231,6 +232,32 @@ continues as a voxel model. [examples/stack/](../examples/stack/) stacks the vox
   continues as a voxel model (`hard: false` by default, so it reads as one soft solid).
 - Captures come from your own photos (for example with OpenSplat, which runs on Apple GPUs) or any 3DGS trainer.
   [examples/splat/tank.ply](../examples/splat/tank.ply) is a stand-in: 28,000 points sampled from the CadQuery tank.
+
+## Finished meshes (glTF)
+
+`model_build` reads a `.glb`, or a `.gltf` with its companion files in the same folder, node by node with the node
+transforms of the default scene. Every triangle primitive becomes a part:
+
+- **Textured or vertex-coloured**: the colour at each vertex (base colour factor × base colour texture × `COLOR_0`) goes
+  in as a vertex colour, and the automatic mesh look clusters those colours into `hues` families. A vertex can only
+  carry what the texture shows at that vertex, so textured triangles are split first until no edge is longer than about
+  1.5 art pixels of the finished sprite (from `art`). A twelve-triangle crate keeps its painted planks; a dense
+  generated mesh is left almost as it is. Splitting stops at 2 million triangles, with a warning.
+- **Plain material**: one palette role, named after the material, as with the other mesh engines.
+
+Textures must be PNG: trellis2mlx, trimesh and Blender's exporter write PNG by default. Draco or meshopt compressed
+meshes and JPEG, WebP or KTX2 textures are refused with a hint to export again. Open meshes (holes left by a generator)
+bake as sheets with thickness; the build warns about them.
+
+Image-to-3D generators are the main source: a picture of the object goes in, a textured mesh comes out, and this
+engine turns it into pixel art. They redraw the surface rather than copy the picture, so give them softly lit,
+shaded pictures on a transparent background; flat vector art tends to come back dark. On Apple Silicon,
+[trellis2mlx](https://github.com/lyonsno/trellis2mlx) runs TRELLIS.2 locally (MIT code and weights, plus Meta's gated
+DINOv3 encoder).
+
+```bash
+ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/studio/out/lantern","size":2}'
+```
 
 ## Depth maps (layered depth)
 

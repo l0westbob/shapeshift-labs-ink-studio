@@ -161,7 +161,9 @@ function sceneHeader({ name, prefix, palette, roles, pixelStyle, pixelSize, sun 
   };
 }
 
-const cameraFor = (height, span) => ({ target: [0, round(height / 2), 0], dist: round(span * 1.7), pitch: 0.35, yaw: 0.6 });
+/* far enough for the longest side (span x 1.7 frames long models such as vehicles) and for the bounding sphere (`radius`,
+   half the box diagonal), so compact models such as crates and generated props do not fill the frame */
+const cameraFor = (height, span, radius = 0) => ({ target: [0, round(height / 2), 0], dist: round(Math.max(span * 1.7, radius * 2.75)), pitch: 0.35, yaw: 0.6 });
 
 /* --- raw preview ------------------------------------------------------------------------------------------------------ */
 
@@ -210,7 +212,8 @@ function dioramaFor(parts, { size, cells = 96, hues, pixelStyle, header, files, 
     else if (hues) solid.hues = hues;
     return solid;
   });
-  return { ...header, camera: cameraFor((bounds.hi[1] - bounds.lo[1]) * k, extent * k), solids };
+  const radius = Math.hypot(bounds.hi[0] - bounds.lo[0], bounds.hi[1] - bounds.lo[1], bounds.hi[2] - bounds.lo[2]) / 2;
+  return { ...header, camera: cameraFor((bounds.hi[1] - bounds.lo[1]) * k, extent * k, radius * k), solids };
 }
 
 /* a part's bounds where the diorama puts it: scaled to `size`, centred on x and z, standing on y = 0 */

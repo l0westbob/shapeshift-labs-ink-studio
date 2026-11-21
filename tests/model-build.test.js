@@ -643,3 +643,103 @@ test('review fixes: OpenSCAD names an empty part; subd ignores stray vertices an
   fs.writeFileSync(path.join(dir, 'crease.subd.json'), JSON.stringify({ cages: [{ ...box, creases: [0, 1] }] }));
   assert.match(fails(await call({ source: path.join(dir, 'crease.subd.json'), out: path.join(dir, 'crease'), preview: false }, {}), 'BUILD_FAILED').message, /creases\[0\] is a pair/);
 });
+
+/* a GLB written the way generators write them: a node with a transform, one primitive, optional texture or colours */
+function glbOf(file, { texture, colours, material = {}, translation = [0, 0, 0], extensionsRequired, extra } = {}) {
+  const { document } = require('../cli/glb-file.js'), png = require('../cli/png.js');
+  const doc = document(), pos = [], uv = [], index = [];
+  /* a cube with its own corners per face, so every edge is a UV seam */
+  const faces = [[[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]], [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]], [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
+    [[-1, -1, 1], [-1, -1, -1], [1, -1, -1], [1, -1, 1]], [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]]];
+  for (const face of faces) {
+    const base = pos.length / 3;
+    face.forEach((p, i) => (pos.push(...p), uv.push([0, 1, 1, 0][i], [1, 1, 0, 0][i])));
+    index.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const attributes = { POSITION: doc.accessor(Float32Array.from(pos), 'VEC3', { bounds: true }) };
+  const pbr = { metallicFactor: 0, ...material.pbr };
+  if (texture) {
+    attributes.TEXCOORD_0 = doc.accessor(Float32Array.from(uv), 'VEC2');
+    pbr.baseColorTexture = { index: doc.texture(texture.bytes ?? png.encode(texture.w, texture.h, texture.rgb), 'paint', texture.mime) };
+  }
+  if (colours) attributes.COLOR_0 = doc.accessor(Float32Array.from({ length: 24 * 3 }, (_, i) => colours[i % 3]), 'VEC3');
+  const mat = doc.add('materials', { name: material.name, pbrMetallicRoughness: pbr });
+  const mesh = doc.add('meshes', { name: 'crate', primitives: [{ attributes, indices: doc.accessor(Uint32Array.from(index), 'SCALAR'), material: mat, ...extra }] });
+  doc.gltf.scenes[0].nodes.push(doc.add('nodes', { name: 'crate', mesh, translation }));
+  if (extensionsRequired) doc.gltf.extensionsRequired = extensionsRequired;
+  fs.writeFileSync(file, doc.finish());
+  return file;
+}
+
+test('the glb engine keeps texture colours on finished meshes, splitting textured triangles to about a pixel, without code', async t => {
+  const dir = tempDir(t);
+  /* left half red, right half blue */
+  const w = 8, rgb = new Uint8Array(w * w * 3);
+  for (let i = 0; i < w * w; i++) rgb.set(i % w < w / 2 ? [200, 30, 30] : [30, 60, 200], i * 3);
+  const source = glbOf(path.join(dir, 'crate.glb'), { texture: { w, h: w, rgb }, translation: [5, 1, 0] });
+  const result = ok(await call({ source, out: path.join(dir, 'crate'), preview: false }, {}));
+  assert.equal(result.engine, 'glb');
+  assert.equal(result.glb.textured, 1);
+  assert.ok(result.triangles > 2000, 'twelve triangles are split towards the pixel size: ' + result.triangles);
+  assert.equal(result.parts[0].open, 0, 'both sides of every seam split alike, so the welded cube is closed');
+  assert.deepEqual(result.roles, [], 'textured parts take colour families, not roles');
+
+  const mesh = Scenes.studio().readMesh(path.join(result.directory, result.parts[0].file));
+  let red = 0, blue = 0;
+  for (let i = 0; i < mesh.vcol.length; i += 3) {
+    const [r, , b] = [mesh.vcol[i], mesh.vcol[i + 1], mesh.vcol[i + 2]];
+    if (r > b * 2) red++;
+    else if (b > r * 2) blue++;
+  }
+  assert.ok(red > 100 && blue > 100 && Math.abs(red - blue) / (red + blue) < 0.2, 'both texture halves reach the vertices: ' + red + ' red, ' + blue + ' blue');
+
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  assert.deepEqual(spec.solids[0].at, [0, 0, 0], 'the node translation moved the cube, and the diorama centres it on the ground');
+  assert.ok(spec.camera.dist >= Math.hypot(2, 2, 2) / 2 * 2.75 - 1e-3, 'a compact model is framed by its bounding sphere: ' + spec.camera.dist);
+  assert.equal((await validate(result.scene)).valid, true);
+});
+
+test('the glb engine: plain materials become roles, COLOR_0 becomes vertex colours, unreadable files say why', async t => {
+  const dir = tempDir(t);
+  const plain = ok(await call({ source: glbOf(path.join(dir, 'plain.glb'), { material: { name: 'Rust Metal', pbr: { baseColorFactor: [0.3, 0.05, 0.02, 1] } } }), out: path.join(dir, 'plain'), preview: false }, {}));
+  assert.deepEqual(plain.roles, ['rust-metal']);
+  assert.equal(plain.glb.textured, 0);
+
+  const tinted = ok(await call({ source: glbOf(path.join(dir, 'tinted.glb'), { colours: [0.1, 0.6, 0.1] }), out: path.join(dir, 'tinted'), preview: false }, {}));
+  assert.deepEqual(tinted.roles, []);
+  const mesh = Scenes.studio().readMesh(path.join(tinted.directory, tinted.parts[0].file));
+  assert.ok(mesh.vcol[1] > mesh.vcol[0] * 2, 'the vertex colour is kept (readMesh gives sRGB): ' + Array.from(mesh.vcol.slice(0, 3)));
+  assert.equal(tinted.triangles, 12, 'untextured meshes are not split');
+
+  const jpeg = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]), mime: 'image/jpeg' };
+  assert.match(fails(await call({ source: glbOf(path.join(dir, 'jpeg.glb'), { texture: jpeg }), out: path.join(dir, 'jpeg'), preview: false }, {}), 'BUILD_FAILED').message, /only PNG textures/);
+  assert.match(fails(await call({ source: glbOf(path.join(dir, 'draco.glb'), { extensionsRequired: ['KHR_draco_mesh_compression'] }), out: path.join(dir, 'draco'), preview: false }, {}), 'BUILD_FAILED').message, /without mesh compression/);
+
+  /* a .gltf may only pull companion files from its own folder */
+  const gltf = path.join(dir, 'outside.gltf');
+  fs.writeFileSync(gltf, JSON.stringify({ asset: { version: '2.0' }, buffers: [{ uri: '../secret.bin', byteLength: 4 }] }));
+  assert.match(fails(await call({ source: gltf, out: path.join(dir, 'outside'), preview: false }, {}), 'BUILD_FAILED').message, /outside its folder/);
+});
+
+test('refine splits long edges alike on both sides of a seam and carries attributes to the midpoints', () => {
+  const { refine } = require('../cli/glb-model.js');
+  /* two triangles that share the edge (1,0,0)-(0,1,0) by position but not by vertex */
+  const pos = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const uv = { data: Float32Array.from([0, 0, 1, 0, 0, 1, 0.5, 0, 1, 1, 0.5, 1]), lanes: 2 };
+  const fine = refine(pos, [0, 1, 2, 3, 4, 5], 0.3, 1e5, [uv]);
+  const edges = new Map(), key = i => [0, 1, 2].map(k => Math.round(fine.pos[i * 3 + k] * 1e5)).join(',');
+  for (let t = 0; t < fine.index.length; t += 3)
+    for (let e = 0; e < 3; e++) {
+      const a = key(fine.index[t + e]), b = key(fine.index[t + ((e + 1) % 3)]), k = a < b ? a + '|' + b : b + '|' + a;
+      edges.set(k, (edges.get(k) ?? 0) + 1);
+    }
+  const boundary = [...edges.values()].filter(n => n === 1).length;
+  const longest = Math.max(...Array.from({ length: fine.index.length }, (_, i) => {
+    const a = fine.index[i], b = fine.index[i % 3 === 2 ? i - 2 : i + 1];
+    return Math.hypot(fine.pos[a * 3] - fine.pos[b * 3], fine.pos[a * 3 + 1] - fine.pos[b * 3 + 1]);
+  }));
+  assert.ok(longest <= 0.3, 'no edge is longer than the limit: ' + longest);
+  assert.equal(boundary, 16, 'only the outer square is open (4 sides split into 4): no cracks along the shared diagonal');
+  const [u0, v0] = [fine.attributes[0][6 * 2], fine.attributes[0][6 * 2 + 1]];
+  assert.ok(Number.isFinite(u0) && Number.isFinite(v0) && fine.attributes[0].length === fine.pos.length / 3 * 2, 'every vertex has its uv');
+});
