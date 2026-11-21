@@ -20,6 +20,16 @@ import runpy
 import sys
 
 
+class Shown:
+    """one show_object call, kept apart from dicts the script returns"""
+
+    def __init__(self, shape, name=None, color=None, role=None):
+        self.shape, self.name, self.color, self.role = shape, name, color, role
+
+
+SPEC_KEYS = {"shape", "color", "role"}
+
+
 def colour_of(value, cq):
     """sRGB 0xrrggbb, or None"""
     if value is None:
@@ -37,7 +47,13 @@ def colour_of(value, cq):
         value = cq.Color(value)
     if hasattr(value, "toTuple"):
         return colour_of(value.toTuple(), cq)
-    raise ValueError("not a colour: %r" % (value,))
+    # build123d Color: to_tuple(), or iterable
+    if hasattr(value, "to_tuple"):
+        return colour_of(tuple(value.to_tuple()), cq)
+    try:
+        return colour_of(tuple(value), cq)
+    except TypeError:
+        raise ValueError("not a colour: %r" % (value,))
 
 
 def shapes_of(obj, cq):
@@ -59,6 +75,8 @@ def shapes_of(obj, cq):
 def parts_of(model, cq, name="", colour=None, role=None):
     """(name, shape, colour, role) for every shape, with assembly locations applied"""
     out = []
+    if isinstance(model, Shown):
+        return parts_of(model.shape, cq, model.name or name, model.color if model.color is not None else colour, model.role or role)
     if isinstance(model, cq.Assembly):
 
         def walk(assy, loc, inherited, path):
@@ -75,11 +93,13 @@ def parts_of(model, cq, name="", colour=None, role=None):
 
         walk(model, cq.Location(), colour_of(colour, cq), name)
         return out
-    if isinstance(model, dict) and not ("shape" in model and len(model) <= 3):
+    # {"shape", "color", "role"} describes one part; any other dict names its parts
+    is_spec = isinstance(model, dict) and "shape" in model and set(model) <= SPEC_KEYS
+    if isinstance(model, dict) and not is_spec:
         for key, value in model.items():
             out += parts_of(value, cq, str(key), colour, role)
         return out
-    if isinstance(model, dict):
+    if is_spec:
         return parts_of(model["shape"], cq, name, model.get("color", colour), model.get("role", role))
     if isinstance(model, tuple) and len(model) == 2 and not hasattr(model[1], "wrapped") and not isinstance(model[1], cq.Workplane):
         return parts_of(model[0], cq, name, model[1], role)
@@ -105,7 +125,7 @@ def main():
 
     def show_object(obj, name=None, options=None, **_):
         options = options or {}
-        shown.append({"shape": obj, "color": options.get("color"), "role": options.get("role"), "name": name})
+        shown.append(Shown(obj, name, options.get("color"), options.get("role")))
 
     scope = runpy.run_path(script, init_globals={"cq": cq, "show_object": show_object}, run_name="__ink_studio__")
     if callable(scope.get("build")):
@@ -113,7 +133,7 @@ def main():
     elif "result" in scope:
         model = scope["result"]
     elif shown:
-        model = {item["name"] or "part-%d" % (i + 1): item for i, item in enumerate(shown)}
+        model = [item if item.name else Shown(item.shape, "part-%d" % (i + 1), item.color, item.role) for i, item in enumerate(shown)]
     else:
         raise SystemExit("The script makes no model: define build(), set result, or call show_object()")
 

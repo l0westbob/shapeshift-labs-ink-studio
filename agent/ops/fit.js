@@ -36,12 +36,19 @@ function targetsOf(list, root) {
     if (target.views) {
       const file = path.resolve(root, target.views);
       if (!fs.existsSync(file)) throw new OpError('NOT_FOUND', 'No views file at ' + file, { path: where + '/views' });
-      const source = JSON.parse(fs.readFileSync(file, 'utf8'));
+      let source;
+      try {
+        source = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch (error) {
+        throw new OpError('INVALID_JSON', error.message, { path: where + '/views' });
+      }
       for (const [view, rows] of Object.entries(source.views ?? {})) out.push(gridTarget(view, rows, source.colours, where));
     } else if (target.rows) out.push(gridTarget(target.view, target.rows, target.colours, where));
     else if (target.image) {
       if (!CAMERAS[target.view]) throw new OpError('INVALID_INPUT', 'A target needs a view: ' + Object.keys(CAMERAS).join(', '), { path: where + '/view' });
-      const image = PNG().read(path.resolve(root, target.image));
+      const imageFile = path.resolve(root, target.image);
+      if (!fs.existsSync(imageFile)) throw new OpError('NOT_FOUND', 'No image at ' + imageFile, { path: where + '/image' });
+      const image = PNG().read(imageFile);
       const bg = target.background !== undefined ? rgbOf(colourValue(target.background)) : [...image.rgb.subarray(0, 3)];
       const colours = new Map(), cells = [];
       for (let p = 0; p < image.w * image.h; p++) {
@@ -96,8 +103,10 @@ function compare(target, image, background, families) {
   for (let y = rb.y0; y < rb.y0 + rb.h; y++) for (let x = rb.x0; x < rb.x0 + rb.w; x++) if (filledAt(x, y)) (renderArea++, (rcx += x + 0.5), (rcy += y + 0.5));
   (tcx /= targetArea), (tcy /= targetArea), (rcx /= renderArea), (rcy /= renderArea);
   const k = Math.sqrt(targetArea / renderArea); /* target cells per render pixel */
-  const x0 = Math.floor(Math.min(tb.x0, tcx - (rb.w * k) / 2)), x1 = Math.ceil(Math.max(tb.x0 + tb.w, tcx + (rb.w * k) / 2));
-  const y0 = Math.floor(Math.min(tb.y0, tcy - (rb.h * k) / 2)), y1 = Math.ceil(Math.max(tb.y0 + tb.h, tcy + (rb.h * k) / 2));
+  /* the window covers the target and the whole aligned render; aligned on centroids, a lopsided render reaches further
+     to one side than half its width */
+  const x0 = Math.floor(Math.min(tb.x0, tcx + (rb.x0 - rcx) * k)), x1 = Math.ceil(Math.max(tb.x0 + tb.w, tcx + (rb.x0 + rb.w - rcx) * k));
+  const y0 = Math.floor(Math.min(tb.y0, tcy + (rb.y0 - rcy) * k)), y1 = Math.ceil(Math.max(tb.y0 + tb.h, tcy + (rb.y0 + rb.h - rcy) * k));
   let both = 0, either = 0, same = 0;
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
@@ -219,6 +228,12 @@ defineOp({
       for (const pointer of list)
         if (typeof getAt(base, pointer) !== 'number') throw new OpError('INVALID_INPUT', pointer + ' is not a number in the diorama', { path: where });
       if (!(p.max > p.min)) throw new OpError('INVALID_INPUT', 'max must be above min', { path: where });
+      /* paths move together to one value, so they must start at one value (mirrored parts at +x and -x need two params) */
+      const starts = list.map(pointer => getAt(base, pointer));
+      if (starts.some(v => v !== starts[0]))
+        throw new OpError('INVALID_INPUT', 'paths start at different values (' + starts.join(', ') + '); they would all be set to one', { path: where, hint: 'use one param per path, or paths that share a value' });
+      if (starts[0] < p.min || starts[0] > p.max)
+        throw new OpError('INVALID_INPUT', list[0] + ' is ' + starts[0] + ', outside [' + p.min + ', ' + p.max + ']', { path: where });
       p.list = list;
     });
     const toUnit = (p, v) => (v - p.min) / (p.max - p.min);
@@ -284,6 +299,8 @@ defineOp({
     fs.mkdirSync(dirOut, { recursive: true });
     const bestSpec = specFor(best.unit);
     /* mesh assets are resolved next to the scene, so a fitted copy elsewhere points back at the originals */
+    if (dir && path.resolve(dir) !== dirOut && typeof bestSpec.prefabLibrary === 'string' && !path.isAbsolute(bestSpec.prefabLibrary))
+      bestSpec.prefabLibrary = path.relative(dirOut, path.resolve(dir, bestSpec.prefabLibrary));
     if (dir && path.resolve(dir) !== dirOut)
       for (const solid of Scenes.kit().KIT.diorama.solids(bestSpec))
         if (solid.kind === 'mesh' && typeof solid.asset === 'string' && !path.isAbsolute(solid.asset)) solid.asset = path.relative(dirOut, path.resolve(dir, solid.asset));

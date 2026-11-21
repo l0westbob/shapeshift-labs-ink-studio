@@ -27,16 +27,20 @@ async function buildModel(script, { timeout = 300000, ...options }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ink-blender-')), json = path.join(tmp, 'parts.json');
   let data;
   try {
-    await run(blender, ['-b', '--factory-startup', '--python-exit-code', '1', '--python', RUNNER, '--', script, json], timeout);
+    try {
+      await run(blender, ['-b', '--factory-startup', '--python-exit-code', '1', '--python', RUNNER, '--', script, json], timeout);
+    } catch (error) {
+      /* only a failed spawn means Blender is missing; a script that fails exits with an error instead */
+      if (error.code === 'ENOENT' && String(error.syscall).startsWith('spawn')) throw Object.assign(new Error('No Blender at ' + blender), { code: 'BLENDER_MISSING' });
+      if (error.killed) throw Object.assign(new Error('Blender ran longer than ' + timeout / 1000 + ' s'), { code: 'TIMEOUT' });
+      /* the traceback is on stderr; what the script printed on stdout must not be taken for the error */
+      const lines = String(error.stderr || '').split('\n').filter(Boolean);
+      const last = lines.filter(line => /^\w+(Error|Exception|Exit)\b:?/.test(line.trim())).pop() || lines.filter(line => /Error|Exception/.test(line)).pop() || lines.pop() || 'Blender failed';
+      const where = lines.reverse().find(line => line.includes('File "' + script + '"'));
+      throw Object.assign(new Error(last.trim()), { where: where?.trim() });
+    }
+    if (!fs.existsSync(json)) throw new Error('The script ended before the model was written (did it exit early?)');
     data = JSON.parse(fs.readFileSync(json, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') throw Object.assign(new Error('No Blender at ' + blender), { code: 'BLENDER_MISSING' });
-    if (error.killed) throw Object.assign(new Error('Blender ran longer than ' + timeout / 1000 + ' s'), { code: 'TIMEOUT' });
-    const text = String(error.stderr || '') + String(error.stdout || '');
-    const lines = text.split('\n').filter(Boolean);
-    const last = lines.filter(line => /Error|Exception/.test(line)).pop() || lines.pop() || 'Blender failed';
-    const where = lines.reverse().find(line => line.includes('File "' + script + '"'));
-    throw Object.assign(new Error(last.trim()), { where: where?.trim() });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

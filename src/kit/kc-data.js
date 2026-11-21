@@ -1004,9 +1004,24 @@
             bad(path + '.key.' + letter, 'a key is one letter (not "." or a space, which are empty)');
           matOk(material, path + '.key.' + letter);
         }
-        if ((s.layers === undefined) !== (s.front === undefined))
+        if (Array.isArray(s.cell) && !s.cell.every(c => isNum(c) && c > 0)) bad(path + '.cell', 'every block size is a number above 0');
+        /* plans: a string, a list of row strings, or [plan, n] with n a whole number of layers */
+        const plans = s.layers ?? s.front, where = path + (s.layers ? '.layers' : '.front');
+        let shapeOk = Array.isArray(plans) && plans.length > 0;
+        if (!shapeOk && plans !== undefined) bad(where, 'a list of plans, at least one');
+        if (shapeOk)
+          plans.forEach((plan, i) => {
+            const repeat = Array.isArray(plan) && typeof plan[1] === 'number';
+            const rows = repeat ? plan[0] : plan;
+            if (repeat && !(Number.isInteger(plan[1]) && plan[1] >= 1 && plan[1] <= 4096))
+              (shapeOk = false), bad(where + '[' + i + ']', 'a repeat count is a whole number from 1 to 4096');
+            if (!(typeof rows === 'string' || (Array.isArray(rows) && rows.every(r => typeof r === 'string'))))
+              (shapeOk = false), bad(where + '[' + i + ']', 'a plan is a string with rows parted by "/", or a list of row strings');
+          });
+        if (shapeOk)
           try {
-            K.vox.parse({ layers: s.layers, front: s.front, mirror: s.mirror, key: s.key });
+            const parsed = K.vox.parse({ layers: s.layers, front: s.front, mirror: s.mirror, key: s.key });
+            if (!parsed.grid.some(Boolean)) bad(where, 'the plans hold no blocks', 'letters from key make blocks; "." and spaces are empty');
           } catch (error) {
             bad(path, error.message.replace(/^vox: /, ''), 'every letter in the plans must be in key; "." and spaces are empty');
           }
@@ -1558,7 +1573,9 @@
           const place = { at: s.at, yaw: s.yaw, anchor: s.anchor, ...baseOptions };
           /* one solid per letter; held (inside a join or with modifiers) they are unioned into one */
           if (baseOptions.hold) {
-            const pieces = S.takeSolids(() => S.vox(model, place));
+            /* held solids are not placed, so they come back from S.vox itself rather than from takeSolids */
+            const pieces = S.vox(model, place);
+            if (!pieces.length) throw new Error('This vox model has no blocks');
             p = pieces.length === 1 ? pieces[0] : S.join('union', pieces[0], pieces.slice(1), { hold: true, r: 0, mat: m });
           } else p = S.vox(model, place);
         } else if (k === 'mesh') {

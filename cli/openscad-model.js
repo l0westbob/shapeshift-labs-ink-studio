@@ -76,9 +76,17 @@ async function buildModel(script, { timeout = 300000, ...options }) {
       const echo = path.join(tmp, 'parts.echo');
       await render('echo(INK_PARTS = is_undef(PARTS) ? undef : PARTS);\n', echo);
       const text = fs.readFileSync(echo, 'utf8').match(/INK_PARTS = (.*)/)?.[1];
-      if (text && text.trim() !== 'undef') list = JSON.parse(text.replace(/\bundef\b/g, 'null'));
+      if (text && text.trim() !== 'undef') {
+        try {
+          list = JSON.parse(text.replace(/\bundef\b/g, 'null'));
+        } catch {
+          /* OpenSCAD echoes strings without escaping, so a quote in a part name cannot be read back */
+          throw Object.assign(new Error('PARTS could not be read back (' + text.slice(0, 120) + '); keep part names to letters, digits, - and _'), { parsed: true });
+        }
+      }
     } catch (error) {
-      if (error.code === 'ENOENT') throw Object.assign(new Error('No OpenSCAD at ' + binary), { code: 'OPENSCAD_MISSING' });
+      if (error.parsed) throw error;
+      if (error.code === 'ENOENT' && String(error.syscall).startsWith('spawn')) throw Object.assign(new Error('No OpenSCAD at ' + binary), { code: 'OPENSCAD_MISSING' });
       throw scadError(error, script);
     }
     const { roleFor, buildFromParts } = require('./model-core.js');
@@ -89,10 +97,13 @@ async function buildModel(script, { timeout = 300000, ...options }) {
         throw new Error('PARTS must be a list of ["name", "#rrggbb", "role"] entries');
       for (const [name, colour, role] of list) {
         const stl = path.join(tmp, name.replace(/[^a-z0-9-_]/gi, '_') + '.stl');
+        if (!/^[\w-]+$/.test(name)) throw new Error('Part name "' + name + '" in PARTS: use letters, digits, - and _');
         try {
-          await render('part("' + name.replace(/"/g, '\\"') + '");\n', stl, 'binstl');
+          await render('part("' + name + '");\n', stl, 'binstl');
         } catch (error) {
-          throw scadError(error, script);
+          const failed = scadError(error, script);
+          /* an empty part makes OpenSCAD exit with "top level object is empty": say which part */
+          throw Object.assign(new Error('Part "' + name + '": ' + failed.message), { where: failed.where });
         }
         parts.push({ name, pos: yUp(readStl(stl)), role: roleFor(role, colourOf(colour)) });
       }

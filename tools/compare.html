@@ -85,12 +85,14 @@ const THREE = await import('three');
 const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
 const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
 
+const { esc, sameOrigin } = await import('./tune-controls.mjs');
 const manifestUrl = new URLSearchParams(location.search).get('manifest') || '/studio/out/compare-models/manifest.json';
 let manifest;
 try {
+  if (!sameOrigin(manifestUrl)) throw new Error('manifests come from this server only');
   manifest = await (await fetch(manifestUrl, { cache: 'no-store' })).json();
 } catch {
-  document.getElementById('groups').innerHTML = `<p class="error">No manifest at <code>${manifestUrl}</code>. Run <code>node scripts/compare-models.js</code> first.</p>`;
+  document.getElementById('groups').innerHTML = `<p class="error">No manifest at <code>${esc(manifestUrl)}</code> on this server. Run <code>node scripts/compare-models.js</code> first.</p>`;
   throw new Error('no manifest');
 }
 document.getElementById('when').textContent = 'built ' + new Date(manifest.created).toLocaleString();
@@ -107,7 +109,7 @@ const { buildControls, renderTuned, STYLE } = await import('./tune-controls.mjs'
 document.head.insertAdjacentHTML('beforeend', `<style>${STYLE}</style>`);
 const bakedRows = [];
 const drawer = document.getElementById('drawer'), toggle = document.getElementById('tuneToggle'), status = document.getElementById('tuneStatus');
-let tuning = false, wanted = null, debounce = null;
+let tuning = false, wanted = null, debounce = null, generation = 0;
 const tuner = buildControls(document.getElementById('tuneControls'), () => {
   tuning = true;
   clearTimeout(debounce);
@@ -125,8 +127,9 @@ document.getElementById('tuneReset').addEventListener('click', () => {
   tuner.reset();
   tuning = false;
   wanted = null;
+  generation++; /* renders still on their way are dropped when they arrive */
   for (const row of bakedRows) {
-    row.img.src = row.entry.baked + bust;
+    row.img.src = sameOrigin(row.entry.baked) ? row.entry.baked + bust : '';
     row.turn.style.display = "";
     row.caption.innerHTML = '';
     row.box.classList.remove('stale');
@@ -155,17 +158,23 @@ function pump() {
 async function renderRow(row) {
   running++;
   row.running = true;
-  const settings = wanted;
+  const settings = wanted, ticket = generation;
   try {
     const result = await renderTuned(row.scene, JSON.parse(settings));
+    if (ticket !== generation) throw Object.assign(new Error('dropped'), { dropped: true });
     row.img.src = 'data:image/png;base64,' + result.image;
     row.turn.style.display = "none";
     const m = result.metrics, ref = m.reference ?? {};
     const grade = (v, r) => `<b class="${v <= r * 1.25 ? 'good' : 'bad'}">${v}</b>`;
     const link = '/tools/tune.html?scene=' + encodeURIComponent(row.scene) + '&settings=' + encodeURIComponent(settings);
-    row.caption.innerHTML = `tuned: ${result.width} px · noise ${grade(m.noise, ref.noise)} · orphans ${grade(m.orphans, ref.orphans)} · ${String(m.tones).toLowerCase().replace('_', ' ')} · spacing ${result.resolved.res} · <a href="${link}" target="_blank">open in tuner</a>`;
+    row.caption.innerHTML = `tuned: ${esc(result.width)} px · noise ${grade(m.noise, ref.noise)} · orphans ${grade(m.orphans, ref.orphans)} · ${esc(String(m.tones).toLowerCase().replace('_', ' '))} · spacing ${esc(result.resolved.res)} · <a href="${esc(link)}" target="_blank">open in tuner</a>`;
   } catch (error) {
-    row.caption.innerHTML = `<span class="bad">${error.message}</span>`;
+    if (!error.dropped) row.caption.innerHTML = `<span class="bad">${esc(error.message)}</span>`;
+  }
+  if (ticket !== generation) {
+    row.running = false;
+    running--;
+    return;
   }
   row.shown = settings;
   row.running = false;
@@ -202,14 +211,16 @@ function makeRow(entry) {
   const row = document.createElement('div');
   row.className = 'row';
   const x = entry.extract ?? {}, b = entry.bake ?? {};
-  row.innerHTML = `<div><h3>${entry.label}</h3><div class="by">${entry.author ?? ''}</div><div class="src">${entry.source ?? ''}</div>${x.note ? `<div class="note">${x.note}</div>` : ''}</div>
+  /* manifest text is data: escaped, and pictures only from this server */
+  const local = url => (sameOrigin(url) ? esc(url + bust) : '');
+  row.innerHTML = `<div><h3>${esc(entry.label)}</h3><div class="by">${esc(entry.author)}</div><div class="src">${esc(entry.source)}</div>${x.note ? `<div class="note">${esc(x.note)}</div>` : ''}</div>
     <div class="glb"></div>
-    <div><div class="bakedbox"><img class="baked" src="${entry.baked}${bust}" alt=""><img class="turn" src="${entry.turn}${bust}" alt=""><div class="tuned"></div></div></div>
+    <div><div class="bakedbox"><img class="baked" src="${local(entry.baked)}" alt=""><img class="turn" src="${local(entry.turn)}" alt=""><div class="tuned"></div></div></div>
     <div>${rows([
       ['triangles in GLB', x.triangles?.toLocaleString()], ['parts', x.parts], ['blocks', x.blocks?.toLocaleString()], ['build time', x.buildSeconds !== undefined ? x.buildSeconds + ' s' : undefined],
       ['noise (ref ' + (b.reference?.noise ?? '') + ')', grade(b.noise, b.reference?.noise)], ['orphans (ref ' + (b.reference?.orphans ?? '') + ')', grade(b.orphans, b.reference?.orphans)],
-      ['tones', b.tones], ['colours used', b.colours], ['splats', b.splats?.toLocaleString()],
-      ['roles', x.roles?.join(', ')], ['warnings', x.warnings?.join('; ')]
+      ['tones', esc(b.tones)], ['colours used', esc(b.colours)], ['splats', b.splats?.toLocaleString()],
+      ['roles', x.roles?.map(esc).join(', ')], ['warnings', x.warnings?.map(esc).join('; ')]
     ])}</div>`;
   /* the baked side, for the tuner: which scene it shows and what it last rendered */
   const box = row.querySelector('.bakedbox');
@@ -223,8 +234,8 @@ function makeRow(entry) {
     if (baked.visible) pump();
   }).observe(box);
   const cell = row.querySelector('.glb');
-  if (!entry.glb) {
-    cell.innerHTML = '<p class="cap">no model.glb</p>';
+  if (!entry.glb || !sameOrigin(entry.glb)) {
+    cell.innerHTML = '<p class="cap">no model.glb on this server</p>';
     return row;
   }
   const canvas = document.createElement('canvas');
@@ -281,7 +292,7 @@ function makeRow(entry) {
     controls.update();
     view.ready = true;
     applyLook(view);
-  }, undefined, () => (cell.innerHTML = `<p class="error">Could not load ${entry.glb}</p>`));
+  }, undefined, () => (cell.innerHTML = `<p class="error">Could not load ${esc(entry.glb)}</p>`));
   return row;
 }
 

@@ -76,7 +76,9 @@ async function buildModel(file, { out, shades = 4, pixelSize, pixelStyle, overwr
       }
     } else throw new Error(where + ' needs points (a stroke), dab (a ball) or scatter');
   });
-  const lo = [0, 1, 2].map(k => Math.min(...points.map(p => p[k]))), hi = [0, 1, 2].map(k => Math.max(...points.map(p => p[k])));
+  /* bounds in a loop: a big painting has more points than Math.min takes as arguments */
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) for (let k = 0; k < 3; k++) (lo[k] = Math.min(lo[k], p[k])), (hi[k] = Math.max(hi[k], p[k]));
   const sceneFile = path.join(out, 'scene.json');
   if (fs.existsSync(sceneFile) && !overwrite) throw Object.assign(new Error('A model already exists in ' + out), { code: 'EXISTS' });
   fs.mkdirSync(out, { recursive: true });

@@ -32,7 +32,7 @@ export default ({ sdf }) => {
       { name: 'turret', colour: '#5b6b2e', role: 'olive', field: turret, bounds: y(1.0, 2.0) },
       { name: 'gun', colour: '#3f4a22', role: 'dark-olive', field: gun, bounds: y(1.1, 1.9) },
       { name: 'cupola', colour: '#3f4a22', role: 'dark-olive', field: cupola, bounds: y(1.6, 2.2) },
-      { name: 'antenna', colour: '#777b72', role: 'steel', field: antenna, bounds: y(1.6, 3.0) }
+      { name: 'antenna', colour: '#777b72', role: 'steel', field: antenna, bounds: [[-1.3, 1.6, 0.45], [-1.1, 3.0, 0.65]] }
     ]
   };
 };

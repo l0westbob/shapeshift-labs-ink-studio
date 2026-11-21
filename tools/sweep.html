@@ -31,6 +31,7 @@
 </header>
 <div id="rows"></div>
 <script type="module">
+const { esc, sameOrigin } = await import('./tune-controls.mjs');
 let manifest;
 try {
   manifest = await (await fetch('/studio/out/resolution-sweep/manifest.json', { cache: 'no-store' })).json();
@@ -49,9 +50,9 @@ for (const entry of manifest.entries) {
   }
   const row = document.createElement('div');
   row.className = 'row';
-  row.innerHTML = `<h3>${entry.label}</h3><div class="cells" style="--n:${entry.cells.length}">${entry.cells.map(c => `
-    <figure><img src="${c.image}${bust}" alt="${c.size} px">
-      <figcaption><b>${c.size} px</b> · res ${c.res} · noise ${c.noise} · orphans ${c.orphans} · ${c.tones.toLowerCase().replace('_', ' ')} · ${c.splats.toLocaleString()} splats · ${c.seconds} s</figcaption></figure>`).join('')}</div>`;
+  row.innerHTML = `<h3>${esc(entry.label)}</h3><div class="cells" style="--n:${Number(entry.cells.length)}">${entry.cells.map(c => `
+    <figure><img src="${sameOrigin(c.image) ? esc(c.image + bust) : ''}" alt="${esc(c.size)} px">
+      <figcaption><b>${esc(c.size)} px</b> · res ${esc(c.res)} · noise ${esc(c.noise)} · orphans ${esc(c.orphans)} · ${esc(String(c.tones).toLowerCase().replace('_', ' '))} · ${Number(c.splats).toLocaleString()} splats · ${esc(c.seconds)} s</figcaption></figure>`).join('')}</div>`;
   document.getElementById('rows').append(row);
 }
 </script>

@@ -56,7 +56,9 @@ async function buildModel(file, options) {
       return z === c.zb && z !== c.zf ? c.back : c.front;
     }
   };
-  const vox = voxSource(grid, { cell: source.cell ?? 0.1, hard: source.hard ?? true, colours: source.colours ?? 'exact', names: source.names, roleOf: h => source.roles?.[h] });
+  /* colour keys in any case: #5B6B2E and #5b6b2e are the same colour */
+  const roles = Object.fromEntries(Object.entries(source.roles ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+  const vox = voxSource(grid, { cell: source.cell ?? 0.1, hard: source.hard ?? true, colours: source.colours ?? 'exact', names: source.names, roleOf: h => roles[h] });
   const report = await require('./vox-model.js').buildFromSource(vox, { ...options, prefix: 'depth' });
   return withCamera(report, { ...source.camera });
 }

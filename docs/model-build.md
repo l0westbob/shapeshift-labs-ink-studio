@@ -36,6 +36,10 @@ The engine follows from the extension unless `engine` is given. `size`, `pixelSi
 ink-agent call model_build '{"source":"/abs/examples/cadquery/tank.py","out":"/abs/studio/out/tank","size":6,"pixelSize":1}' --allow-code
 ```
 
+Script engines (three.js, SDF, subdivision and loft scripts) re-read the script file on every build. A long-running
+server (MCP) keeps modules the script imports cached, so after editing a helper module that a script imports, restart
+the server or keep the model in one file.
+
 ## What every engine writes
 
 | File | What it is |
@@ -420,8 +424,9 @@ until its orthographic renders match target views.
   "out": "studio/out/hut-fit", "iterations": 30, "population": 8 }
 ```
 
-- `params` are JSON pointers to numbers with a range; `paths` moves several fields together (mirrored parts), `step`
-  rounds values (cells, counts).
+- `params` are JSON pointers to numbers with a range; `paths` moves several fields that share a value together (the
+  same height on several parts), `step` rounds values (cells, counts). Mirrored parts at +x and -x need one param each.
+  A start value outside the range is an error.
 - `targets` are the views of a carve source, letter grids `{ view, rows, colours }` or PNGs `{ view, image }`.
 - The score is silhouette overlap plus colour agreement (`weights`, default 1 and 0.5; `lint` adds a pixel-art noise
   penalty). Each render is scaled to the area of its target and centred, so framing and overall scale do not matter but

@@ -36,7 +36,9 @@ function readPly(file) {
   }
   const vertex = elements.find(e => e.name === 'vertex');
   if (!vertex) throw new Error('The PLY file has no vertex element');
-  const columns = Object.fromEntries(vertex.props.map(p => [p.name, new Float64Array(vertex.count)]));
+  /* only the columns the voxeliser reads; a 3DGS file also holds 45 f_rest_* columns that would cost hundreds of MB */
+  const WANTED = /^(x|y|z|f_dc_[0-2]|opacity|scale_[0-2]|red|green|blue)$/;
+  const columns = Object.fromEntries(vertex.props.filter(p => WANTED.test(p.name)).map(p => [p.name, new Float32Array(vertex.count)]));
   let offset = bytes.indexOf('\n', end) + 1;
   if (format === 'ascii') {
     const lines = bytes.subarray(offset).toString().split(/\r?\n/);
@@ -45,7 +47,7 @@ function readPly(file) {
       for (let i = 0; i < e.count; i++, row++) {
         if (e !== vertex) continue;
         const values = lines[row].trim().split(/\s+/).map(Number);
-        e.props.forEach((p, k) => (columns[p.name][i] = values[k]));
+        e.props.forEach((p, k) => columns[p.name] && (columns[p.name][i] = values[k]));
       }
     }
   } else {
@@ -55,7 +57,7 @@ function readPly(file) {
       for (let i = 0; i < e.count; i++) {
         let at = offset + i * stride;
         for (const p of e.props) {
-          columns[p.name][i] = bytes[READ[p.type]](at);
+          if (columns[p.name]) columns[p.name][i] = bytes[READ[p.type]](at);
           at += SIZES[p.type];
         }
       }
@@ -77,7 +79,9 @@ function pointsOf({ count, columns }, { opacity = 0.5 }) {
     if (splat) {
       if (columns.opacity && 1 / (1 + Math.exp(-columns.opacity[i])) < opacity) continue;
       [r, g, b] = [0, 1, 2].map(k => Math.round(255 * Math.min(1, Math.max(0, 0.5 + C0 * columns['f_dc_' + k][i]))));
-      if (columns.scale_0) radius = Math.exp(Math.max(columns.scale_0[i], columns.scale_1[i], columns.scale_2[i]));
+      /* 3DGS has three scales, 2D Gaussian (surfel) files two; the largest present sets the reach */
+      const scales = ['scale_0', 'scale_1', 'scale_2'].map(k => columns[k]?.[i]).filter(Number.isFinite);
+      if (scales.length) radius = Math.exp(Math.max(...scales));
     } else if (columns.red) [r, g, b] = [columns.red[i], columns.green[i], columns.blue[i]];
     else [r, g, b] = [180, 180, 180];
     out.push({ p: [x[i], y[i], z[i]], c: [r, g, b], radius });
@@ -126,9 +130,12 @@ async function buildModel(file, options) {
   points = points.map(pt => ({ ...pt, p: turn(pt.p) }));
   if (points.length < 4) throw new Error('Fewer than four points are left (check opacity and crop)');
 
-  const lo = [0, 1, 2].map(k => Math.min(...points.map(pt => pt.p[k]))), hi = [0, 1, 2].map(k => Math.max(...points.map(pt => pt.p[k])));
+  /* bounds in a loop: spreading millions of points into Math.min overflows the call stack */
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const { p } of points) for (let k = 0; k < 3; k++) (lo[k] = Math.min(lo[k], p[k])), (hi[k] = Math.max(hi[k], p[k]));
   const extent = Math.max(...hi.map((v, k) => v - lo[k])), resolution = config.resolution ?? options.blocks ?? 64, cell = extent / resolution;
-  const n = hi.map((v, k) => Math.max(1, Math.ceil((v - lo[k]) / cell) + 1));
+  /* the highest block index is floor(span / cell), so that many plus one blocks, with a little slack for rounding */
+  const n = hi.map((v, k) => Math.max(1, Math.floor((v - lo[k]) / cell + 1e-9) + 1));
   const id = (x, y, z) => (x * n[1] + y) * n[2] + z;
   const sums = new Map();
   /* each point, and each splat out to its radius (capped at two blocks), votes its colour into the blocks it covers */
@@ -172,12 +179,15 @@ async function buildModel(file, options) {
         queue.push([X, Y, Z]);
       }
     }
+    /* grow the outside back by the same cube the barrier used (26 neighbours), so concave corners do not fill in */
+    const CUBE = [];
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let d = -1; d <= 1; d++) if (a || b || d) CUBE.push([a, b, d]);
     for (let step = 0; step < close; step++) {
       const grow = [];
       for (let i = 0; i < total; i++) {
         if (outside[i] || colourAt.has(i)) continue;
         const [x, y, z] = coords(i);
-        if (STEPS.some(([a, b, d]) => inBox(x + a, y + b, z + d) && outside[id(x + a, y + b, z + d)])) grow.push(i);
+        if (CUBE.some(([a, b, d]) => inBox(x + a, y + b, z + d) && outside[id(x + a, y + b, z + d)])) grow.push(i);
       }
       for (const i of grow) outside[i] = 1;
     }
@@ -191,8 +201,11 @@ async function buildModel(file, options) {
       colourAt.set(i, fill ?? colourAt.get(surface[0]));
     }
   }
-  const { centres, nearest } = kmeans([...colourAt.values()].map(c => c.map(Math.round)), config.colours ?? 6);
-  const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+  if (!colourAt.size) throw new Error('No points landed in the grid (check opacity, crop and up)');
+  const LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const k = Math.round(config.colours ?? 6);
+  if (!(k >= 1 && k <= LETTERS.length)) throw new Error('colours is 1 to ' + LETTERS.length);
+  const { centres, nearest } = kmeans([...colourAt.values()].map(c => c.map(Math.round)), k);
   const colours = Object.fromEntries(centres.map((c, j) => {
     const hex = '#' + ((c[0] << 16) | (c[1] << 8) | c[2]).toString(16).padStart(6, '0');
     return [LETTERS[j], config.names?.[j] ? { colour: hex, role: config.names[j] } : hex];

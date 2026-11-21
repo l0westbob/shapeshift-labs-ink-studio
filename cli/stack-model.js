@@ -46,6 +46,8 @@ async function buildModel(file, options) {
   } else throw new Error('A stack needs "slices": a sheet file with "slice": [w, h], or a list of files');
   const w = Math.max(...slices.map(s => s.w)), h = Math.max(...slices.map(s => s.h));
 
+  /* colour keys in any case: #5B6B2E and #5b6b2e are the same colour */
+  const roles = Object.fromEntries(Object.entries(source.roles ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
   const letterOf = new Map(), colours = {};
   const layers = slices.map(slice => {
     const rows = [];
@@ -59,7 +61,7 @@ async function buildModel(file, options) {
           if (letterOf.size >= LETTERS.length) throw new Error('The slices use more than ' + LETTERS.length + ' colours; reduce the palette');
           const letter = LETTERS[letterOf.size];
           letterOf.set(rgb, letter);
-          const role = source.roles?.[hex(rgb)];
+          const role = roles[hex(rgb)];
           colours[letter] = role ? { colour: hex(rgb), role } : hex(rgb);
         }
         row += letterOf.get(rgb);

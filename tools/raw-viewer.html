@@ -39,9 +39,20 @@ for (const [title, url, baked] of models) {
   const row = document.createElement('div');
   row.className = 'row';
   document.getElementById('rows').append(row);
-  if (baked) {
+  /* scripts and pictures only from this server: a script from elsewhere would run on this origin */
+  const local = u => new URL(u, location.href).origin === location.origin;
+  if (!local(url)) {
+    row.textContent = 'Not loading ' + url + ': scripts come from this server only.';
+    continue;
+  }
+  if (baked && local(baked)) {
     const bakedFigure = document.createElement('figure');
-    bakedFigure.innerHTML = `<img src="${baked}" style="width:260px;height:260px;object-fit:contain;image-rendering:pixelated;background:#0b0d10"><figcaption>${title} · baked (ink-studio)</figcaption>`;
+    const img = document.createElement('img');
+    img.src = baked;
+    img.style.cssText = 'width:260px;height:260px;object-fit:contain;image-rendering:pixelated;background:#0b0d10';
+    const caption = document.createElement('figcaption');
+    caption.textContent = title + ' · baked (ink-studio)';
+    bakedFigure.append(img, caption);
     row.append(bakedFigure);
   }
   const build = (await import(url)).default;

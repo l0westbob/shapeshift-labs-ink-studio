@@ -63,9 +63,9 @@ defineOp({
   async run({ candidates, targets: targetList, out, size = 128, weights = {} }, ctx) {
     const root = ctx.root ?? process.cwd();
     const dirOut = path.resolve(root, out);
-    fs.mkdirSync(dirOut, { recursive: true });
     const w = { clean: weights.clean ?? 0.5, tones: weights.tones ?? 0.2, match: targetList?.length ? weights.match ?? 0.6 : 0 };
     const targets = targetList?.length ? Fit().targetsOf(targetList, root) : [];
+    fs.mkdirSync(dirOut, { recursive: true });
     const { rampOf } = require('../../cli/model-core.js');
     const families = new Map();
     for (const t of targets) for (const c of t.colours) if (!families.has(c)) families.set(c, rampOf(c, 5).map(Fit().rgbOf));
@@ -83,21 +83,28 @@ defineOp({
         rows.push({ label, scene: file, error: error.message, score: -Infinity });
         continue;
       }
-      const shot = SceneOps().renderEntry(entry, { size: { w: size, h: size }, scale: 4, out: path.join(slot, 'baked.png'), overwrite: true, measure: ['stats', 'lint', 'values'] }, ctx);
-      const { lint, values, stats } = shot.metrics;
-      const clean = cleanliness(lint), tones = TONES[values.verdict] ?? 0.3;
-      let match = null;
-      if (targets.length) {
-        const world = Scenes.worldAt(entry);
-        let silhouette = 0, colour = 0;
-        for (const target of targets) {
-          const image = SceneOps().renderImage(world, { view: { ...Fit().CAMERAS[target.view], ortho: true }, size: { w: 96, h: 96 } });
-          const m = Fit().compare(target, image, (image.palette || world.pal)[0], families);
-          silhouette += m.silhouette / targets.length;
-          colour += m.colour / targets.length;
+      let shot, clean, tones, match = null;
+      try {
+        shot = SceneOps().renderEntry(entry, { size: { w: size, h: size }, scale: 4, out: path.join(slot, 'baked.png'), overwrite: true, measure: ['stats', 'lint', 'values'] }, ctx);
+        clean = cleanliness(shot.metrics.lint);
+        tones = TONES[shot.metrics.values.verdict] ?? 0.3;
+        if (targets.length) {
+          const world = Scenes.worldAt(entry);
+          let silhouette = 0, colour = 0;
+          for (const target of targets) {
+            const image = SceneOps().renderImage(world, { view: { ...Fit().CAMERAS[target.view], ortho: true }, size: { w: 96, h: 96 } });
+            const m = Fit().compare(target, image, (image.palette || world.pal)[0], families);
+            silhouette += m.silhouette / targets.length;
+            colour += m.colour / targets.length;
+          }
+          match = { silhouette: round(silhouette), colour: round(colour), score: round((silhouette + 0.5 * colour) / 1.5) };
         }
-        match = { silhouette: round(silhouette), colour: round(colour), score: round((silhouette + 0.5 * colour) / 1.5) };
+      } catch (error) {
+        /* one candidate that fails to bake is a row with its error, not the end of the ranking */
+        rows.push({ label, scene: file, error: error.message, score: -Infinity });
+        continue;
       }
+      const { lint, values, stats } = shot.metrics;
       const total = (w.clean * clean + w.tones * tones + w.match * (match?.score ?? 0)) / (w.clean + w.tones + w.match);
       const glb = path.join(path.dirname(file), 'model.glb');
       rows.push({

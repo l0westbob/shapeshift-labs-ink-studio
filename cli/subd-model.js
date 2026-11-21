@@ -40,7 +40,9 @@ function subdivide({ vertices, faces, creases }) {
     const { faces: fs, edges: es } = around[i];
     const hard = es.filter(k => sharp.has(k) || edges.get(k).faces.length !== 2);
     let q;
-    if (hard.length >= 3) q = p;
+    /* a vertex no face uses stays where it is (it is in no new face either) */
+    if (!es.length) q = p;
+    else if (hard.length >= 3) q = p;
     else if (hard.length === 2) {
       const ends = hard.map(k => (edges.get(k).a === i ? vertices[edges.get(k).b] : vertices[edges.get(k).a]));
       q = [0, 1, 2].map(c => (6 * p[c] + ends[0][c] + ends[1][c]) / 8);
@@ -152,6 +154,11 @@ async function buildModel(file, options) {
     for (const face of c.faces)
       if (!Array.isArray(face) || face.length < 3 || face.some(v => !Number.isInteger(v) || v < 0 || v >= c.vertices.length))
         throw new Error(where + ': every face lists three or more vertex numbers below ' + c.vertices.length);
+    if (!c.vertices.every(p => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite))) throw new Error(where + ': every vertex is [x, y, z]');
+    (c.creases ?? []).forEach((pair, j) => {
+      if (!Array.isArray(pair) || pair.length !== 2 || pair.some(v => !Number.isInteger(v) || v < 0 || v >= c.vertices.length))
+        throw new Error(where + '.creases[' + j + '] is a pair of vertex numbers below ' + c.vertices.length);
+    });
     let mesh = { vertices: c.vertices, faces: c.faces, creases: c.creases };
     for (let l = 0; l < Math.min(5, c.levels ?? 3); l++) mesh = subdivide(mesh);
     return { name: c.name || 'cage-' + (i + 1), ...triangles(mesh), role: roleFor(c.role, colourOf(c.colour)) };

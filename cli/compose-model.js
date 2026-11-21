@@ -59,6 +59,9 @@ function composeSpecs(pieces, { styles, out, header = {} }) {
       if (copy.over?.role) copy.over = { ...copy.over, role: roleName(copy.over.role) };
       return copy;
     };
+    /* meshes without a material take their colours from the palette at bake, so their piece's colours come along */
+    if ((spec.solids ?? []).some(solid => solid.kind === 'mesh' && solid.mat === undefined)) own.forEach(indexOf);
+    if (spec.prefabLibrary !== undefined) warnings.push(label + ': its prefabLibrary is not carried over');
     for (const key of ['motion', 'effects', 'groups', 'timeline'])
       if (spec[key] && (Array.isArray(spec[key]) ? spec[key].length : Object.keys(spec[key]).length)) warnings.push(label + ': its ' + key + ' are not carried over');
     for (const original of spec.solids ?? []) {
@@ -69,6 +72,7 @@ function composeSpecs(pieces, { styles, out, header = {} }) {
         if (!s || typeof s !== 'object') return;
         if (s.kind === 'mesh' && typeof s.asset === 'string' && dir) s.asset = path.relative(out, path.resolve(dir, s.asset)).split(path.sep).join('/');
         for (const field of ['a', 'b', 'of', 'shape']) fix(s[field]);
+        for (const modifier of s.modifiers ?? []) fix(modifier.shape);
       };
       fix(solid);
       if (place && solid.kind !== 'ground') {
@@ -96,7 +100,8 @@ function composeSpecs(pieces, { styles, out, header = {} }) {
       name: header.name ?? path.basename(out), seed: first.seed ?? 1,
       style: header.style ?? first.style ?? 'moss', palette, roles,
       ...(header.light ?? first.light ? { light: header.light ?? first.light } : {}),
-      ...(header.finish ?? first.finish ? { finish: header.finish ?? first.finish } : {}),
+      /* a part's splat spacing was sized to that part alone; model_build sets one for the whole composition */
+      ...(header.finish ?? first.finish ? { finish: (({ res, ...rest }) => rest)(header.finish ?? first.finish) } : {}),
       camera: header.camera ?? first.camera,
       solids
     },
@@ -121,18 +126,32 @@ async function buildModel(file, { out, kit, buildPart, overwrite = false }) {
     if (part.diorama) {
       const scene = path.resolve(base, part.diorama);
       if (!fs.existsSync(scene)) throw new Error(label + ': no diorama at ' + scene);
-      pieces.push({ spec: JSON.parse(fs.readFileSync(scene, 'utf8')), dir: path.dirname(scene), place: part, label });
+      const spec = JSON.parse(fs.readFileSync(scene, 'utf8'));
+      pieces.push({ spec, dir: path.dirname(scene), place: part, label, extent: (spec.camera?.dist ?? 6.8) / 1.7 });
     } else if (part.source) {
       const src = path.resolve(base, part.source);
       const dir = path.join(out, 'sources', String(i + 1).padStart(2, '0') + '-' + path.basename(src).replace(/\..*$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-'));
       const report = await buildPart(src, part.engine, dir, { size: part.size, pixelSize: part.pixelSize, overwrite: true, ...(part.options ?? {}) });
-      pieces.push({ spec: JSON.parse(fs.readFileSync(report.scene, 'utf8')), dir, place: part, label });
+      pieces.push({ spec: JSON.parse(fs.readFileSync(report.scene, 'utf8')), dir, place: part, label, extent: report.extent });
     } else throw new Error(label + ' needs "source" (built with its engine) or "diorama" (a scene file)');
   }
   fs.mkdirSync(out, { recursive: true });
+  /* files of an earlier build into this folder would be taken for this composition's (model_rank, model_check) */
+  for (const stale of ['model.glb', 'model.json', 'raw.png', 'parts']) fs.rmSync(path.join(out, stale), { recursive: true, force: true });
   const { spec, warnings } = composeSpecs(pieces, { styles: kit.diorama.styles, out, header: source });
+  /* the size of the whole composition, from each piece's size and place, frames the camera and sizes the splats; the
+     first piece's camera would fit only that piece */
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const piece of pieces) {
+    const size = (piece.extent ?? 4) * (piece.place.scale ?? 1), at = piece.place.at ?? [0, 0, 0];
+    const box = [[at[0] - size / 2, at[1], at[2] - size / 2], [at[0] + size / 2, at[1] + size, at[2] + size / 2]];
+    for (let k = 0; k < 3; k++) (lo[k] = Math.min(lo[k], box[0][k])), (hi[k] = Math.max(hi[k], box[1][k]));
+  }
+  const extent = Math.max(...hi.map((v, k) => v - lo[k]));
+  if (!source.camera)
+    spec.camera = { ...spec.camera, target: lo.map((v, k) => Math.round(((v + hi[k]) / 2) * 1e4) / 1e4), dist: Math.round(extent * 1.7 * 1e4) / 1e4 };
   fs.writeFileSync(sceneFile, JSON.stringify(spec, null, 2) + '\n');
-  return { directory: out, scene: sceneFile, parts: pieces.map(p => p.label), solids: spec.solids.length, colours: spec.palette.length, roles: Object.keys(spec.roles), warnings, spec };
+  return { directory: out, scene: sceneFile, extent: Math.round(extent * 1e4) / 1e4, parts: pieces.map(p => p.label), solids: spec.solids.length, colours: spec.palette.length, roles: Object.keys(spec.roles), warnings, spec };
 }
 
 module.exports = { buildModel, composeSpecs, materials };

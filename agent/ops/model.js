@@ -37,8 +37,8 @@ const ENGINES = {
   paint: { module: '../../cli/paint-model.js', extensions: ['.paint.json'], code: false, label: 'paintings' },
   openscad: { module: '../../cli/openscad-model.js', extensions: ['.scad'], code: true, label: 'OpenSCAD files' },
   sdf: { module: '../../cli/sdf-model.js', extensions: ['.sdf.mjs', '.sdf.js'], code: true, label: 'SDF scripts' },
-  subd: { module: '../../cli/subd-model.js', extensions: ['.subd.json', '.subd.mjs'], code: file => file.endsWith('.mjs'), label: 'subdivision cages' },
-  loft: { module: '../../cli/loft-model.js', extensions: ['.loft.json', '.loft.mjs'], code: file => file.endsWith('.mjs'), label: 'lofted surfaces' },
+  subd: { module: '../../cli/subd-model.js', extensions: ['.subd.json', '.subd.mjs'], code: file => !file.toLowerCase().endsWith('.json'), label: 'subdivision cages' },
+  loft: { module: '../../cli/loft-model.js', extensions: ['.loft.json', '.loft.mjs'], code: file => !file.toLowerCase().endsWith('.json'), label: 'lofted surfaces' },
   grammar: { module: '../../cli/grammar-model.js', extensions: ['.grammar.json'], code: false, label: 'grammars' },
   stack: { module: '../../cli/stack-model.js', extensions: ['.stack.json'], code: false, label: 'sprite stacks' },
   splat: { module: '../../cli/splat-model.js', extensions: ['.splat.json', '.ply'], code: false, label: 'captures' },
@@ -96,6 +96,9 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
   const buildPart = async (partFile, partEngine, partOut, options) => {
     const name = partEngine ?? engineFor(partFile);
     if (!name || !ENGINES[name] || name === 'compose') throw new Error('Cannot tell the engine of ' + path.basename(partFile));
+    /* the same rule as a top-level build: a part's file must have one of its engine's extensions, so a script cannot pass
+       as data by naming a data engine */
+    if (!matchOf(partFile, name)) throw new Error(path.basename(partFile) + ' is not a ' + ENGINES[name].label.replace(/s$/, '') + ' (' + ENGINES[name].extensions.join(', ') + ')');
     if (runsCode(name, partFile) && !Scenes.codeAllowed(ctx))
       throw Object.assign(new Error(path.basename(partFile) + ' is a ' + ENGINES[name].label.replace(/s$/, '') + ', which runs code'), { code: 'CODE_NOT_ALLOWED' });
     return require(ENGINES[name].module).buildModel(partFile, {

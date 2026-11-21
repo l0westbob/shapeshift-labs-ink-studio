@@ -534,3 +534,112 @@ test('detail follows the art size: cells, splat spacing, capture resolution and 
   assert.deepEqual(big.warnings, []);
   assert.equal(JSON.parse(fs.readFileSync(big.scene, 'utf8')).finish.res, Math.round((6 / 256) * 1e4) / 1e4);
 });
+
+test('review fixes: big captures, surfel scales, colour limits, tall tiles, repeat sizes, colour keys in any case', { timeout: 240000 }, async t => {
+  const dir = tempDir(t), png = require('../cli/png.js');
+  /* 200,000 points: bounds once overflowed the call stack */
+  const count = 200000, buf = Buffer.alloc(count * 15);
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    buf.writeFloatLE(Math.cos(a), i * 15), buf.writeFloatLE((i % 100) / 100, i * 15 + 4), buf.writeFloatLE(Math.sin(a), i * 15 + 8);
+    buf[i * 15 + 12] = 90, buf[i * 15 + 13] = 110, buf[i * 15 + 14] = 50;
+  }
+  fs.writeFileSync(path.join(dir, 'ring.ply'), Buffer.concat([Buffer.from('ply\nformat binary_little_endian 1.0\nelement vertex ' + count + '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n'), buf]));
+  const ring = ok(await call({ source: path.join(dir, 'ring.ply'), out: path.join(dir, 'ring'), preview: false }, {}));
+  assert.equal(ring.points, count);
+  /* 2D Gaussian (surfel) files have two scales */
+  const surfel = ['x', 'y', 'z', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity', 'scale_0', 'scale_1'];
+  const rows = Array.from({ length: 400 }, (_, i) => [Math.cos(i), Math.sin(i), (i % 20) / 20, 0.5, 0, 0, 4, -3, -3]);
+  const body = Buffer.alloc(rows.length * surfel.length * 4);
+  rows.forEach((row, i) => row.forEach((v, k) => body.writeFloatLE(v, (i * surfel.length + k) * 4)));
+  fs.writeFileSync(path.join(dir, 'surfel.ply'), Buffer.concat([Buffer.from('ply\nformat binary_little_endian 1.0\nelement vertex 400\n' + surfel.map(p => 'property float ' + p).join('\n') + '\nend_header\n'), body]));
+  ok(await call({ source: path.join(dir, 'surfel.ply'), out: path.join(dir, 'surfel'), preview: false }, {}));
+  fs.writeFileSync(path.join(dir, 'many.splat.json'), JSON.stringify({ ply: 'ring.ply', colours: 70 }));
+  assert.match(fails(await call({ source: path.join(dir, 'many.splat.json'), out: path.join(dir, 'many'), preview: false }, {}), 'BUILD_FAILED').message, /colours is 1 to 62/);
+  /* a tile taller than the default wall keeps its height */
+  fs.writeFileSync(path.join(dir, 'tower.level.json'), JSON.stringify({ block: 0.5, wall: 2, tiles: { T: { wall: true, height: 4, colour: '#7a6a58' } }, map: ['T'] }));
+  const tower = ok(await call({ source: path.join(dir, 'tower.level.json'), out: path.join(dir, 'tower'), preview: false }, {}));
+  const bounds = JSON.parse(fs.readFileSync(path.join(dir, 'tower', 'model.json'), 'utf8')).parts[0];
+  assert.ok(bounds.hi[1] - bounds.lo[1] >= 4, 'the 4 m wall is not cut at 2 m');
+  void tower;
+  /* repeat needs a size */
+  fs.writeFileSync(path.join(dir, 'bad.grammar.json'), JSON.stringify({ kind: 'split', axiom: 'A', colours: { w: '#ffffff' }, rules: { A: { repeat: 'x', size: 0, into: 'B' }, B: { box: 'w' } } }));
+  assert.match(fails(await call({ source: path.join(dir, 'bad.grammar.json'), out: path.join(dir, 'bad'), preview: false }, {}), 'BUILD_FAILED').message, /repeat needs a size above 0/);
+  /* role keys in upper case */
+  const rgb = new Uint8Array([0x5b, 0x6b, 0x2e]);
+  png.write(path.join(dir, 's.png'), 1, 1, rgb, new Uint8Array([255]));
+  fs.writeFileSync(path.join(dir, 's.stack.json'), JSON.stringify({ slices: ['s.png'], roles: { '#5B6B2E': 'olive' } }));
+  assert.deepEqual(ok(await call({ source: path.join(dir, 's.stack.json'), out: path.join(dir, 's'), preview: false }, {})).roles, ['olive']);
+});
+
+test('review fixes: compose checks part extensions and drops inherited spacing; fit paths share a start; dotted part names', async t => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, 'evil.js'), 'require("fs").writeFileSync(' + JSON.stringify(path.join(dir, 'ran')) + ', "1"); module.exports = () => ({ cages: [] });\n');
+  fs.writeFileSync(path.join(dir, 'x.compose.json'), JSON.stringify({ parts: [{ source: 'evil.js', engine: 'subd' }] }));
+  fails(await call({ source: path.join(dir, 'x.compose.json'), out: path.join(dir, 'x'), preview: false }, {}), 'BUILD_FAILED');
+  assert.equal(fs.existsSync(path.join(dir, 'ran')), false, 'the script never ran');
+
+  fs.writeFileSync(path.join(dir, 'a.vox.json'), JSON.stringify({ cell: 0.1, colours: { o: '#5b6b2e' }, layers: ['oo'] }));
+  fs.writeFileSync(path.join(dir, 'pair.compose.json'), JSON.stringify({ parts: [{ source: 'a.vox.json', size: 0.2 }, { source: 'a.vox.json', size: 6, at: [1, 0, 0] }] }));
+  const pair = ok(await call({ source: path.join(dir, 'pair.compose.json'), out: path.join(dir, 'pair'), preview: false }, {}));
+  assert.ok(JSON.parse(fs.readFileSync(pair.scene, 'utf8')).finish.res > 0.01, 'the composition is not baked at the tiny first part\'s spacing');
+
+  fs.writeFileSync(path.join(dir, 'two.json'), JSON.stringify({ id: 'two', style: 'slate', camera: { target: [0, 0, 0], dist: 4 },
+    solids: [{ kind: 'ball', at: [0.5, 0.3, 0], r: 0.3, mat: 'stone' }, { kind: 'ball', at: [-0.5, 0.3, 0], r: 0.3, mat: 'stone' }] }));
+  const mirrored = await registry.call('scene_fit', { scene: { path: path.join(dir, 'two.json') }, targets: [{ view: 'front', rows: ['ss'], colours: { s: '#777777' } }],
+    params: [{ paths: ['/solids/0/at/0', '/solids/1/at/0'], min: -2, max: 2 }], out: path.join(dir, 'fit') }, { root });
+  assert.equal(mirrored.ok, false);
+  assert.match(mirrored.error.message, /start at different values/);
+
+  const { normalised } = require('../cli/loft-model.js');
+  const rect = normalised([[0.5, 1], [-0.5, 1], [-0.5, -1], [0.5, -1]]), ellipse = normalised([[0, 1], [1, 0], [0, -1], [-1, 0]]);
+  const signed = ring => ring.reduce((s, [u, v], i) => s + u * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * v, 0);
+  assert.ok(signed(rect) > 0 && signed(ellipse) > 0, 'rings run the same way round');
+});
+
+test('review fixes: show_object with names and colours, build123d colours', { skip: noCadquery, timeout: 240000 }, async t => {
+  const dir = tempDir(t), script = path.join(dir, 'shown.py');
+  fs.writeFileSync(script, 'import cadquery as cq\nshow_object(cq.Workplane().box(1, 1, 1), "hull", {"color": "#ff0000", "role": "paint"})\nshow_object(cq.Workplane().sphere(0.4).translate((0, 0, 1)))\n');
+  const shown = ok(await call({ source: script, out: path.join(dir, 'shown'), preview: false }));
+  assert.deepEqual(shown.parts.map(p => [p.name, p.role]), [['hull', 'paint'], ['part-2', 'paint-b4b4b4']]);
+  fs.writeFileSync(script, 'from build123d import Box, Color\nb = Box(1, 1, 1)\nb.color = Color(0.2, 0.4, 0.1)\nb.label = "crate"\nresult = b\n');
+  const b123 = ok(await call({ source: script, out: path.join(dir, 'b123'), overwrite: true, preview: false }));
+  assert.equal(b123.parts[0].role, 'paint-33661a');
+});
+
+test('review fixes: Blender skips hidden cutters and reads viewport colours', { skip: hasBlender ? false : 'Blender is not installed', timeout: 240000 }, async t => {
+  const dir = tempDir(t), script = path.join(dir, 'cut.blender.py');
+  fs.writeFileSync(script, `import bpy
+bpy.ops.mesh.primitive_cube_add(size=2)
+body = bpy.context.object
+body.name = "body"
+m = bpy.data.materials.new("paint")
+m.diffuse_color = (0.1, 0.5, 0.1, 1)
+body.data.materials.append(m)
+bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=3)
+cutter = bpy.context.object
+cutter.hide_viewport = True
+mod = body.modifiers.new("cut", "BOOLEAN")
+mod.object = cutter
+`);
+  const result = ok(await call({ source: script, out: path.join(dir, 'cut'), preview: false }));
+  assert.deepEqual(result.parts.map(p => p.name), ['body'], 'the hidden cutter is not a part');
+  assert.notEqual(result.parts[0].role, 'paint-cccccc');
+  const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
+  const ramp = spec.roles.paint.map(i => spec.palette[i]);
+  assert.ok(ramp.some(c => ((c >> 8) & 255) > ((c >> 16) & 255) + 30), 'the green viewport colour is used, not the grey default');
+});
+
+test('review fixes: OpenSCAD names an empty part; subd ignores stray vertices and checks creases', { timeout: 240000 }, async t => {
+  const dir = tempDir(t);
+  if (hasOpenscad) {
+    fs.writeFileSync(path.join(dir, 'e.scad'), 'PARTS = [["solid", "#777777"], ["ghost", "#777777"]];\nmodule part(name) { if (name == "solid") cube(1); }\n');
+    assert.match(fails(await call({ source: path.join(dir, 'e.scad'), out: path.join(dir, 'e'), preview: false }), 'BUILD_FAILED').message, /Part "ghost"/);
+  }
+  const { cage } = require('../cli/subd-model.js');
+  const box = cage.box();
+  fs.writeFileSync(path.join(dir, 'stray.subd.json'), JSON.stringify({ cages: [{ ...box, vertices: [...box.vertices, [5, 5, 5]], levels: 1 }] }));
+  ok(await call({ source: path.join(dir, 'stray.subd.json'), out: path.join(dir, 'stray'), preview: false }, {}));
+  fs.writeFileSync(path.join(dir, 'crease.subd.json'), JSON.stringify({ cages: [{ ...box, creases: [0, 1] }] }));
+  assert.match(fails(await call({ source: path.join(dir, 'crease.subd.json'), out: path.join(dir, 'crease'), preview: false }, {}), 'BUILD_FAILED').message, /creases\[0\] is a pair/);
+});

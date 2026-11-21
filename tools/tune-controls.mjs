@@ -2,6 +2,17 @@
 // and returns settings() (what to send to /api/tune: the art size always, everything else once changed), reset(),
 // set(key, value, { quiet }) and showResolved(result). renderTuned(scene, settings) calls the API.
 
+/* text from manifests, scenes and URLs goes into pages escaped */
+export const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+/* only paths on this server: a page that loads scripts or manifests from elsewhere would run them on this origin */
+export const sameOrigin = url => {
+  try {
+    return new URL(url, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+};
+
 export const GROUPS = [
   ['Pixels', [
     { key: 'art', label: 'Art pixels across', min: 32, max: 512, step: 16, value: 128, always: true },
@@ -110,6 +121,8 @@ export function buildControls(container, onChange, { groups = GROUPS } = {}) {
     set(key, value, { quiet = false } = {}) {
       const entry = controls.get(key);
       if (!entry) return;
+      /* an explicit spacing means the automatic one is off */
+      if (key === 'res') return value === 'auto' ? setAuto(true) : (setAuto(false), put(entry, value));
       if (!quiet) dirty.add(key);
       put(entry, value);
     },

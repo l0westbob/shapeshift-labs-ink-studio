@@ -227,7 +227,14 @@ function writeModelJson(out, parts) {
 
 /* writes model.glb (every part), parts/NN-name.glb, raw.png and scene.json into `out`. kit is the loaded ink-studio KIT,
    used for the palette of vertex-coloured parts and the open-edge report; readMesh reads a GLB back the way scenes will. */
+function finiteOrThrow(parts) {
+  for (const part of parts)
+    for (let i = 0; i < part.pos.length; i++)
+      if (!Number.isFinite(part.pos[i])) throw new Error('Part "' + (part.name || 'unnamed') + '" has a position that is not a number (vertex ' + Math.floor(i / 3) + ')');
+}
+
 async function buildFromParts(rawParts, { out, prefix, sun, warnings = [], size, cells, hues = 6, shades = 4, pixelSize, pixelStyle, snap, overwrite = false, kit, readMesh }) {
+  finiteOrThrow(rawParts);
   const extent0 = extentOf(boundsOf(rawParts.map(part => partBounds(part.pos))));
   const parts = rawParts
     .map(part => weld(part, Math.max(extent0 * 1e-6, 1e-9)))

@@ -24,20 +24,46 @@ const splatsIn = entry => [...entry.worlds.values()].reduce((sum, world) => sum 
 const spans = new Map();
 const round = (v, n = 3) => Math.round(v * 10 ** n) / 10 ** n;
 
+/* the given path is not echoed back: error text ends up in pages */
 function sceneFile(given) {
   const file = path.resolve(ROOT, String(given ?? '').replace(/^\//, ''));
   if (!file.startsWith(ROOT + path.sep) || !file.endsWith('.json') || !fs.existsSync(file))
-    throw Object.assign(new Error('No JSON diorama inside the repository at ' + given), { status: 404 });
+    throw Object.assign(new Error('No JSON diorama inside the repository at that path'), { status: 404 });
   return file;
+}
+
+const clamp = (value, lo, hi, fallback) => (Number.isFinite(Number(value)) ? Math.min(hi, Math.max(lo, Number(value))) : fallback);
+
+/* settings from a page, in bounds, so no request bakes millions of splats or draws a huge image by mistake */
+function bounded(s = {}) {
+  const out = { ...s };
+  out.art = Math.round(clamp(s.art, 16, 1024, 128));
+  out.aspect = clamp(s.aspect, 0.25, 2, 0.75);
+  out.resFactor = clamp(s.resFactor, 0.25, 4, 1);
+  if (s.zoom !== undefined) out.zoom = clamp(s.zoom, 0.1, 10, 1);
+  if (s.res !== undefined && s.res !== 'auto' && s.res !== 'keep') out.res = clamp(s.res, 0.004, 0.5, 0.09);
+  return out;
+}
+
+/* a key that changes when the scene or any mesh file it uses changes, so edited assets are not served from cache */
+function stamp(file, spec) {
+  const dir = path.dirname(file), files = [file];
+  const walk = solid => {
+    if (!solid || typeof solid !== 'object') return;
+    if (solid.kind === 'mesh' && typeof solid.asset === 'string') files.push(path.resolve(dir, solid.asset));
+    for (const field of ['a', 'b', 'of', 'shape']) walk(solid[field]);
+  };
+  (spec.solids ?? []).forEach(walk);
+  return files.map(f => (fs.existsSync(f) ? fs.statSync(f).mtimeMs : 0)).join(',');
 }
 
 /* the diorama with the bake settings applied; view settings are not part of it */
 function variantOf(base, s, span) {
   const spec = structuredClone(base);
   spec.finish = { ...spec.finish, look: { ...spec.finish?.look, pixelSize: 1 } };
-  const art = s.art ?? 128;
-  /* auto: splats `resFactor` art pixels apart (1 for the final look; 2 bakes about four times fewer splats for previews) */
-  if (s.res === 'auto' || s.res === undefined) spec.finish.res = round(Math.min(0.09, (span / art) * (s.resFactor ?? 1)), 4);
+  /* auto: splats `resFactor` art pixels apart (1 for the final look; 2 bakes about four times fewer splats for previews);
+     zooming in draws the model larger, so the spacing shrinks with it */
+  if (s.res === 'auto' || s.res === undefined) spec.finish.res = round(Math.min(0.09, (span / s.art / (s.zoom ?? 1)) * s.resFactor), 4);
   else if (s.res !== 'keep') spec.finish.res = Number(s.res);
   if (s.paletteDither !== undefined && s.paletteDither !== 'keep') spec.finish.dither = Number(s.paletteDither);
   if (s.sunYaw !== undefined || s.sunHeight !== undefined || s.amb !== undefined || s.sky !== undefined) {
@@ -64,8 +90,8 @@ function variantOf(base, s, span) {
   return spec;
 }
 
-function entryFor(file, spec) {
-  const key = file + '\n' + JSON.stringify(spec);
+function entryFor(file, spec, version) {
+  const key = file + '\n' + version + '\n' + JSON.stringify(spec);
   let entry = CACHE.get(key);
   if (entry) {
     CACHE.delete(key);
@@ -79,23 +105,25 @@ function entryFor(file, spec) {
   return { entry, cached: false };
 }
 
-function spanOf(file, base) {
-  if (spans.has(file)) return spans.get(file);
+function spanOf(file, base, version) {
+  const key = file + '\n' + version;
+  if (spans.has(key)) return spans.get(key);
   const entry = Scenes.openDiorama(base, { file });
   entry.worlds = new Map();
   const world = Scenes.worldAt(entry);
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0, q = 0; i < world.count; i++, q += 16) for (let k = 0; k < 3; k++) lo[k] = Math.min(lo[k], world.data[q + k]), hi[k] = Math.max(hi[k], world.data[q + k]);
   const span = Math.max(...hi.map((v, k) => v - lo[k])) || 6;
-  spans.set(file, span);
+  spans.set(key, span);
   return span;
 }
 
-function tune({ scene, settings = {} }) {
-  const file = sceneFile(scene), base = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const span = spanOf(file, base), spec = variantOf(base, settings, span);
+function tune({ scene, settings: given = {} }) {
+  const settings = bounded(given);
+  const file = sceneFile(scene), base = JSON.parse(fs.readFileSync(file, 'utf8')), version = stamp(file, base);
+  const span = spanOf(file, base, version), spec = variantOf(base, settings, span);
   const started = Date.now();
-  const { entry, cached } = entryFor(file, spec);
+  const { entry, cached } = entryFor(file, spec, version);
   const world = Scenes.worldAt(entry);
   const bakeMs = cached ? 0 : Date.now() - started;
   let total = [...CACHE.values()].reduce((sum, e) => sum + splatsIn(e), 0);
@@ -104,13 +132,13 @@ function tune({ scene, settings = {} }) {
     total -= splatsIn(old);
     CACHE.delete(key);
   }
-  const art = Math.max(16, Math.min(1024, Math.round(settings.art ?? 128)));
+  const art = settings.art;
   const view = {};
-  for (const key of ['yaw', 'pitch', 'zoom']) if (settings[key] !== undefined) view[key] = Number(settings[key]);
-  if (settings.ortho) view.ortho = true;
+  for (const key of ['yaw', 'pitch', 'zoom']) if (settings[key] !== undefined && Number.isFinite(Number(settings[key]))) view[key] = Number(settings[key]);
+  if (settings.ortho !== undefined) view.ortho = Boolean(settings.ortho);
   const drawStarted = Date.now();
   const shot = SceneOps.renderEntry(entry, {
-    size: { w: art, h: Math.round(art * (settings.aspect ?? 0.75)) }, scale: 1, view,
+    size: { w: art, h: Math.round(art * settings.aspect) }, scale: 1, view,
     look: { colored: Boolean(settings.colored), raw: Boolean(settings.raw) }, measure: ['stats', 'lint', 'values']
   }, { root: ROOT });
   const { lint, values, stats } = shot.metrics;
@@ -122,14 +150,20 @@ function tune({ scene, settings = {} }) {
   };
 }
 
-function save({ scene, settings = {} }) {
+function save({ scene, settings: given = {} }) {
+  const settings = bounded(given);
   const file = sceneFile(scene), base = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const spec = variantOf(base, settings, spanOf(file, base));
-  if (settings.yaw !== undefined || settings.pitch !== undefined)
-    spec.camera = { ...spec.camera, ...(settings.yaw !== undefined && { yaw: Number(settings.yaw) }), ...(settings.pitch !== undefined && { pitch: Number(settings.pitch) }) };
+  const spec = variantOf(base, settings, spanOf(file, base, stamp(file, base)));
+  /* the view as tuned: turn, tilt, zoom (as a closer camera) and projection */
+  const camera = { ...spec.camera };
+  if (settings.yaw !== undefined) camera.yaw = Number(settings.yaw);
+  if (settings.pitch !== undefined) camera.pitch = Number(settings.pitch);
+  if (settings.zoom !== undefined && camera.dist) camera.dist = round(camera.dist / settings.zoom);
+  if (settings.ortho !== undefined) camera.projection = settings.ortho ? 'orthographic' : 'perspective';
+  spec.camera = camera;
   const out = file.replace(/\.json$/, '.tuned.json');
   fs.writeFileSync(out, JSON.stringify(spec, null, 2) + '\n');
-  return { file: '/' + path.relative(ROOT, out).split(path.sep).join('/'), render: { size: { w: settings.art ?? 128, h: Math.round((settings.art ?? 128) * (settings.aspect ?? 0.75)) } } };
+  return { file: '/' + path.relative(ROOT, out).split(path.sep).join('/'), render: { size: { w: settings.art, h: Math.round(settings.art * settings.aspect) } } };
 }
 
 function scenes() {

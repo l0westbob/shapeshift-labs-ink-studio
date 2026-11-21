@@ -83,7 +83,9 @@ defineOp({
     for (const [name, sizes] of Object.entries(spec.parts ?? {}))
       for (const [axis, want] of Object.entries(sizes)) check(name + '.' + axis, measure(name, axis), want);
     for (const [i, ratio] of (spec.ratios ?? []).entries()) {
-      const [an, aa] = ratio.a.split('.'), [bn, ba] = ratio.b.split('.');
+      /* part names may contain dots (Cube.001): the axis is after the last one */
+      const split = name => [name.slice(0, name.lastIndexOf('.')), name.slice(name.lastIndexOf('.') + 1)];
+      const [an, aa] = split(ratio.a), [bn, ba] = split(ratio.b);
       if (!AXES[aa] && AXES[aa] !== 0 || !AXES[ba] && AXES[ba] !== 0)
         throw new OpError('INVALID_INPUT', 'A ratio names part.axis, as in "turret.x"', { path: '/spec/ratios/' + i });
       const a = measure(an, aa), b = measure(bn, ba);

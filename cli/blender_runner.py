@@ -30,6 +30,10 @@ def colour_of(material):
         for node in material.node_tree.nodes:
             if node.type == "BSDF_PRINCIPLED":
                 rgba = node.inputs["Base Color"].default_value
+                # Blender gives every material a grey BSDF; a script that only set the viewport colour meant that one
+                untouched = not node.inputs["Base Color"].is_linked and all(abs(c - 0.8) < 1e-4 for c in rgba[:3])
+                if untouched and any(abs(c - 0.8) > 1e-4 for c in material.diffuse_color[:3]):
+                    rgba = None
                 break
     if rgba is None:
         rgba = material.diffuse_color
@@ -54,7 +58,8 @@ def main():
     depsgraph = bpy.context.evaluated_depsgraph_get()
     parts, warnings, sun = [], [], None
     for ob in bpy.context.scene.objects:
-        if ob.hide_render or ob.hide_get():
+        # hidden in any way (render, viewport, excluded collection): boolean cutters live there and must not become parts
+        if ob.hide_render or ob.hide_get() or ob.hide_viewport or not ob.visible_get():
             continue
         if ob.type == "LIGHT" and ob.data.type == "SUN" and sun is None:
             d = ob.matrix_world.to_3x3() @ __import__("mathutils").Vector((0, 0, 1))

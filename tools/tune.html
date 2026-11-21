@@ -50,7 +50,7 @@
     document.body.innerHTML = '<p class="error">This page has to be served. Run <code>npm run serve</code> and open <code>http://127.0.0.1:8765/tools/tune.html</code>.</p>';
 </script>
 <script type="module">
-import { buildControls, renderTuned, saveTuned, STYLE } from './tune-controls.mjs';
+import { buildControls, renderTuned, saveTuned, STYLE, esc } from './tune-controls.mjs';
 document.head.insertAdjacentHTML('beforeend', `<style>${STYLE}</style>`);
 
 const tuner = buildControls(document.getElementById('controls'), () => schedule());
@@ -58,7 +58,7 @@ const sceneSelect = document.getElementById('scene');
 const list = await (await fetch('/api/scenes')).json();
 const wanted = new URLSearchParams(location.search).get('scene');
 if (wanted && !list.some(s => s.scene === wanted)) list.unshift({ label: wanted, scene: wanted });
-let lastGroup, group;
+let lastGroup = null, group = null;
 for (const s of list) {
   if (s.group !== lastGroup) {
     group = document.createElement('optgroup');
@@ -66,13 +66,19 @@ for (const s of list) {
     sceneSelect.append(group);
     lastGroup = s.group;
   }
-  group.insertAdjacentHTML('beforeend', `<option value="${s.scene}">${s.label}</option>`);
+  group.append(new Option(s.label, s.scene));
 }
 if (!list.length) document.getElementById('bar').textContent = 'No scenes: run node scripts/compare-models.js, or open with ?scene=/path/scene.json';
 if (wanted) sceneSelect.value = wanted;
 /* settings handed over in the URL (compare.html links here with its current ones) */
 const handed = new URLSearchParams(location.search).get('settings');
-if (handed) for (const [key, value] of Object.entries(JSON.parse(handed))) if (key !== 'res' || value !== 'auto') tuner.set(key, value);
+if (handed) {
+  try {
+    for (const [key, value] of Object.entries(JSON.parse(handed))) tuner.set(key, value);
+  } catch {
+    /* settings that do not parse are left out */
+  }
+}
 sceneSelect.addEventListener('change', () => { cameraKnown = false; schedule(0); });
 
 let timer = null, requestId = 0, cameraKnown = false;
@@ -89,7 +95,7 @@ async function render() {
   try {
     result = await renderTuned(sceneSelect.value, tuner.settings());
   } catch (error) {
-    if (id === requestId) (busy.classList.remove('on'), (bar.innerHTML = `<span class="bad">${error.message}</span>`));
+    if (id === requestId) (busy.classList.remove('on'), (bar.innerHTML = `<span class="bad">${esc(error.message)}</span>`));
     return;
   }
   if (id !== requestId) return; /* a newer request is on its way */
@@ -109,7 +115,7 @@ async function render() {
   bar.innerHTML = [
     `art <b>${result.width} × ${result.height}</b>`, `noise ${grade(m.noise, ref.noise)} <small>(ref ${ref.noise})</small>`,
     `orphans ${grade(m.orphans, ref.orphans)} <small>(ref ${ref.orphans})</small>`, `jaggies <b>${m.jaggies}</b>`,
-    `tones <b>${String(m.tones).toLowerCase().replace('_', ' ')}</b>`, `colours <b>${m.colours}</b>`,
+    `tones <b>${esc(String(m.tones).toLowerCase().replace('_', ' '))}</b>`, `colours <b>${m.colours}</b>`,
     `splats <b>${m.splats.toLocaleString()}</b>`, `spacing <b>${result.resolved.res}</b>`,
     `bake <b>${result.timings.cached ? 'cached' : result.timings.bakeMs + ' ms'}</b>`, `draw <b>${result.timings.drawMs} ms</b>`
   ].map(s => `<span>${s}</span>`).join('');
@@ -133,9 +139,9 @@ document.getElementById('save').addEventListener('click', async () => {
   const note = document.getElementById('saved');
   try {
     const result = await saveTuned(sceneSelect.value, tuner.settings());
-    note.innerHTML = `Saved <code>${result.file}</code>. Render it at ${result.render.size.w} × ${result.render.size.h} (pixelSize 1).`;
+    note.innerHTML = `Saved <code>${esc(result.file)}</code>. Render it at ${esc(result.render.size.w)} × ${esc(result.render.size.h)} (pixelSize 1).`;
   } catch (error) {
-    note.innerHTML = `<span class="bad">${error.message}</span>`;
+    note.innerHTML = `<span class="bad">${esc(error.message)}</span>`;
   }
 });
 schedule(0);

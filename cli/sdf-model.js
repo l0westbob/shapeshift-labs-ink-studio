@@ -36,13 +36,19 @@ async function buildModel(script, { kit, cells = 96, ...options }) {
   const resolution = model.resolution ?? extent / cells;
   const { roleFor, buildFromParts } = require('./model-core.js');
   const parts = list.map((part, i) => {
-    let mesh;
-    try {
-      mesh = kit.procedural.geometry.implicitSurface(part.field, boxes[i], { resolution, maxCells: 2000000, edgeRefinements: 3 });
-    } catch (error) {
-      throw new Error('parts[' + i + '] (' + (part.name || 'unnamed') + '): ' + error.message);
+    const label = 'parts[' + i + '] (' + (part.name || 'unnamed') + ')';
+    /* a part thinner than the sampling step falls between samples; try finer before giving up */
+    let mesh, step = resolution;
+    for (let attempt = 0; attempt < 4; attempt++, step /= 2) {
+      try {
+        mesh = kit.procedural.geometry.implicitSurface(part.field, boxes[i], { resolution: step, maxCells: 2000000, edgeRefinements: 3 });
+      } catch (error) {
+        throw new Error(label + ': ' + error.message);
+      }
+      if (mesh.positions.length) break;
     }
-    if (!mesh.positions.length) throw new Error('parts[' + i + '] (' + (part.name || 'unnamed') + ') has no surface inside its bounds');
+    if (!mesh.positions.length)
+      throw new Error(label + ' has no surface inside its bounds, even sampled at ' + Math.round(step * 2e4) / 1e4 + ': check the bounds, and keep them tight around thin parts');
     return { name: part.name || 'part-' + (i + 1), pos: mesh.positions, role: roleFor(part.role, colourOf(part.colour)) };
   });
   return buildFromParts(parts, { ...options, kit, cells, prefix: 'sdf', sun: model.sun });

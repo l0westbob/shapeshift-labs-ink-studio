@@ -52,10 +52,29 @@ function ringOf(section, i, where) {
     const [h, w] = section.rect, r = Math.min(section.round ?? 0, h / 2, w / 2), hu = h / 2, hv = w / 2;
     /* corners pulled in by the rounding, two control points per corner so a B-spline keeps the sides straight */
     pts = [[hu, hv - r], [hu - r, hv], [-hu + r, hv], [-hu, hv - r], [-hu, -hv + r], [-hu + r, -hv], [hu - r, -hv], [hu, -hv + r]];
-    if (!r) pts = [[hu, hv], [hu, hv], [-hu, hv], [-hu, hv], [-hu, -hv], [-hu, -hv], [hu, -hv], [hu, -hv]];
+    /* a uniform cubic B-spline passes through a control point only when it is tripled */
+    if (!r) pts = [[hu, hv], [-hu, hv], [-hu, -hv], [hu, -hv]].flatMap(p => [p, p, p]);
   } else throw new Error(where + '.sections[' + i + '] needs points, ellipse or rect');
   if (pts.length < 3) throw new Error(where + '.sections[' + i + '] needs three or more points');
-  return pts.map(([u, v]) => [u + cu, v + cv]);
+  return normalised(pts.map(([u, v]) => [u + cu, v + cv]));
+}
+
+/* every ring runs the same way round and starts at the same angle, so lofting pairs matching points; otherwise a rect
+   (drawn one way) lofted to an ellipse (drawn the other) twists through the axis */
+function normalised(ring) {
+  const n = ring.length, cu = ring.reduce((s, p) => s + p[0], 0) / n, cv = ring.reduce((s, p) => s + p[1], 0) / n;
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const [u1, v1] = ring[i], [u2, v2] = ring[(i + 1) % n];
+    area += u1 * v2 - u2 * v1;
+  }
+  const ordered = area < 0 ? ring.slice().reverse() : ring.slice();
+  let start = 0, best = Infinity;
+  ordered.forEach(([u, v], i) => {
+    const a = Math.abs(Math.atan2(v - cv, u - cu));
+    if (a < best - 1e-9) (best = a), (start = i);
+  });
+  return [...ordered.slice(start), ...ordered.slice(0, start)];
 }
 
 /* (along, up, across) to x, y, z for an axis */
@@ -93,6 +112,10 @@ function surface(part, where) {
     return grid(rows, toXYZ);
   }
   if (!Array.isArray(part.sections) || part.sections.length < 2) throw new Error(where + ' needs two or more sections (or revolve)');
+  part.sections.forEach((section, i) => {
+    if (!Number.isFinite(section.at)) throw new Error(where + '.sections[' + i + '] needs "at", its position along the axis');
+  });
+  if (!(along >= 2 && around >= 3)) throw new Error(where + ': along is at least 2 and around at least 3');
   const rings = part.sections.map((s, i) => ringOf(s, i, where));
   const size = Math.max(...rings.map(r => r.length));
   /* every ring sampled to the same count around, then the samples run along the sections as B-spline curves */
@@ -127,4 +150,4 @@ async function buildModel(file, options) {
   return buildFromParts(parts, { ...options, prefix: 'loft', sun: source.sun });
 }
 
-module.exports = { buildModel, periodic, clamped };
+module.exports = { buildModel, periodic, clamped, normalised };

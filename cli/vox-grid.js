@@ -36,6 +36,7 @@ function voxSource(grid, { cell = 0.1, hard = true, colours = 'exact', names, ro
     letterOf = rgb => LETTERS[index.get(hex(rgb))];
     table = unique.map((h, i) => [LETTERS[i], h, roles.get(h) ?? roleOf?.(h) ?? null]);
   } else {
+    if (!(Number.isInteger(colours) && colours >= 1 && colours <= LETTERS.length)) throw new Error('"colours" is "exact" or 1 to ' + LETTERS.length);
     const { centres, nearest } = require('./splat-model.js').kmeans(used, colours);
     letterOf = rgb => LETTERS[nearest(rgb)];
     table = centres.map((c, i) => [LETTERS[i], hex(c), names?.[i] ?? null]);

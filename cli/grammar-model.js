@@ -155,7 +155,9 @@ function derive(source) {
           if (into && len > 1e-6) walk(into, { lo, hi }, depth + 1);
         });
       } else if (op.repeat) {
+        if (!(op.size > 0)) throw new Error('Rule "' + name + '": repeat needs a size above 0');
         const k = AXIS[op.repeat], n = Math.max(1, Math.round(size[k] / op.size)), len = size[k] / n;
+        if (n > 10000) throw new Error('Rule "' + name + '": repeat would make ' + n + ' parts; give a larger size');
         for (let i = 0; i < n; i++) {
           const lo = box.lo.slice(), hi = box.hi.slice();
           lo[k] = box.lo[k] + i * len;
@@ -181,6 +183,9 @@ function derive(source) {
   return terminals;
 }
 
+/* the deeper-than-wide roof swaps x and z, which mirrors it, so its faces turn round to keep pointing outwards */
+const orient = (faces, alongX) => (alongX ? faces : faces.map(f => f.slice().reverse()));
+
 /* closed triangle meshes for terminals */
 function meshOf(t) {
   const [x0, y0, z0] = t.lo, [x1, y1, z1] = t.hi;
@@ -196,14 +201,14 @@ function meshOf(t) {
     const v = alongX
       ? [[X0, y0, Z0], [X1, y0, Z0], [X1, y0, Z1], [X0, y0, Z1], [X0, y1, ym], [X1, y1, ym]]
       : [[X0, y0, Z0], [X0, y0, Z1], [X1, y0, Z1], [X1, y0, Z0], [(x0 + x1) / 2, y1, Z0], [(x0 + x1) / 2, y1, Z1]];
-    return { v, f: [[0, 1, 2, 3], [0, 4, 5, 1], [2, 5, 4, 3], [0, 3, 4], [1, 5, 2]] };
+    return { v, f: orient([[0, 1, 2, 3], [0, 4, 5, 1], [2, 5, 4, 3], [0, 3, 4], [1, 5, 2]], alongX) };
   }
   if (t.kind === 'hip') {
     const inset = Math.min(x1 - x0, z1 - z0) / 2;
     const v = alongX
       ? [[X0, y0, Z0], [X1, y0, Z0], [X1, y0, Z1], [X0, y0, Z1], [x0 + inset, y1, ym], [x1 - inset, y1, ym]]
       : [[X0, y0, Z0], [X0, y0, Z1], [X1, y0, Z1], [X1, y0, Z0], [(x0 + x1) / 2, y1, z0 + inset], [(x0 + x1) / 2, y1, z1 - inset]];
-    return { v, f: [[0, 1, 2, 3], [0, 4, 5, 1], [2, 5, 4, 3], [0, 3, 4], [1, 5, 2]] };
+    return { v, f: orient([[0, 1, 2, 3], [0, 4, 5, 1], [2, 5, 4, 3], [0, 3, 4], [1, 5, 2]], alongX) };
   }
   throw new Error('Roofs are gable or hip, not ' + t.kind);
 }
@@ -223,10 +228,12 @@ function splitParts(source, roleFor, colourOf) {
 
 /* box terminals become native box solids where model.json says the part sits: exact distance fields, no seams between
    neighbouring boxes and no faceted normals; roofs stay mesh parts */
-function nativeBoxes(report, parts) {
+function nativeBoxes(report, parts, snap) {
   const path = require('node:path');
   const placed = JSON.parse(fs.readFileSync(path.join(report.directory, 'model.json'), 'utf8')).parts;
-  const round = v => Math.round(v * 1e4) / 1e4;
+  /* the same pixel grid the mesh solids snap to, so walls and roofs meet */
+  const unit = snap ? report.extent / snap : 0;
+  const round = v => Math.round((unit ? Math.round(v / unit) * unit : v) * 1e4) / 1e4;
   const spec = report.spec;
   spec.solids = spec.solids.map((solid, i) => {
     if (parts[i].kind !== 'box') return solid;
@@ -263,7 +270,7 @@ async function buildModel(file, options) {
       return typeof text === 'string' ? parseInt(text.replace('#', ''), 16) : text;
     };
     const parts = splitParts(source, roleFor, colourOf);
-    return nativeBoxes(await buildFromParts(parts, { ...options, prefix: 'grammar' }), parts);
+    return nativeBoxes(await buildFromParts(parts, { ...options, prefix: 'grammar' }), parts, options.snap);
   }
   throw new Error('A grammar is "kind": "lsystem" or "split"');
 }

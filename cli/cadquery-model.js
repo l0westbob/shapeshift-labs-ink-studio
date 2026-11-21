@@ -32,9 +32,12 @@ async function buildModel(script, { roots = [], tolerance, timeout = 180000, ...
   let data;
   try {
     await run(python, [RUNNER, script, json, ...(tolerance ? [String(tolerance)] : [])], timeout);
+    if (!fs.existsSync(json)) throw Object.assign(new Error('The script ended before the model was written (did it call sys.exit?)'), { early: true });
     data = JSON.parse(fs.readFileSync(json, 'utf8'));
   } catch (error) {
-    if (error.code === 'ENOENT') throw Object.assign(new Error('No Python at ' + python), { code: 'PYTHON_MISSING' });
+    if (error.early) throw error;
+    /* only a failed spawn means Python is missing */
+    if (error.code === 'ENOENT' && String(error.syscall).startsWith('spawn')) throw Object.assign(new Error('No Python at ' + python), { code: 'PYTHON_MISSING' });
     if (/No module named 'cadquery'/.test(error.stderr)) throw Object.assign(new Error('cadquery is not installed for ' + python), { code: 'CADQUERY_MISSING' });
     if (error.killed) throw Object.assign(new Error('The script ran longer than ' + timeout / 1000 + ' s'), { code: 'TIMEOUT' });
     const line = String(error.stderr || '').split('\n').reverse().find(text => text.includes('File "' + script + '"'));

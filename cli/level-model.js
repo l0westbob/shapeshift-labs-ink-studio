@@ -49,7 +49,7 @@ async function buildModel(file, options) {
   const sx = sectors.flatMap(s => s.points.map(p => p[0])), sz = sectors.flatMap(s => s.points.map(p => p[1]));
   const x0 = Math.min(0, ...sx), z0 = Math.min(0, ...sz), x1 = Math.max(mapW, ...sx), z1 = Math.max(mapD, ...sz);
   const lowest = Math.min(0, ...Object.values(source.tiles ?? {}).map(t => t.floor ?? 0), ...sectors.map(s => s.floor ?? 0)) - block;
-  const highest = Math.max(wallHeight, ...Object.values(source.tiles ?? {}).map(t => t.floor ?? 0), ...sectors.map(s => Math.max(s.floor ?? 0, s.walls ?? 0)));
+  const highest = Math.max(wallHeight, ...Object.values(source.tiles ?? {}).map(t => Math.max(t.floor ?? 0, t.height ?? 0, t.door ?? 0, t.liquid ?? 0)), ...sectors.map(s => Math.max(s.floor ?? 0, s.walls ?? 0)));
   const nx = Math.ceil((x1 - x0) / block), nz = Math.ceil((z1 - z0) / block), ny = Math.ceil((highest - lowest) / block) + 1;
   const yAt = metres => Math.round((metres - lowest) / block);
   const grid = {
