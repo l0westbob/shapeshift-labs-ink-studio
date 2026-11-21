@@ -20,6 +20,7 @@ voxel model     ─┘
 | `loft` | `.loft.json` or `.loft.mjs` with sections or revolved profiles | Taut, smooth bodies: hulls, fuselages, car bodies, barrels. | `.mjs` only |
 | `grammar` | `.grammar.json`: an L-system or a split grammar | Rules instead of pieces: plants and branching things; buildings, shelves, fences. | no |
 | `stack` | `.stack.json` naming PNG slices | Sprite stacking: draw horizontal slices in a pixel editor, keep every colour exact. | no |
+| `splat` | `.ply` (Gaussian splats or a coloured point cloud), or `.splat.json` with settings | Real objects from photogrammetry or a splat trainer, turned into pixel art. | no |
 | `vox` | `.json` with plans of letters and a colour per letter | Small props and characters at sprite size, exact colours. | no |
 | `compose` | `.compose.json` listing parts from other engines and dioramas | The best tool for each part: a CAD hull, voxel markings, SDF sandbags. | per part |
 | `paint` | `.paint.json` with brush strokes, dabs and scatters | Painterly trees, bushes, smoke, creatures, straight from splats. | no |
@@ -205,6 +206,24 @@ Slices are horizontal top-down pictures, bottom first: one sheet cut into `slice
 top to bottom) or a list of files. In each, the top row is the back. Transparent pixels (or `background`) are empty;
 every other colour stays exact, becomes a letter and a role (named by `roles`, else by its colour), and the stack
 continues as a voxel model. [examples/stack/](../examples/stack/) stacks the voxel tank's 16 slices.
+
+## Captures (Gaussian splats and point clouds)
+
+```json
+{ "ply": "capture.ply", "resolution": 56, "colours": 5, "up": "y", "opacity": 0.5, "fill": true, "close": 1,
+  "hard": false, "crop": [[-1, 0, -1], [1, 2, 1]], "names": ["olive", "track", "steel", "dark-olive", "shade"] }
+```
+
+- The PLY is a 3DGS export (`f_dc_*` colours, `opacity`, `scale_*`) or a point cloud with `red`, `green`, `blue`;
+  ascii and binary little endian are read. A `.ply` on its own uses the defaults.
+- Points vote their colour into a grid of `resolution` blocks along the longest side (splats out to their size, at most
+  two blocks). `opacity` drops faint splats, `crop` keeps a box, `up` says which way the capture's up points (many
+  trainers write `-y`).
+- `fill` makes the inside solid: gaps of up to `close` blocks in the shell are bridged first, then the outside grows
+  back, so the size stays. Colours are reduced to `colours` families by k-means and named by `names`; the result
+  continues as a voxel model (`hard: false` by default, so it reads as one soft solid).
+- Captures come from your own photos (for example with OpenSplat, which runs on Apple GPUs) or any 3DGS trainer.
+  [examples/splat/tank.ply](../examples/splat/tank.ply) is a stand-in: 28,000 points sampled from the CadQuery tank.
 
 ## Voxels
 

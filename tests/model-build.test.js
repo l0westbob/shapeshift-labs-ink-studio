@@ -417,3 +417,42 @@ test('sprite stacking turns PNG slices into voxels with exact colours', async t 
   const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));
   assert.deepEqual(spec.solids[0].layers, ['aaa/aaa', '.b./...']);
 });
+
+test('captures: 3DGS and point-cloud PLY files become voxel models with filled insides and few colours', async t => {
+  const dir = tempDir(t);
+  /* a binary 3DGS ball: red top, blue bottom, plus faint splats that the opacity threshold drops */
+  const props = ['x', 'y', 'z', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity', 'scale_0', 'scale_1', 'scale_2'];
+  const rows = [];
+  let seed = 3;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const dc = v => (v / 255 - 0.5) / 0.28209479177387814;
+  for (let i = 0; i < 6000; i++) {
+    const u = rnd() * 2 - 1, phi = rnd() * 2 * Math.PI, s = Math.sqrt(1 - u * u), p = [s * Math.cos(phi), u, s * Math.sin(phi)];
+    const colour = p[1] > 0 ? [220, 40, 30] : [30, 60, 200];
+    rows.push([...p, ...colour.map(dc), 4, -4, -4, -4]);
+  }
+  for (let i = 0; i < 200; i++) rows.push([3 + rnd(), 3, 3, 0, 0, 0, -6, -4, -4, -4]);
+  const head = 'ply\nformat binary_little_endian 1.0\nelement vertex ' + rows.length + '\n' + props.map(p => 'property float ' + p).join('\n') + '\nend_header\n';
+  const body = Buffer.alloc(rows.length * props.length * 4);
+  rows.forEach((row, i) => row.forEach((v, k) => body.writeFloatLE(v, (i * props.length + k) * 4)));
+  fs.writeFileSync(path.join(dir, 'ball.ply'), Buffer.concat([Buffer.from(head), body]));
+  fs.writeFileSync(path.join(dir, 'ball.splat.json'), JSON.stringify({ ply: 'ball.ply', resolution: 32, colours: 2 }));
+  const result = ok(await call({ source: path.join(dir, 'ball.splat.json'), out: path.join(dir, 'ball'), preview: false }, {}));
+  assert.equal(result.engine, 'splat');
+  assert.equal(result.points, 6000, 'faint splats are dropped');
+  const vox = JSON.parse(fs.readFileSync(result.scene, 'utf8')).solids[0];
+  const middle = vox.layers[Math.floor(vox.layers.length / 2)].split('/');
+  assert.notEqual(middle[Math.floor(middle.length / 2)][Math.floor(middle[0].length / 2)], '.', 'the inside is filled');
+  assert.ok(result.blocks > (4 / 3) * Math.PI * 14 ** 3, 'a filled ball, not a shell: ' + result.blocks);
+  assert.ok(result.blocks < (4 / 3) * Math.PI * 18 ** 3, 'closing gaps does not grow the ball: ' + result.blocks);
+  const direct = ok(await call({ source: path.join(dir, 'ball.ply'), out: path.join(dir, 'ball-direct'), preview: false }, {}));
+  assert.equal(direct.engine, 'splat', 'a .ply works on its own');
+
+  /* an ascii point cloud with a settings file: two colours stay two families */
+  const lines = [];
+  for (let x = 0; x < 10; x++) for (let z = 0; z < 10; z++) for (const y of [0, 1]) lines.push([x / 10, y / 10, z / 10, y ? 200 : 40, y ? 180 : 90, 40].join(' '));
+  fs.writeFileSync(path.join(dir, 'slab.ply'), 'ply\nformat ascii 1.0\nelement vertex ' + lines.length + '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n' + lines.join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'slab.splat.json'), JSON.stringify({ ply: 'slab.ply', resolution: 10, colours: 2, names: ['bottom', 'top'], hard: true }));
+  const slab = ok(await call({ source: path.join(dir, 'slab.splat.json'), out: path.join(dir, 'slab'), preview: false }, {}));
+  assert.deepEqual(slab.roles.sort(), ['bottom', 'top']);
+});

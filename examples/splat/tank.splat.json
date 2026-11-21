@@ -1,0 +1,2 @@
+{ "ply": "tank.ply", "resolution": 56, "colours": 5, "up": "y", "fill": true, "hard": false,
+  "names": ["olive", "track", "steel", "dark-olive", "shade"] }
