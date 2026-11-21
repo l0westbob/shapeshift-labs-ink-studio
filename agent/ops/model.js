@@ -81,7 +81,7 @@ const detailFor = art => {
   return { art, objectPixels, cells: Math.max(48, Math.ceil(objectPixels * 1.15)), blocks: Math.round(objectPixels / BEST_PIXELS_PER_BLOCK) };
 };
 
-async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, art = 128, overwrite = false, preview = true, frames = 4 }, ctx, field) {
+async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, colourSpace, yaw, art = 128, overwrite = false, preview = true, frames = 4 }, ctx, field) {
   const detail = detailFor(art);
   cells ??= detail.cells;
   const spec = ENGINES[engine];
@@ -110,7 +110,7 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
   let report;
   try {
     report = await require(spec.module).buildModel(file, {
-      out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, overwrite,
+      out: dir, roots: [path.dirname(file), root], size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, colourSpace, yaw, overwrite,
       blocks: detail.blocks, objectPixels: detail.objectPixels, kit: Scenes.kit().KIT, readMesh: Scenes.studio().readMesh, buildPart
     });
   } catch (error) {
@@ -180,6 +180,8 @@ defineOp({
       source: { type: 'string', description: 'The model source file; its extension picks the engine (see engine).' },
       engine: { type: 'string', enum: Object.keys(ENGINES), description: Object.keys(ENGINES).join(', ') + ' (default: from the file extension, longest match first).' },
       tolerance: { type: 'number', minimum: 0.0001, maximum: 0.05, description: 'cadquery: largest triangle chord error as a share of the model size (default 0.0015).' },
+      colourSpace: { type: 'string', enum: ['srgb', 'linear'], description: 'glb: how base colour textures store colour. glTF says sRGB (default); trellis2mlx (TRELLIS.2) writes linear values, which read far too dark as sRGB, so pass "linear" for its output.' },
+      yaw: { type: 'number', minimum: -6.3, maximum: 6.3, description: 'glb: turn the model about the up axis first, in radians (counter-clockwise from above), for generators that face their output another way.' },
       ...COMMON
     },
     additionalProperties: false

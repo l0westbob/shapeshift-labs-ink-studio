@@ -10,7 +10,8 @@
    A vertex colour can only hold what the texture shows at that vertex, so textured triangles are first split until no
    edge is longer than about 1.5 art pixels of the finished sprite (`objectPixels` across the model): a twelve-triangle crate
    keeps its painted planks, and a dense generated mesh is left almost as it is. Textures must be PNG (trellis2mlx, trimesh
-   and Blender write PNG by default); compressed meshes (Draco, meshopt) and other image formats are refused with a hint. */
+   and Blender write PNG by default); compressed meshes (Draco, meshopt) and other image formats are refused with a hint.
+   colourSpace "linear" reads textures that hold linear values (trellis2mlx output); yaw turns the model about Y. */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -84,7 +85,7 @@ const multiply = (a, b) => Array.from({ length: 16 }, (_, i) => {
 const determinant = m => m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
 
 /* every mesh node of the default scene with its world matrix */
-function meshNodes(gltf) {
+function meshNodes(gltf, root = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) {
   const found = [], scene = gltf.scenes?.[gltf.scene ?? 0];
   const roots = scene?.nodes ?? (gltf.nodes ?? []).map((_, i) => i);
   const visit = (index, parent, depth) => {
@@ -94,16 +95,21 @@ function meshNodes(gltf) {
     if (node.mesh !== undefined) found.push({ node, matrix });
     for (const child of node.children ?? []) visit(child, matrix, depth + 1);
   };
-  for (const index of roots) visit(index, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 0);
+  for (const index of roots) visit(index, root, 0);
   return found;
 }
 
 /* --- textures ----------------------------------------------------------------------------------------------------------- */
 
-const toLinear = Array.from({ length: 256 }, (_, i) => {
-  const q = i / 255;
-  return q <= 0.04045 ? q / 12.92 : ((q + 0.055) / 1.055) ** 2.4;
-});
+/* texel byte to linear light: glTF base colour textures are sRGB, but some generators store linear values in them
+   (trellis2mlx writes TRELLIS.2's linear albedo straight into the PNG), which reads far too dark as sRGB */
+const DECODE = {
+  srgb: Array.from({ length: 256 }, (_, i) => {
+    const q = i / 255;
+    return q <= 0.04045 ? q / 12.92 : ((q + 0.055) / 1.055) ** 2.4;
+  }),
+  linear: Array.from({ length: 256 }, (_, i) => i / 255)
+};
 const WRAP = { 33071: 'clamp', 33648: 'mirror', 10497: 'repeat' };
 const wrap = (v, mode) => {
   if (mode === 'clamp') return Math.min(1, Math.max(0, v));
@@ -133,7 +139,7 @@ function imageOf(doc, cache, index) {
 }
 
 /* the texture's linear colour at uv, bilinear, the way a renderer with linear filtering would show it */
-function sample(image, u, v, wrapS, wrapT, out) {
+function sample(image, u, v, wrapS, wrapT, out, toLinear = DECODE.srgb) {
   const x = wrap(u, wrapS) * image.w - 0.5, y = wrap(v, wrapT) * image.h - 0.5;
   const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
   const px = c => (wrapS === 'repeat' ? ((c % image.w) + image.w) % image.w : Math.min(image.w - 1, Math.max(0, c)));
@@ -230,10 +236,15 @@ function trianglesOf(mode, index) {
   return out;
 }
 
-function partsOf(doc, { objectPixels = 84 } = {}) {
+function partsOf(doc, { objectPixels = 84, colourSpace = 'srgb', yaw = 0 } = {}) {
   const { roleFor } = require('./model-core.js');
   const { gltf } = doc, images = new Map(), warnings = [], raw = [];
-  for (const { node, matrix } of meshNodes(gltf)) {
+  const toLinear = DECODE[colourSpace];
+  if (!toLinear) throw new Error('colourSpace is "srgb" or "linear"');
+  /* yaw turns the whole model about the up axis (radians, counter-clockwise seen from above), for generators that face
+     their output another way */
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  for (const { node, matrix } of meshNodes(gltf, [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1])) {
     const mesh = gltf.meshes?.[node.mesh];
     if (!mesh) continue;
     const flip = determinant(matrix) < 0;
@@ -310,7 +321,7 @@ function partsOf(doc, { objectPixels = 84 } = {}) {
       for (let i = 0; i < n; i++) {
         let [u, v] = [uv[i * 2], uv[i * 2 + 1]];
         if (part.transform) [u, v] = part.transform.apply(u, v);
-        sample(part.image, u, v, part.wrapS, part.wrapT, texel);
+        sample(part.image, u, v, part.wrapS, part.wrapT, texel, toLinear);
         for (let k = 0; k < 3; k++) colours[i * 3 + k] = Math.min(1, part.factor[k] * texel[k] * (tint ? tint[i * lanes + k] : 1));
       }
       return { name: part.name, pos: fine.pos, index: fine.index, colours, role: null, split: fine.index.length / 3 - before };
@@ -318,9 +329,9 @@ function partsOf(doc, { objectPixels = 84 } = {}) {
   };
 }
 
-async function buildModel(file, { objectPixels, ...options }) {
+async function buildModel(file, { objectPixels, colourSpace, yaw, ...options }) {
   const doc = documentOf(file);
-  const { parts, warnings } = partsOf(doc, { objectPixels });
+  const { parts, warnings } = partsOf(doc, { objectPixels, colourSpace, yaw });
   const split = parts.reduce((sum, part) => sum + (part.split ?? 0), 0);
   const report = await require('./model-core.js').buildFromParts(parts, { ...options, prefix: 'glb', warnings });
   return { ...report, glb: { generator: doc.gltf.asset?.generator, textured: parts.filter(part => part.split !== undefined).length, splitTriangles: split } };

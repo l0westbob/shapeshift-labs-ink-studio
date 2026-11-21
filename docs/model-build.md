@@ -245,6 +245,10 @@ transforms of the default scene. Every triangle primitive becomes a part:
   generated mesh is left almost as it is. Splitting stops at 2 million triangles, with a warning.
 - **Plain material**: one palette role, named after the material, as with the other mesh engines.
 
+`colourSpace` says how textures store colour: glTF says sRGB (the default), but trellis2mlx writes TRELLIS.2's linear
+albedo straight into its PNGs, which reads far too dark as sRGB, so pass `"linear"` for its output. `yaw` turns the model
+about the up axis first (radians), for generators that face their output another way.
+
 Textures must be PNG: trellis2mlx, trimesh and Blender's exporter write PNG by default. Draco or meshopt compressed
 meshes and JPEG, WebP or KTX2 textures are refused with a hint to export again. Open meshes (holes left by a generator)
 bake as sheets with thickness; the build warns about them.
@@ -256,8 +260,12 @@ shaded pictures on a transparent background; flat vector art tends to come back 
 DINOv3 encoder).
 
 ```bash
-ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/studio/out/lantern","size":2}'
+ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/studio/out/lantern","size":2,"colourSpace":"linear"}'
 ```
+
+[examples/glb/tank-trellis.glb](../examples/glb/tank-trellis.glb) is a trellis2mlx preview (512, 8 steps, 68 s on an M5
+Ultra, 18 GB peak) made from [a render of the three.js tank](../examples/glb/tank-trellis-input.png); it is the TRELLIS.2
+entry in the method comparison (`colourSpace: "linear"`, `yaw: -1.5708`).
 
 ## Depth maps (layered depth)
 

@@ -743,3 +743,27 @@ test('refine splits long edges alike on both sides of a seam and carries attribu
   const [u0, v0] = [fine.attributes[0][6 * 2], fine.attributes[0][6 * 2 + 1]];
   assert.ok(Number.isFinite(u0) && Number.isFinite(v0) && fine.attributes[0].length === fine.pos.length / 3 * 2, 'every vertex has its uv');
 });
+
+test('the glb engine reads linear textures when told (trellis2mlx output) and turns models with yaw', async t => {
+  const dir = tempDir(t), w = 4, rgb = new Uint8Array(w * w * 3).fill(64);
+  const source = glbOf(path.join(dir, 'grey.glb'), { texture: { w, h: w, rgb } });
+  const mean = result => {
+    const mesh = Scenes.studio().readMesh(path.join(result.directory, result.parts[0].file));
+    return mesh.vcol.reduce((sum, v) => sum + v, 0) / mesh.vcol.length;
+  };
+  const srgb = ok(await call({ source, out: path.join(dir, 'srgb'), preview: false }, {}));
+  const linear = ok(await call({ source, out: path.join(dir, 'linear'), colourSpace: 'linear', preview: false }, {}));
+  /* readMesh gives sRGB: texel 64 read as sRGB stays about 64/255, read as linear it shows as about 137/255 */
+  assert.ok(Math.abs(mean(srgb) - 64 / 255) < 0.02, 'sRGB texel kept: ' + mean(srgb));
+  assert.ok(Math.abs(mean(linear) - 137 / 255) < 0.02, 'linear texel brightened for display: ' + mean(linear));
+
+  /* a long box along x turned a quarter turn lies along z */
+  const { partsOf, documentOf } = require('../cli/glb-model.js');
+  const { partBounds } = require('../cli/model-core.js');
+  const longer = glbOf(path.join(dir, 'plain.glb'), {});
+  const doc = documentOf(longer);
+  doc.gltf.nodes[0].scale = [3, 1, 1];
+  const turned = partBounds(partsOf(doc, { yaw: Math.PI / 2 }).parts[0].pos);
+  assert.ok(turned.hi[2] - turned.lo[2] > 5.9 && turned.hi[0] - turned.lo[0] < 2.1, JSON.stringify(turned));
+  fails(await call({ source, out: path.join(dir, 'bad'), colourSpace: 'gamma', preview: false }, {}), 'INVALID_INPUT');
+});

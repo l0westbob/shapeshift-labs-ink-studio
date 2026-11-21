@@ -4,9 +4,10 @@
 
 Local first: [trellis2mlx](https://github.com/lyonsno/trellis2mlx) runs TRELLIS.2 natively on Apple Silicon (MLX, no
 PyTorch). It is set up in `~/dev/experiments/trellis2mlx` with a test batch in `~/dev/experiments/trellis-test` (three
-tank reference pictures, `run.sh`). Waiting on access to Meta's gated DINOv3 encoder. Then: run the previews, build the
-GLBs with `model_build` (engine `glb`), add TRELLIS as a method in `scripts/compare-models.js`, and import a few props
-into Godot. Pixal3D (via AssetFurnace) is the next candidate: it reportedly keeps flat colours better, but needs full
+tank reference pictures, `run.sh`). Until Meta grants access to its gated DINOv3 encoder, the ungated timm copy runs
+in its place (converted by `convert_timm_dinov3.py`). First run done: a 512 preview of the three.js tank in 68 s, now the
+TRELLIS.2 entry in the method comparison. Still to do: detail runs (768 cascade), the other two tanks, and a few props
+imported into Godot. Pixal3D (via AssetFurnace) is the next candidate: it reportedly keeps flat colours better, but needs full
 Xcode.
 
 The rented route below stays the fallback.

@@ -5,7 +5,7 @@
 
      node scripts/compare-models.js [config.json] [out-dir]
 
-   config.json is a list of { method, label, author?, source, group?, out? } (default: every method in examples/). method
+   config.json is a list of { method, label, author?, source, group?, out?, options? } (options: extra model_build input) (default: every method in examples/). method
    "diorama" takes a diorama JSON as it is; the others are model_build engines. Methods that write no model.glb (dioramas,
    compositions, paintings, L-systems) are meshed with scene_export for the comparison. */
 const fs = require('node:fs');
@@ -33,6 +33,7 @@ const DEFAULT = [
   { method: 'splat', label: 'Capture (point cloud)', author: 'stand-in sampled from the CadQuery tank', source: 'examples/splat/tank.splat.json', group: TANK },
   { method: 'depth', label: 'Depth maps (front and back)', author: 'drawn from the voxel tank', source: 'examples/depth/tank.depth.json', group: TANK },
   { method: 'compose', label: 'Composition', author: 'CadQuery hull, voxel star, SDF sandbags', source: 'examples/compose/tank.compose.json', group: TANK },
+  { method: 'glb', label: 'TRELLIS.2 (image to 3D)', author: 'trellis2mlx preview from a render of the three.js tank, 68 s', source: 'examples/glb/tank-trellis.glb', group: TANK, options: { colourSpace: 'linear', yaw: -1.5708 } },
   { method: 'paint', label: 'Painting with splats', author: 'written in the session', source: 'examples/paint/tree.paint.json', group: OTHER },
   { method: 'grammar', label: 'L-system', author: 'written in the session', source: 'examples/grammar/tree.grammar.json', group: OTHER, out: 'lsystem' },
   { method: 'grammar', label: 'Split grammar', author: 'written in the session', source: 'examples/grammar/house.grammar.json', group: OTHER, out: 'split' },
@@ -68,7 +69,7 @@ async function main() {
     } else {
       /* the tanks are scaled to 6 units; other subjects keep the units they were written in */
       const sized = entry.group === OTHER ? {} : { size: 6 };
-      const built = await call('model_build', { source: entry.source, engine: entry.method, out, ...sized, pixelSize: 1, overwrite: true, preview: false });
+      const built = await call('model_build', { source: entry.source, engine: entry.method, out, ...sized, pixelSize: 1, ...entry.options, overwrite: true, preview: false });
       scene = built.scene;
       extract = {
         triangles: built.triangles, parts: built.parts?.length ?? built.solids, roles: built.roles, warnings: built.warnings?.length ? built.warnings : undefined,
