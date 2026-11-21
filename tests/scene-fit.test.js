@@ -47,3 +47,25 @@ test('scene_fit tunes a diorama towards drawn views and keeps the best', { timeo
   assert.equal(bad.ok, false);
   assert.match(bad.error.message, /is not a number/);
 });
+
+test('model_rank scores candidates the same way and ranks them, with a manifest for the compare page', { timeout: 120000 }, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ink-rank-'));
+  t.after(() => fs.rmSync(dir, { force: true, recursive: true }));
+  const views = { front: ['oooo', 'oooo'], right: ['oo', 'oo'], top: ['oooo', 'oooo'] };
+  fs.writeFileSync(path.join(dir, 'block.views.json'), JSON.stringify({ cell: 0.5, colours: { o: '#5b6b2e' }, views }));
+  const build = (source, out) => registry.call('model_build', { source, out, preview: false }, { root });
+  ok(await build(path.join(dir, 'block.views.json'), path.join(dir, 'good')));
+  /* a tall tower ranks below the block the views draw */
+  fs.writeFileSync(path.join(dir, 'tower.json'), JSON.stringify({ cell: 0.5, colours: { o: '#5b6b2e' }, layers: ['oo/oo', 'oo/oo', 'oo/oo', 'oo/oo', 'oo/oo', 'oo/oo'] }));
+  ok(await build(path.join(dir, 'tower.json'), path.join(dir, 'tower')));
+  const result = ok(await registry.call('model_rank', {
+    candidates: [{ dir: path.join(dir, 'tower'), label: 'tower' }, { dir: path.join(dir, 'good'), label: 'block' }],
+    targets: [{ views: path.join(dir, 'block.views.json') }], out: path.join(dir, 'rank'), size: 64
+  }, { root }));
+  assert.deepEqual(result.ranking.map(row => row.label), ['block', 'tower']);
+  assert.ok(result.ranking[0].match.silhouette > result.ranking[1].match.silhouette);
+  assert.ok(fs.existsSync(result.sheet));
+  const manifest = JSON.parse(fs.readFileSync(result.manifest, 'utf8'));
+  assert.equal(manifest.entries.length, 2);
+  assert.match(manifest.entries[0].label, /^#1 block/);
+});

@@ -1654,6 +1654,21 @@
       "generated": true
     },
     {
+      "id": "agent.model_rank",
+      "kind": "agent",
+      "status": "ready",
+      "title": "Rank candidate models",
+      "what": "Best of N: bake, render and score candidate models for one brief the same way, and rank them.",
+      "use": "MCP tool model_rank or: ink-studio agent call model_rank '<json>'",
+      "where": "agent/ops",
+      "tags": [
+        "agent",
+        "mcp",
+        "expensive"
+      ],
+      "generated": true
+    },
+    {
       "id": "agent.world_open",
       "kind": "agent",
       "status": "ready",

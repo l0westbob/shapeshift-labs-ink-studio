@@ -6,7 +6,7 @@ ink-studio sculpts signed-distance solids, bakes them into pixel-art Gaussian sp
 
 ### As a Claude Code plugin
 
-The repository is both a plugin and a local marketplace (`.claude-plugin/`). The plugin bundles the MCP server, five skills (`scene-authoring`, `look-tuning`, `world-sim`, and the slash commands `/ink-studio:new-scene` and `/ink-studio:review`), the `ink-art-director` subagent, and a hook that validates diorama and world JSON whenever Claude writes one.
+The repository is both a plugin and a local marketplace (`.claude-plugin/`). The plugin bundles the MCP server, six skills (`scene-authoring`, `look-tuning`, `world-sim`, and the slash commands `/ink-studio:new-scene`, `/ink-studio:review` and `/ink-studio:best-of-n`), the `ink-art-director` subagent, and a hook that validates diorama and world JSON whenever Claude writes one.
 
 ```bash
 claude plugin marketplace add /absolute/path/to/ink-studio
@@ -70,6 +70,7 @@ The classic `stats`, `lint`, `crisp` and `values` commands print the same JSON a
 | `model_build` | write | Build a model with another modeller: `engine` `three` (three.js script), `cadquery` (CadQuery/build123d `.py`, runs in `.venv`) or `vox` (voxel JSON, no code needed). Writes `model.glb` (the shared hand-off), `raw.png` (before baking), a diorama with one palette role per material, and a preview. See [docs/model-build.md](docs/model-build.md). |
 | `model_three` | write | `model_build` with engine `three`: run a three.js script (`({ THREE, addon }) => Object3D`) and write a diorama with one mesh solid per part and one palette role per material, plus `model.glb` and a preview. Needs code allowed. See [docs/three-modeling.md](docs/three-modeling.md). |
 | `scene_fit` | write | Inverse modelling: tune numbers in a diorama (JSON pointers with ranges) until orthographic renders match target views (a carve source, letter grids or PNGs). Writes the best scene and a target, before, after sheet. Slow: every candidate rebakes. |
+| `model_rank` | write | Best of N: bake, render and score candidate models the same way (cleanliness against the reference, tones, match with target views) and rank them. Writes a ranking, a labelled sheet and a manifest for `tools/compare.html`. |
 | `world_open` | read | Open a world manifest, checkpoint or run recording into a live simulation. Lists its fields, traces and action kinds. |
 | `world_step` | write | Schedule `actions` and advance by `ticks`, `steps` or `t`. Invalid actions are rejected before anything moves. Returns scenario status and new events. |
 | `world_query` | read | `inspect`, `spatial`, `select`, `probe`, `trace`, `export` on the current tick. |

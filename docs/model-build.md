@@ -155,6 +155,22 @@ until its orthographic renders match target views.
   design. `budget` caps the seconds. `out/fit.png` shows per view the target, the start and the best; `out/fit.json` the
   values and the score history.
 
+## Best of N
+
+Single attempts vary a lot, so for quality build several candidates and keep the strongest. `model_rank` bakes, renders
+and scores every candidate the same way: cleanliness (pixel-art faults against the reference), tones, and, with target
+views, silhouette and colour match. It writes `ranking.json`, a labelled `sheet.png` and a manifest for
+`tools/compare.html`.
+
+```json
+{ "candidates": [ { "dir": "studio/out/tank/1-cadquery" }, { "dir": "studio/out/tank/2-blender" }, { "scene": "scenes/tank.json" } ],
+  "targets": [ { "views": "studio/out/tank/target.views.json" } ], "out": "studio/out/tank/rank" }
+```
+
+The plugin's `/ink-studio:best-of-n` command runs the whole procedure: a spec and a drawn target first, then one subagent
+per engine in parallel, then the ranking, then `scene_fit` and look tuning on the winner. Other agents can follow
+[plugin/skills/best-of-n/SKILL.md](../plugin/skills/best-of-n/SKILL.md) the same way.
+
 ## Comparing methods
 
 `node scripts/compare-models.js` builds the same model with every method (by default the tanks in `examples/`) and

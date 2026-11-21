@@ -6,6 +6,7 @@ require('./query.js');
 require('./export.js');
 require('./model.js');
 require('./fit.js');
+require('./rank.js');
 require('./world.js');
 require('./bridge.js');
 module.exports = require('../registry.js');

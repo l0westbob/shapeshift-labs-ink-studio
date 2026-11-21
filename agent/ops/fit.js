@@ -302,3 +302,5 @@ defineOp({
 function round(v) {
   return typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 1000) / 1000 : v;
 }
+
+module.exports = { compare, targetsOf, CAMERAS, rgbOf };
