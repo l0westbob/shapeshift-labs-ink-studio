@@ -40,6 +40,12 @@ test('model_three turns the example tank into a diorama of closed mesh parts', {
   assert.deepEqual(result.warnings, []);
   assert.equal(result.extent, 6);
   assert.ok(fs.existsSync(path.join(dir, 'model.glb')) && fs.existsSync(path.join(dir, 'preview.png')));
+  /* the raw model, before baking: two views side by side, and the hull's olive is in it */
+  const raw = require('../cli/png.js').read(result.raw);
+  assert.deepEqual([raw.w, raw.h], [720, 270]);
+  let olive = 0;
+  for (let i = 0; i < raw.w * raw.h; i++) if (raw.rgb[i * 3 + 1] > raw.rgb[i * 3] + 10 && raw.rgb[i * 3 + 1] > raw.rgb[i * 3 + 2] + 30) olive++;
+  assert.ok(olive > 2000, 'raw.png shows the green hull (' + olive + ' px)');
   assert.equal(Buffer.from(result.image.base64, 'base64').subarray(1, 4).toString(), 'PNG');
 
   const spec = JSON.parse(fs.readFileSync(result.scene, 'utf8'));

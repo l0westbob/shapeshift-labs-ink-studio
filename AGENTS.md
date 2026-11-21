@@ -26,7 +26,20 @@ Without the plugin, register just the server (use one or the other, or every too
 claude mcp add ink-studio -- node /absolute/path/to/ink-studio/agent/mcp-server.js
 ```
 
-Options: `--root DIR` resolves relative paths against DIR (default: `$CLAUDE_PROJECT_DIR`, else the working directory; absolute paths always work). `--allow-code` or `INK_AGENT_ALLOW_CODE=1` lets `scene_open` run JavaScript scene files, which execute arbitrary code. JSON dioramas never need it.
+Options: `--root DIR` resolves relative paths against DIR (default: `$CLAUDE_PROJECT_DIR`, else the working directory; absolute paths always work). `--allow-code` or `INK_AGENT_ALLOW_CODE=1` lets `scene_open` run JavaScript scene files and `model_three` run three.js scripts, which execute arbitrary code. JSON dioramas never need it.
+
+### From Codex or another MCP client
+
+The server speaks plain MCP over stdio, so any client works. For Codex, add it to `~/.codex/config.toml` (or run `codex mcp add ink-studio -- node /absolute/path/to/ink-studio/agent/mcp-server.js --root /absolute/path/to/project`):
+
+```toml
+[mcp_servers.ink-studio]
+command = "node"
+args = ["/absolute/path/to/ink-studio/agent/mcp-server.js", "--root", "/absolute/path/to/project"]
+env = { INK_AGENT_ALLOW_CODE = "1" }   # only if three.js scripts or JavaScript scenes should run
+```
+
+Pass `--root`, because `$CLAUDE_PROJECT_DIR` is only set by Claude Code. The Claude plugin's skills, subagent and validation hook do not load in other clients: read `plugin/skills/*/SKILL.md` for the same guidance, and call `scene_validate` after writing a diorama yourself. Every tool writes PNGs to disk when given `out`, so clients that drop image content still see results by reading the file.
 
 Without MCP, every tool is a one-shot shell call that prints JSON (exit 0 ok, 1 op error, 2 usage):
 
@@ -102,6 +115,18 @@ Organizations can restrict Claude Code to managed MCP servers (`allowManagedMcpS
 - edit dioramas with `scene_edit` and `{"scene":{"path":...}}` (validated, atomic, saved in place), or with your file tools (the plugin hook validates every write),
 - render with `out` and read the PNG to see it,
 - chain world steps through files with `world_step` `save`, and `verify` a saved recording with `world_sim` and a `path`.
+
+## Python tools and previews
+
+Modelling front ends that use Python (CadQuery, build123d, trimesh, manifold3d) run in a local venv. Python 3.12, because CadQuery's kernel has no wheels for newer versions yet:
+
+```bash
+uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-modelling.txt
+```
+
+Call the tools as `.venv/bin/python`, never a global Python. `.venv/` is not committed.
+
+To judge a model before it is baked, `model_three` writes `out/raw.png`: the meshes as the script built them, flat-shaded from the front and the back, rendered on the CPU. For an interactive look, `npm run serve` serves the repository on `http://127.0.0.1:8765/` (no dependencies) and `tools/raw-viewer.html?script=/path/model.mjs&baked=/path/preview.png` runs a three.js script in the browser next to its baked image.
 
 ## Evals
 

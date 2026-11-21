@@ -45,7 +45,11 @@ ink-agent call model_three '{"script":"/abs/examples/three/tank.mjs","out":"/abs
 | `pixelSize` | Screen pixels per art pixel, written to `finish.look.pixelSize`. The renderer's default is 2, so a 128 × 128 render is a 64 × 64 sprite; use 1 to draw every pixel. |
 | `pixelStyle` | `pixelStyle` for every role material. Default `true`: `{ "dither": "none", "shadeSteps": shades }` and the scene's palette dither off, which gives flat shade bands without speckle. `false` keeps the renderer defaults; an object is used as given. |
 | `overwrite` | Replace an earlier model in `out` (stale part files are removed). |
-| `preview`, `frames` | A turnaround image (default 4 views of 256 × 256), also written to `out/preview.png`. |
+| `preview`, `frames` | A turnaround image of the baked scene (default 4 views of 256 × 256), also written to `out/preview.png`. |
+
+Every run also writes `out/raw.png`: the meshes as the script built them, before welding into distance fields and
+baking, flat-shaded from the front and the back. Compare it with `preview.png` to tell a modelling problem from a baking
+problem. `npm run serve` and `tools/raw-viewer.html?script=/path/model.mjs` show the raw model interactively in a browser.
 
 The tool runs JavaScript, so the server needs `--allow-code` (or `INK_AGENT_ALLOW_CODE=1`), like JavaScript scenes. three
 is an optional dependency: it is looked up next to the script, then in the project, then in ink-studio

@@ -235,6 +235,27 @@ function dioramaFor(parts, { size, cells = 96, hues, palette, roles, pixelStyle,
   };
 }
 
+/* the model as three.js built it, before baking, flat-shaded from the front and the back (see raw-render.js) */
+function writeRaw(parts, file) {
+  const { rawRender } = require('./raw-render.js'), { encode } = require('./png.js');
+  const shaded = parts.map(({ mesh, role }) => {
+    const { position, color } = mesh.geometry.attributes;
+    let colour = role?.colour ?? 0xb4b4b4;
+    if (!role && color) {
+      /* vertex colours are linear in three.js: their mean, back to sRGB */
+      const mean = [0, 1, 2].map(k => {
+        let sum = 0;
+        for (let i = 0; i < color.count; i++) sum += color.array[i * color.itemSize + k];
+        return Math.round(255 * Math.pow(Math.min(1, sum / color.count), 1 / 2.2));
+      });
+      colour = (mean[0] << 16) | (mean[1] << 8) | mean[2];
+    }
+    return { pos: position.array, index: mesh.geometry.index?.array, colour };
+  });
+  const image = rawRender(shaded, { w: 360, h: 270 });
+  fs.writeFileSync(file, encode(image.w, image.h, image.rgb));
+}
+
 /* runs `script`, writes model.glb (the whole welded model), parts/NN-name.glb and scene.json into `out`. kit is the loaded
    ink-studio KIT, used for the palette and the open-edge report; readMesh reads a GLB back the way scenes will. */
 async function buildModel(script, { out, roots = [], size, cells, hues = 6, shades = 4, pixelSize, pixelStyle = true, overwrite = false, kit, readMesh }) {
@@ -271,6 +292,7 @@ async function buildModel(script, { out, roots = [], size, cells, hues = 6, shad
     fs.rmSync(file);
     palette.push(...pal.slice(1));
   }
+  writeRaw(parts, path.join(out, 'raw.png'));
   const style = pixelStyle === false ? null : pixelStyle === true ? { dither: 'none', shadeSteps: shades } : pixelStyle;
   const report = parts.map((part, i) => {
     const info = kit.mesh.info(readMesh(path.join(out, files[i])));
@@ -283,6 +305,7 @@ async function buildModel(script, { out, roots = [], size, cells, hues = 6, shad
     directory: out,
     scene: sceneFile,
     model: path.join(out, 'model.glb'),
+    raw: path.join(out, 'raw.png'),
     three: three.revision,
     triangles: parts.reduce((sum, part) => sum + part.triangles, 0),
     extent: round(extentOf(boundsOf(parts)) * (size ? size / extentOf(boundsOf(parts)) : 1)),

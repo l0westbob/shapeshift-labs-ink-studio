@@ -14,7 +14,8 @@
     "test": "node --test tests/*.test.js && node cli/ink-studio.js selftest",
     "lint": "node scripts/check.js",
     "mcp": "node agent/mcp-server.js",
-    "format": "prettier --write \"src/**/*.js\" \"cli/*.js\" \"demos/*.js\" \"lab/*.js\" index.js \"scripts/*.js\" \"agent/*.js\""
+    "format": "prettier --write \"src/**/*.js\" \"cli/*.js\" \"demos/*.js\" \"lab/*.js\" index.js \"scripts/*.js\" \"agent/*.js\"",
+    "serve": "node scripts/serve.js"
   },
   "license": "MIT",
   "engines": {

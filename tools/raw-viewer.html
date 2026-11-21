@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Raw three.js models</title>
+<!-- Runs three.js model scripts in the browser exactly as written, before welding and baking, next to the baked image.
+     Serve the repository with `npm run serve`, then open
+     http://127.0.0.1:8765/tools/raw-viewer.html?script=/examples/three/tank.mjs&baked=/studio/out/tank/preview.png -->
+<style>
+  body { margin: 0; background: #16171b; color: #ddd; font: 13px system-ui, sans-serif; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; border-bottom: 1px solid #333; }
+  figure { margin: 0; width: 260px; } figure.wide { width: 360px; } figcaption { font-size: 11px; color: #aaa; }
+  figcaption { padding: 4px 2px; }
+  canvas { display: block; background: #0b0d10; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="rows"></div>
+<script type="module">
+import * as THREE from 'three';
+const addon = name => import('/node_modules/three/examples/jsm/' + name.replace(/^\/+/, '').replace(/\.js$/, '') + '.js');
+/* ?script=/path/model.mjs&baked=/path/baked.png (repeat both for more rows); without them, the example tank */
+const query = new URLSearchParams(location.search);
+const scripts = query.getAll('script'), bakedImages = query.getAll('baked');
+const models = (scripts.length ? scripts : ['/examples/three/tank.mjs']).map((url, i) => [url.split('/').pop(), url, bakedImages[i]]);
+const views = [[0.6, 'shaded', false], [0.6, 'wireframe', true], [2.4, 'shaded, back', false]];
+const W = 360, H = 260;
+for (const [title, url, baked] of models) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  document.getElementById('rows').append(row);
+  if (baked) {
+    const bakedFigure = document.createElement('figure');
+    bakedFigure.innerHTML = `<img src="${baked}" style="width:260px;height:260px;object-fit:contain;image-rendering:pixelated;background:#0b0d10"><figcaption>${title} · baked (ink-studio)</figcaption>`;
+    row.append(bakedFigure);
+  }
+  const build = (await import(url)).default;
+  for (const [yaw, label, wire] of views) {
+    const object = await build({ THREE, addon });
+    const scene = new THREE.Scene();
+    scene.add(object);
+    let tris = 0, meshes = 0;
+    object.traverse(n => {
+      if (!n.isMesh) return;
+      meshes++;
+      tris += (n.geometry.index ? n.geometry.index.count : n.geometry.attributes.position.count) / 3;
+      if (wire) n.material = new THREE.MeshBasicMaterial({ color: 0x9fd0ff, wireframe: true });
+    });
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x302820, 1.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(-4, 8, 5);
+    scene.add(sun);
+    const box = new THREE.Box3().setFromObject(object), size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+    const span = Math.max(size.x, size.y, size.z), dist = span * 1.45, pitch = 0.42;
+    const camera = new THREE.PerspectiveCamera(35, W / H, 0.01, 100);
+    camera.position.set(centre.x + dist * Math.cos(pitch) * Math.sin(yaw), centre.y + dist * Math.sin(pitch), centre.z + dist * Math.cos(pitch) * Math.cos(yaw));
+    camera.lookAt(centre);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(W, H);
+    renderer.setClearColor(0x0b0d10);
+    renderer.render(scene, camera);
+    const figure = document.createElement("figure"); figure.className = "wide";
+    const caption = document.createElement('figcaption');
+    caption.textContent = `${title} · ${label} · ${meshes} meshes, ${tris} triangles`;
+    figure.append(renderer.domElement, caption);
+    row.append(figure);
+  }
+}
+document.body.dataset.done = '1';
+</script>
+</body>
+</html>
