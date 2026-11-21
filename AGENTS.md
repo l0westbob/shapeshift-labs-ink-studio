@@ -130,7 +130,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-mod
 
 Call the tools as `.venv/bin/python`, never a global Python. `.venv/` is not committed.
 
-To judge a model before it is baked, `model_build` and `model_three` write `out/raw.png`: the meshes as the script built them, flat-shaded from the front and the back, rendered on the CPU. For an interactive look, `npm run serve` serves the repository on `http://127.0.0.1:8765/` (no dependencies) and `tools/raw-viewer.html?script=/path/model.mjs&baked=/path/preview.png` runs a three.js script in the browser next to its baked image. `node scripts/compare-models.js` builds the same model with every method and `tools/compare.html` shows each method's `model.glb` and baked result side by side.
+To judge a model before it is baked, `model_build` and `model_three` write `out/raw.png`: the meshes as the script built them, flat-shaded from the front and the back, rendered on the CPU. For an interactive look, `npm run serve` serves the repository on `http://127.0.0.1:8765/` (no dependencies) and `tools/raw-viewer.html?script=/path/model.mjs&baked=/path/preview.png` runs a three.js script in the browser next to its baked image. `node scripts/compare-models.js` builds the same model with every method and `tools/compare.html` shows each method's `model.glb` and baked result side by side; `node scripts/resolution-sweep.js` and `tools/sweep.html` compare art resolutions; `tools/tune.html` changes resolution, splat spacing, shading, light and camera of a finished scene live with sliders and saves the result. For a given sprite width, pass `art` to `model_build` so the splat spacing matches the pixel size.
 
 ## Evals
 

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resolution sweep</title>
+<!-- Made by scripts/resolution-sweep.js. Serve the repository with `npm run serve`, then open /tools/sweep.html -->
+<style>
+  :root { --bg: #14151a; --card: #1c1e24; --line: #2c2f38; --text: #e4e4e7; --muted: #9a9ca6; --accent: #9fd0ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 20px 16px 8px; }
+  p { margin: 0; color: var(--muted); max-width: 980px; }
+  .row { margin: 0 16px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .row h3 { font-size: 14px; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .cells { display: grid; grid-template-columns: repeat(var(--n), minmax(150px, 1fr)); overflow-x: auto; }
+  figure { margin: 0; border-left: 1px solid var(--line); }
+  figure:first-child { border-left: 0; }
+  img { width: 100%; display: block; image-rendering: pixelated; background: #0b0d10; }
+  figcaption { font-size: 11px; color: var(--muted); padding: 4px 8px; }
+  b { color: var(--text); font-weight: 600; }
+  .error { color: #ffb4a8; padding: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>How fine should the pixel art be?</h1>
+  <p>Each model rendered at several art resolutions (art pixels across), shown at the same size. The splat spacing follows the pixel size (the model's longest side divided by the art size), because the renderer's default spacing is coarser than a pixel for a model a few units long, which reads as blotchy shading.</p>
+</header>
+<div id="rows"></div>
+<script type="module">
+let manifest;
+try {
+  manifest = await (await fetch('/studio/out/resolution-sweep/manifest.json', { cache: 'no-store' })).json();
+} catch {
+  document.getElementById('rows').innerHTML = '<p class="error">No sweep yet. Run <code>node scripts/compare-models.js</code>, then <code>node scripts/resolution-sweep.js</code>.</p>';
+  throw new Error('no manifest');
+}
+const bust = '?v=' + Date.parse(manifest.created);
+let group = null;
+for (const entry of manifest.entries) {
+  if (entry.group !== group) {
+    group = entry.group;
+    const h = document.createElement('h2');
+    h.textContent = group ?? 'Models';
+    document.getElementById('rows').append(h);
+  }
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<h3>${entry.label}</h3><div class="cells" style="--n:${entry.cells.length}">${entry.cells.map(c => `
+    <figure><img src="${c.image}${bust}" alt="${c.size} px">
+      <figcaption><b>${c.size} px</b> · res ${c.res} · noise ${c.noise} · orphans ${c.orphans} · ${c.tones.toLowerCase().replace('_', ' ')} · ${c.splats.toLocaleString()} splats · ${c.seconds} s</figcaption></figure>`).join('')}</div>`;
+  document.getElementById('rows').append(row);
+}
+</script>
+</body>
+</html>

@@ -394,6 +394,27 @@ The plugin's `/ink-studio:best-of-n` command runs the whole procedure: a spec an
 per engine in parallel, then the ranking, then `scene_fit` and look tuning on the winner. Other agents can follow
 [plugin/skills/best-of-n/SKILL.md](../plugin/skills/best-of-n/SKILL.md) the same way.
 
+## Resolution and live tuning
+
+Two settings decide how fine the result reads, and they belong together:
+
+- The **art resolution**: render size divided by `pixelSize`. A 128 × 128 render with `pixelSize: 1` is a 128-pixel
+  sprite; the default `pixelSize` of 2 halves it.
+- The **splat spacing**, `finish.res` (default 0.09 scene units). For a model a few units long that is coarser than a
+  pixel already at 128 pixels, and at higher resolutions it shows as blotchy shading on large flat faces. Pass `art`
+  to `model_build` (the sprite width in art pixels) and it sets `finish.res` to the model size over `art`.
+
+On the CadQuery tank at 384 pixels, noise fell from 0.085 with the default spacing to 0.075 with matched spacing, and
+the flat faces lost their blotches; from 128 to 384 pixels it fell from 0.18 to 0.075. `node scripts/resolution-sweep.js`
+renders every compared model at 64, 96, 128, 192 and 384 pixels with matched spacing; `/tools/sweep.html` shows them
+side by side. Dioramas that set `res` on their solids keep those values.
+
+`/tools/tune.html` (with `npm run serve`) changes the finished result live with sliders: art resolution, zoom and camera
+re-render the baked scene (about 0.1 to 0.3 s); splat spacing, shade steps, ramp and palette dithering, edge hardness,
+sun direction and height, ambient and sky bake a variant (about 0.5 to 1 s) that stays cached, so going back is
+instant. Save writes the settings as `<scene>.tuned.json` next to the scene. `?scene=/path/scene.json` opens any JSON
+diorama in the repository.
+
 ## Comparing methods
 
 `node scripts/compare-models.js` builds a model with every method from the examples (thirteen tanks, plus a painted tree,

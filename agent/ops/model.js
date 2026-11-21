@@ -57,13 +57,14 @@ const COMMON = {
     anyOf: [{ type: 'boolean' }, { type: 'object' }],
     description: 'pixelStyle for every role material (default true: { dither: "none", shadeSteps: shades }, flat shade bands without speckle; false leaves the renderer default; an object is used as given).'
   },
+  art: { type: 'integer', minimum: 16, maximum: 1024, description: 'Art pixels the sprite will be across; sets finish.res (splat spacing) to the model size over this, never coarser than 0.09, so detail and flat shading hold at that resolution. Render at the same size with pixelSize 1.' },
   snap: { type: 'integer', minimum: 8, maximum: 1024, description: 'Art pixels the longest side spans in the final sprite; positions and sizes round to whole pixels so part edges land on the pixel grid (mesh engines and voxels).' },
   overwrite: { type: 'boolean', description: 'Replace an earlier model in out.' },
   preview: { type: 'boolean', description: 'Return a turnaround image of the baked scene (default true).' },
   frames: { type: 'integer', minimum: 1, maximum: 8, description: 'Preview views (default 4).' }
 };
 
-async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, overwrite = false, preview = true, frames = 4 }, ctx, field) {
+async function build(engine, { source, out, size, cells, hues, shades, pixelSize, pixelStyle, tolerance, snap, art, overwrite = false, preview = true, frames = 4 }, ctx, field) {
   const spec = ENGINES[engine];
   if (runsCode(engine, source) && !Scenes.codeAllowed(ctx))
     throw new OpError('CODE_NOT_ALLOWED', spec.label + ' run arbitrary code and are disabled', {
@@ -107,6 +108,15 @@ async function build(engine, { source, out, size, cells, hues, shades, pixelSize
     throw new OpError('BUILD_FAILED', error.message, {
       path: '/' + field, hint: error.where ?? error.stack?.split('\n').find(line => line.includes(file))?.trim()
     });
+  }
+  /* art: splats about a pixel apart at the intended sprite size (the renderer's default spacing is coarser than a pixel
+     for a model a few units long, which reads as blotchy shading) */
+  if (art) {
+    const scene = JSON.parse(fs.readFileSync(report.scene, 'utf8'));
+    const extent = report.extent ?? scene.camera?.dist / 1.7;
+    scene.finish = { ...scene.finish, res: Math.round(Math.min(0.09, extent / art) * 1e4) / 1e4 };
+    fs.writeFileSync(report.scene, JSON.stringify(scene, null, 2) + '\n');
+    report.res = scene.finish.res;
   }
   const { spec: diorama, ...summary } = report;
   const result = compact({ engine, ...summary, next: { tool: 'scene_open', scene: { path: report.scene } } });

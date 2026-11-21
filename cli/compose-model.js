@@ -135,4 +135,4 @@ async function buildModel(file, { out, kit, buildPart, overwrite = false }) {
   return { directory: out, scene: sceneFile, parts: pieces.map(p => p.label), solids: spec.solids.length, colours: spec.palette.length, roles: Object.keys(spec.roles), warnings, spec };
 }
 
-module.exports = { buildModel, composeSpecs };
+module.exports = { buildModel, composeSpecs, materials };
