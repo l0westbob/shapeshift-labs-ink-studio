@@ -81,7 +81,7 @@ async function main() {
     await call('scene_render', { scene: { path: scene }, mode: 'turn', frames: 4, size: { w: 160, h: 160 }, scale: 2, out: path.join(out, 'turn.png'), overwrite: true });
     const { stats, lint, values } = baked.metrics;
     manifest.entries.push({
-      method: entry.method, label: entry.label, author: entry.author, source: entry.source, group: entry.group,
+      method: entry.method, label: entry.label, author: entry.author, source: entry.source, group: entry.group, scene: rel(scene),
       glb: rel(path.join(out, 'model.glb')), baked: rel(path.join(out, 'final.png')), turn: rel(path.join(out, 'turn.png')),
       extract: { ...extract, buildSeconds: round(buildMs / 1000, 1) },
       bake: { splats: stats.splats?.total ?? stats.count, colours: lint.colours, noise: round(lint.noise), orphans: round(lint.orphans), tones: values.verdict, reference: { noise: round(lint.reference?.noise), orphans: round(lint.reference?.orphans) } }

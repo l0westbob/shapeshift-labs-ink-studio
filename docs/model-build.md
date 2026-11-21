@@ -415,6 +415,13 @@ sun direction and height, ambient and sky bake a variant (about 0.5 to 1 s) that
 instant. Save writes the settings as `<scene>.tuned.json` next to the scene. `?scene=/path/scene.json` opens any JSON
 diorama in the repository.
 
+`/tools/compare.html` has the same sliders behind "Tune the baked results": every method's baked image is rendered
+again with one set of settings, visible rows first, each row with its tuned numbers and a link into the tuner. "Baked
+camera follows the 3D view" turns the baked renders to the angle of the 3D viewers. The server bakes in a pool of worker
+threads (`TUNE_WORKERS`, default up to 12), one scene per worker so its variants stay cached; on 36 cores a first pass
+over the sixteen compared scenes at 256 pixels took about 36 s, a camera change about 4 s. "Auto spacing in pixels" set
+to 2 bakes about four times fewer splats: a full pass then took 20 s, at a small cost in noise on mesh models.
+
 ## Comparing methods
 
 `node scripts/compare-models.js` builds a model with every method from the examples (thirteen tanks, plus a painted tree,

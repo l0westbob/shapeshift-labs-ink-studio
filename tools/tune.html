@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pixel tuner</title>
 <!-- Live tuning of the baked result: `npm run serve`, then http://127.0.0.1:8765/tools/tune.html (?scene=/path/scene.json).
-     The server renders with scripts/tune-api.js; view settings re-render, bake settings bake a cached variant. -->
+     The server renders with scripts/tune-api.js; view settings re-render, bake settings bake a cached variant. The sliders
+     come from tune-controls.mjs, shared with compare.html. -->
 <style>
   :root { --bg: #14151a; --panel: #1c1e24; --line: #2c2f38; --text: #e4e4e7; --muted: #9a9ca6; --accent: #9fd0ff; --good: #8fd18f; --bad: #e8a08a; }
   * { box-sizing: border-box; }
@@ -14,17 +15,10 @@
   aside { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 14px 20px; }
   main { display: flex; flex-direction: column; min-width: 0; }
   h1 { font-size: 16px; margin: 0 0 8px; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 16px 0 6px; }
-  select, button { width: 100%; background: #26282f; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  #scene, button { width: 100%; background: #26282f; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
   button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
-  .control { margin: 6px 0 8px; }
-  .control label { display: flex; justify-content: space-between; color: var(--muted); }
-  .control label span:last-child { color: var(--text); font-variant-numeric: tabular-nums; }
-  .control.dirty label span:first-child { color: var(--accent); }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
-  .check { display: flex; gap: 6px; align-items: center; margin: 4px 0; color: var(--muted); }
   .stage { flex: 1; display: grid; place-items: center; overflow: auto; padding: 16px; background: #0b0d10; position: relative; }
   .stage img { image-rendering: pixelated; display: block; }
   .busy { position: absolute; top: 10px; right: 14px; color: var(--accent); font-size: 12px; opacity: 0; transition: opacity 0.15s; }
@@ -56,101 +50,15 @@
     document.body.innerHTML = '<p class="error">This page has to be served. Run <code>npm run serve</code> and open <code>http://127.0.0.1:8765/tools/tune.html</code>.</p>';
 </script>
 <script type="module">
-/* every control: key, label, kind, range, default, and whether it changes the bake (slower) or only the view */
-const GROUPS = [
-  ['Pixels', [
-    { key: 'art', label: 'Art pixels across', min: 32, max: 512, step: 16, value: 128, always: true },
-    { key: 'zoom', label: 'Zoom', min: 0.5, max: 3, step: 0.05, value: 1 }
-  ]],
-  ['Splats (bake)', [
-    { key: 'res', label: 'Splat spacing', min: 0.006, max: 0.15, step: 0.002, value: 0.03, auto: true }
-  ]],
-  ['Shading (bake)', [
-    { key: 'shadeSteps', label: 'Shade steps', min: 2, max: 8, step: 1, value: 4 },
-    { key: 'matDither', label: 'Ramp dither', options: ['none', 'bayer', 'checker', 'diagonal'], value: 'none' },
-    { key: 'paletteDither', label: 'Palette dither', min: 0, max: 1, step: 0.05, value: 0 },
-    { key: 'edgeHardness', label: 'Edge hardness', min: 0, max: 1, step: 0.05, value: 1 }
-  ]],
-  ['Light (bake)', [
-    { key: 'sunYaw', label: 'Sun direction', min: -180, max: 180, step: 5, value: -40, pair: 'sunHeight' },
-    { key: 'sunHeight', label: 'Sun height', min: 5, max: 90, step: 1, value: 50, pair: 'sunYaw' },
-    { key: 'amb', label: 'Ambient', min: 0, max: 0.6, step: 0.01, value: 0.16 },
-    { key: 'sky', label: 'Sky', min: 0, max: 0.6, step: 0.01, value: 0.3 }
-  ]],
-  ['Camera', [
-    { key: 'yaw', label: 'Turn', min: -3.14, max: 3.14, step: 0.02, value: 0.6 },
-    { key: 'pitch', label: 'Tilt', min: -0.2, max: 1.55, step: 0.01, value: 0.35 },
-    { key: 'ortho', label: 'Orthographic', check: true, value: false }
-  ]],
-  ['Look', [
-    { key: 'colored', label: 'Coloured outlines', check: true, value: false },
-    { key: 'raw', label: 'Raw (no palette styling)', check: true, value: false }
-  ]]
-];
-const controls = new Map(), dirty = new Set();
-let autoRes = true;
+import { buildControls, renderTuned, saveTuned, STYLE } from './tune-controls.mjs';
+document.head.insertAdjacentHTML('beforeend', `<style>${STYLE}</style>`);
 
-const container = document.getElementById('controls');
-for (const [title, list] of GROUPS) {
-  container.insertAdjacentHTML('beforeend', `<h2>${title}</h2>`);
-  for (const c of list) {
-    const div = document.createElement('div');
-    div.className = 'control';
-    if (c.check) div.innerHTML = `<label class="check"><input type="checkbox"> ${c.label}</label>`;
-    else if (c.options) div.innerHTML = `<label><span>${c.label}</span><span></span></label><select>${c.options.map(o => `<option>${o}</option>`).join('')}</select>`;
-    else div.innerHTML = `<label><span>${c.label}</span><span></span></label><input type="range" min="${c.min}" max="${c.max}" step="${c.step}">` +
-      (c.auto ? `<label class="check"><input type="checkbox" checked data-auto> follow the pixel size</label>` : '');
-    container.append(div);
-    const input = div.querySelector(c.check ? 'input[type=checkbox]' : c.options ? 'select' : 'input[type=range]');
-    const show = div.querySelector('label span:last-child');
-    const entry = { ...c, div, input, show };
-    controls.set(c.key, entry);
-    set(entry, c.value);
-    input.addEventListener('input', () => {
-      if (c.key === 'res') setAuto(false);
-      dirty.add(c.key);
-      if (c.pair) dirty.add(c.pair);
-      refresh(entry);
-      schedule();
-    });
-    if (c.auto) div.querySelector('[data-auto]').addEventListener('change', e => { setAuto(e.target.checked); schedule(); });
-  }
-}
-function setAuto(on) {
-  autoRes = on;
-  const res = controls.get('res');
-  res.div.querySelector('[data-auto]').checked = on;
-  if (on) dirty.delete('res');
-  refresh(res);
-}
-function set(entry, value) {
-  if (entry.check) entry.input.checked = Boolean(value);
-  else entry.input.value = value;
-  refresh(entry);
-}
-function valueOf(entry) {
-  if (entry.check) return entry.input.checked;
-  if (entry.options) return entry.input.value;
-  return Number(entry.input.value);
-}
-function refresh(entry) {
-  entry.div.classList.toggle('dirty', dirty.has(entry.key) || (entry.key === 'res' && !autoRes));
-  if (entry.show) entry.show.textContent = entry.key === 'res' && autoRes ? 'auto' : valueOf(entry);
-}
-
-/* settings sent to the server: the art size always, everything else only once changed */
-function settings() {
-  const out = {};
-  for (const [key, entry] of controls) if (entry.always || dirty.has(key)) out[key] = valueOf(entry);
-  out.res = autoRes ? 'auto' : valueOf(controls.get('res'));
-  return out;
-}
-
+const tuner = buildControls(document.getElementById('controls'), () => schedule());
 const sceneSelect = document.getElementById('scene');
 const list = await (await fetch('/api/scenes')).json();
 const wanted = new URLSearchParams(location.search).get('scene');
 if (wanted && !list.some(s => s.scene === wanted)) list.unshift({ label: wanted, scene: wanted });
-let lastGroup = null, group = null;
+let lastGroup, group;
 for (const s of list) {
   if (s.group !== lastGroup) {
     group = document.createElement('optgroup');
@@ -162,6 +70,9 @@ for (const s of list) {
 }
 if (!list.length) document.getElementById('bar').textContent = 'No scenes: run node scripts/compare-models.js, or open with ?scene=/path/scene.json';
 if (wanted) sceneSelect.value = wanted;
+/* settings handed over in the URL (compare.html links here with its current ones) */
+const handed = new URLSearchParams(location.search).get('settings');
+if (handed) for (const [key, value] of Object.entries(JSON.parse(handed))) if (key !== 'res' || value !== 'auto') tuner.set(key, value);
 sceneSelect.addEventListener('change', () => { cameraKnown = false; schedule(0); });
 
 let timer = null, requestId = 0, cameraKnown = false;
@@ -176,14 +87,9 @@ async function render() {
   busy.classList.add('on');
   let result;
   try {
-    const response = await fetch('/api/tune', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scene: sceneSelect.value, settings: settings() }) });
-    result = await response.json();
-    if (!response.ok) throw new Error(result.error);
+    result = await renderTuned(sceneSelect.value, tuner.settings());
   } catch (error) {
-    if (id === requestId) {
-      busy.classList.remove('on');
-      bar.innerHTML = `<span class="bad">${error.message}</span>`;
-    }
+    if (id === requestId) (busy.classList.remove('on'), (bar.innerHTML = `<span class="bad">${error.message}</span>`));
     return;
   }
   if (id !== requestId) return; /* a newer request is on its way */
@@ -195,10 +101,9 @@ async function render() {
   /* show the scene's own camera and the spacing it resolved to, without marking them changed */
   if (!cameraKnown && result.resolved.camera?.yaw !== undefined) {
     cameraKnown = true;
-    if (!dirty.has('yaw')) set(controls.get('yaw'), result.resolved.camera.yaw);
-    if (!dirty.has('pitch')) set(controls.get('pitch'), result.resolved.camera.pitch);
+    if (!tuner.isDirty('yaw')) tuner.set('yaw', result.resolved.camera.yaw, { quiet: true });
+    if (!tuner.isDirty('pitch')) tuner.set('pitch', result.resolved.camera.pitch, { quiet: true });
   }
-  if (autoRes) controls.get('res').input.value = result.resolved.res;
   const m = result.metrics, ref = m.reference ?? {};
   const grade = (v, r) => `<b class="${v <= r * 1.25 ? 'good' : 'bad'}">${v}</b>`;
   bar.innerHTML = [
@@ -220,18 +125,18 @@ function fit() {
 addEventListener('resize', fit);
 
 document.getElementById('reset').addEventListener('click', () => {
-  dirty.clear();
-  for (const [, entry] of controls) set(entry, entry.value);
-  setAuto(true);
+  tuner.reset();
   cameraKnown = false;
   schedule(0);
 });
 document.getElementById('save').addEventListener('click', async () => {
-  const response = await fetch('/api/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scene: sceneSelect.value, settings: settings() }) });
-  const result = await response.json();
-  document.getElementById('saved').innerHTML = response.ok
-    ? `Saved <code>${result.file}</code>. Render it at ${result.render.size.w} × ${result.render.size.h} (pixelSize 1).`
-    : `<span class="bad">${result.error}</span>`;
+  const note = document.getElementById('saved');
+  try {
+    const result = await saveTuned(sceneSelect.value, tuner.settings());
+    note.innerHTML = `Saved <code>${result.file}</code>. Render it at ${result.render.size.w} × ${result.render.size.h} (pixelSize 1).`;
+  } catch (error) {
+    note.innerHTML = `<span class="bad">${error.message}</span>`;
+  }
 });
 schedule(0);
 document.body.dataset.ready = '1';

@@ -15,16 +15,46 @@ const TYPES = {
   '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain', '.wasm': 'application/wasm', '.md': 'text/plain; charset=utf-8'
 };
 
-/* the live tuner's API (scripts/tune-api.js), loaded on first use so plain serving stays dependency-free and fast */
-let tuneApi = null;
+/* the live tuner's API (scripts/tune-api.js) runs in a pool of worker threads, started on first use so plain serving stays
+   fast. Each scene always goes to the same worker, so its baked variants stay cached there while other scenes bake in
+   parallel. TUNE_WORKERS sets the pool size. */
+const { Worker } = require('node:worker_threads');
+const WORKERS = Math.max(1, Number(process.env.TUNE_WORKERS) || Math.min(12, require('node:os').cpus().length - 2));
+let pool = null, nextId = 0;
+const pending = new Map();
+function startPool() {
+  pool = Array.from({ length: WORKERS }, () => {
+    const worker = new Worker(path.join(__dirname, 'tune-worker.js'), { workerData: { budget: 4e6 } });
+    worker.on('message', ({ id, result, error, status }) => {
+      const job = pending.get(id);
+      pending.delete(id);
+      if (job) error ? job.reject(Object.assign(new Error(error), { status })) : job.resolve(result);
+    });
+    return worker;
+  });
+}
+const workerFor = scene => {
+  let h = 0;
+  for (const ch of String(scene)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return pool[h % pool.length];
+};
+function runInPool(op, input) {
+  if (!pool) startPool();
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    workerFor(input.scene ?? '').postMessage({ id, op, input });
+  });
+}
 const json = (response, status, value) => response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(value));
 
 function api(request, response, pathname) {
   /* only this page may call it: JSON bodies (which other sites cannot send without a CORS preflight) from this origin */
   const origin = request.headers.origin;
   if (origin && origin !== 'http://127.0.0.1:' + PORT && origin !== 'http://localhost:' + PORT) return json(response, 403, { error: 'other origins may not call the API' });
-  tuneApi ??= require('./tune-api.js');
-  if (request.method === 'GET' && pathname === '/api/scenes') return json(response, 200, tuneApi.scenes());
+  if (request.method === 'GET' && pathname === '/api/info') return json(response, 200, { workers: WORKERS });
+  if (request.method === 'GET' && pathname === '/api/scenes')
+    return runInPool('scenes', {}).then(list => json(response, 200, list), error => json(response, 500, { error: error.message }));
   if (request.method !== 'POST' || !['/api/tune', '/api/save'].includes(pathname)) return json(response, 404, { error: 'no such API' });
   if (!String(request.headers['content-type']).startsWith('application/json')) return json(response, 415, { error: 'send JSON' });
   let body = '';
@@ -33,12 +63,16 @@ function api(request, response, pathname) {
     if (body.length > 1e6) request.destroy();
   });
   request.on('end', () => {
+    let input;
     try {
-      const input = JSON.parse(body || '{}');
-      json(response, 200, pathname === '/api/tune' ? tuneApi.tune(input) : tuneApi.save(input));
+      input = JSON.parse(body || '{}');
     } catch (error) {
-      json(response, error.status ?? 400, { error: error.message, details: error.details });
+      return json(response, 400, { error: error.message });
     }
+    runInPool(pathname === '/api/tune' ? 'tune' : 'save', input).then(
+      result => json(response, 200, result),
+      error => json(response, error.status ?? 400, { error: error.message })
+    );
   });
 }
 

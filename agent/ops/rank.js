@@ -121,7 +121,7 @@ defineOp({
     const manifest = {
       created: new Date().toISOString(),
       entries: rows.filter(row => row.baked).map(row => ({
-        method: 'rank-' + row.rank, label: '#' + row.rank + ' ' + row.label + ' (' + row.score + ')', author: 'model_rank', source: rel(row.scene),
+        method: 'rank-' + row.rank, label: '#' + row.rank + ' ' + row.label + ' (' + row.score + ')', author: 'model_rank', source: rel(row.scene), scene: rel(row.scene),
         glb: row.glb ? rel(row.glb) : undefined, baked: rel(row.baked), turn: rel(row.baked),
         extract: { note: row.glb ? undefined : 'no model.glb next to this scene' },
         bake: { splats: row.splats, colours: undefined, noise: row.lint.noise, orphans: row.lint.orphans, tones: row.tones, reference: { noise: 0.177, orphans: 0.015 } }

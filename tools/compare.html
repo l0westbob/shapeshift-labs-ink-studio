@@ -25,6 +25,20 @@
   .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
   .cap { font-size: 11px; color: var(--muted); padding: 4px 8px; }
   .glb { background: #0b0d10; }
+  #tuneToggle { background: #26282f; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+  #tuneToggle:hover, #tuneToggle.on { border-color: var(--accent); color: var(--accent); }
+  #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; background: #1c1e24; border-left: 1px solid var(--line); padding: 12px 14px 20px; overflow-y: auto; z-index: 5; box-shadow: -8px 0 24px #0008; }
+  #drawer[hidden] { display: none; }
+  #drawer h1 { font-size: 15px; margin: 0 0 4px; display: flex; justify-content: space-between; align-items: center; }
+  #drawer h1 button, #drawer .buttons button { background: #26282f; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  #drawer .buttons { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 10px; }
+  #drawer p { color: var(--muted); font-size: 12px; margin: 6px 0; }
+  body.drawer-open { margin-right: 300px; }
+  .tuned { font-size: 11px; color: var(--muted); padding: 4px 8px; min-height: 1.4em; }
+  .tuned b { color: var(--text); font-weight: 600; }
+  .tuned a { color: var(--accent); }
+  .bakedbox.stale .baked { opacity: 0.55; }
+  #tuneStatus { color: var(--accent); }
   .view { width: 100%; aspect-ratio: 4 / 3; display: block; background: #0b0d10; }
   .bakedbox { display: flex; flex-direction: column; background: #0b0d10; height: 100%; }
   .baked { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; image-rendering: pixelated; display: block; }
@@ -50,7 +64,16 @@
   <label><input type="checkbox" id="wire"> wireframe</label>
   <label><input type="checkbox" id="flat" checked> flat shading</label>
   <span id="when"></span>
+  <button id="tuneToggle">Tune the baked results</button>
+  <span id="tuneStatus"></span>
 </div>
+<aside id="drawer" hidden>
+  <h1>Tune the baked results <button id="tuneClose">Close</button></h1>
+  <p>Every method's baked image is rendered again with these settings, visible rows first. Unchanged settings keep each scene's own values.</p>
+  <label class="check" style="display:flex;gap:6px;color:var(--muted)"><input type="checkbox" id="follow"> Baked camera follows the 3D view</label>
+  <div id="tuneControls"></div>
+  <div class="buttons"><button id="tuneReset">Back to the stored results</button></div>
+</aside>
 <div id="groups"></div>
 <script>
   if (location.protocol === 'file:')
@@ -79,6 +102,87 @@ const views = [];
 let syncing = false;
 const loader = new GLTFLoader();
 
+/* --- tuning the baked results: one set of settings, every row rendered again through /api/tune ------------------------ */
+const { buildControls, renderTuned, STYLE } = await import('./tune-controls.mjs');
+document.head.insertAdjacentHTML('beforeend', `<style>${STYLE}</style>`);
+const bakedRows = [];
+const drawer = document.getElementById('drawer'), toggle = document.getElementById('tuneToggle'), status = document.getElementById('tuneStatus');
+let tuning = false, wanted = null, debounce = null;
+const tuner = buildControls(document.getElementById('tuneControls'), () => {
+  tuning = true;
+  clearTimeout(debounce);
+  debounce = setTimeout(retune, 150);
+});
+function openDrawer(open) {
+  drawer.hidden = !open;
+  document.body.classList.toggle('drawer-open', open);
+  toggle.classList.toggle('on', open);
+  views.forEach(v => v.visible && draw(v));
+}
+toggle.addEventListener('click', () => openDrawer(drawer.hidden));
+document.getElementById('tuneClose').addEventListener('click', () => openDrawer(false));
+document.getElementById('tuneReset').addEventListener('click', () => {
+  tuner.reset();
+  tuning = false;
+  wanted = null;
+  for (const row of bakedRows) {
+    row.img.src = row.entry.baked + bust;
+    row.turn.style.display = "";
+    row.caption.innerHTML = '';
+    row.box.classList.remove('stale');
+    row.shown = null;
+  }
+  status.textContent = '';
+});
+function retune() {
+  wanted = JSON.stringify(tuner.settings());
+  for (const row of bakedRows) row.box.classList.toggle('stale', row.shown !== wanted);
+  pump();
+}
+/* renders rows with the latest settings, visible ones first, as many at once as the server has workers */
+const { workers = 1 } = await (await fetch('/api/info')).json().catch(() => ({}));
+let running = 0;
+function pump() {
+  if (!tuning || !wanted) return;
+  const stale = bakedRows.filter(row => row.shown !== wanted && !row.running);
+  const done = bakedRows.filter(row => row.shown === wanted).length;
+  status.textContent = done < bakedRows.length ? 'rendering ' + done + ' / ' + bakedRows.length : 'all ' + bakedRows.length + ' tuned';
+  while (running < workers && stale.length) {
+    const i = Math.max(0, stale.findIndex(r => r.visible));
+    renderRow(stale.splice(i, 1)[0]);
+  }
+}
+async function renderRow(row) {
+  running++;
+  row.running = true;
+  const settings = wanted;
+  try {
+    const result = await renderTuned(row.scene, JSON.parse(settings));
+    row.img.src = 'data:image/png;base64,' + result.image;
+    row.turn.style.display = "none";
+    const m = result.metrics, ref = m.reference ?? {};
+    const grade = (v, r) => `<b class="${v <= r * 1.25 ? 'good' : 'bad'}">${v}</b>`;
+    const link = '/tools/tune.html?scene=' + encodeURIComponent(row.scene) + '&settings=' + encodeURIComponent(settings);
+    row.caption.innerHTML = `tuned: ${result.width} px · noise ${grade(m.noise, ref.noise)} · orphans ${grade(m.orphans, ref.orphans)} · ${String(m.tones).toLowerCase().replace('_', ' ')} · spacing ${result.resolved.res} · <a href="${link}" target="_blank">open in tuner</a>`;
+  } catch (error) {
+    row.caption.innerHTML = `<span class="bad">${error.message}</span>`;
+  }
+  row.shown = settings;
+  row.running = false;
+  running--;
+  row.box.classList.toggle('stale', row.shown !== wanted);
+  pump();
+}
+/* the baked camera can follow the turned 3D views: three's camera position as ink-studio's yaw and pitch */
+function follow(view) {
+  if (!document.getElementById('follow').checked) return;
+  const d = view.camera.position.clone().sub(view.controls.target);
+  tuner.set('yaw', Math.round(Math.atan2(d.x, d.z) * 100) / 100);
+  tuner.set('pitch', Math.round(Math.atan2(d.y, Math.hypot(d.x, d.z)) * 100) / 100);
+  tuning = true;
+  retune();
+}
+
 const groups = new Map();
 for (const entry of manifest.entries) {
   const name = entry.group ?? 'Models';
@@ -100,13 +204,24 @@ function makeRow(entry) {
   const x = entry.extract ?? {}, b = entry.bake ?? {};
   row.innerHTML = `<div><h3>${entry.label}</h3><div class="by">${entry.author ?? ''}</div><div class="src">${entry.source ?? ''}</div>${x.note ? `<div class="note">${x.note}</div>` : ''}</div>
     <div class="glb"></div>
-    <div><div class="bakedbox"><img class="baked" src="${entry.baked}${bust}" alt=""><img class="turn" src="${entry.turn}${bust}" alt=""></div></div>
+    <div><div class="bakedbox"><img class="baked" src="${entry.baked}${bust}" alt=""><img class="turn" src="${entry.turn}${bust}" alt=""><div class="tuned"></div></div></div>
     <div>${rows([
       ['triangles in GLB', x.triangles?.toLocaleString()], ['parts', x.parts], ['blocks', x.blocks?.toLocaleString()], ['build time', x.buildSeconds !== undefined ? x.buildSeconds + ' s' : undefined],
       ['noise (ref ' + (b.reference?.noise ?? '') + ')', grade(b.noise, b.reference?.noise)], ['orphans (ref ' + (b.reference?.orphans ?? '') + ')', grade(b.orphans, b.reference?.orphans)],
       ['tones', b.tones], ['colours used', b.colours], ['splats', b.splats?.toLocaleString()],
       ['roles', x.roles?.join(', ')], ['warnings', x.warnings?.join('; ')]
     ])}</div>`;
+  /* the baked side, for the tuner: which scene it shows and what it last rendered */
+  const box = row.querySelector('.bakedbox');
+  const baked = {
+    entry, box, img: box.querySelector('.baked'), turn: box.querySelector('.turn'), caption: box.querySelector('.tuned'),
+    scene: entry.scene ?? entry.baked.replace(/[^/]+$/, 'scene.json'), shown: null, visible: false
+  };
+  bakedRows.push(baked);
+  new IntersectionObserver(([e]) => {
+    baked.visible = e.isIntersecting;
+    if (baked.visible) pump();
+  }).observe(box);
   const cell = row.querySelector('.glb');
   if (!entry.glb) {
     cell.innerHTML = '<p class="cap">no model.glb</p>';
@@ -140,6 +255,7 @@ function makeRow(entry) {
     syncing = false;
     draw(view);
   });
+  controls.addEventListener('end', () => follow(view));
   /* only draw what is on screen; there can be many viewers */
   new IntersectionObserver(([e]) => {
     view.visible = e.isIntersecting;

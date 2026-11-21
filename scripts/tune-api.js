@@ -16,7 +16,11 @@ require('../agent/ops/index.js');
 const SceneOps = require('../agent/ops/scene.js');
 const { materials } = require('../cli/compose-model.js');
 
-const CACHE = new Map(), LIMIT = 8;
+/* baked variants, most recent last; bounded by their splat count (about 64 bytes each), so a comparison page with a
+   dozen scenes keeps them all while one scene can still hold many variants */
+const CACHE = new Map();
+let SPLAT_BUDGET = 8e6;
+const splatsIn = entry => [...entry.worlds.values()].reduce((sum, world) => sum + (world.count ?? 0), 0);
 const spans = new Map();
 const round = (v, n = 3) => Math.round(v * 10 ** n) / 10 ** n;
 
@@ -32,7 +36,8 @@ function variantOf(base, s, span) {
   const spec = structuredClone(base);
   spec.finish = { ...spec.finish, look: { ...spec.finish?.look, pixelSize: 1 } };
   const art = s.art ?? 128;
-  if (s.res === 'auto' || s.res === undefined) spec.finish.res = round(Math.min(0.09, span / art), 4);
+  /* auto: splats `resFactor` art pixels apart (1 for the final look; 2 bakes about four times fewer splats for previews) */
+  if (s.res === 'auto' || s.res === undefined) spec.finish.res = round(Math.min(0.09, (span / art) * (s.resFactor ?? 1)), 4);
   else if (s.res !== 'keep') spec.finish.res = Number(s.res);
   if (s.paletteDither !== undefined && s.paletteDither !== 'keep') spec.finish.dither = Number(s.paletteDither);
   if (s.sunYaw !== undefined || s.sunHeight !== undefined || s.amb !== undefined || s.sky !== undefined) {
@@ -71,7 +76,6 @@ function entryFor(file, spec) {
   entry.worlds = new Map();
   entry.handle = 'tune';
   CACHE.set(key, entry);
-  while (CACHE.size > LIMIT) CACHE.delete(CACHE.keys().next().value);
   return { entry, cached: false };
 }
 
@@ -94,6 +98,12 @@ function tune({ scene, settings = {} }) {
   const { entry, cached } = entryFor(file, spec);
   const world = Scenes.worldAt(entry);
   const bakeMs = cached ? 0 : Date.now() - started;
+  let total = [...CACHE.values()].reduce((sum, e) => sum + splatsIn(e), 0);
+  for (const [key, old] of CACHE) {
+    if (total <= SPLAT_BUDGET || old === entry) continue;
+    total -= splatsIn(old);
+    CACHE.delete(key);
+  }
   const art = Math.max(16, Math.min(1024, Math.round(settings.art ?? 128)));
   const view = {};
   for (const key of ['yaw', 'pitch', 'zoom']) if (settings[key] !== undefined) view[key] = Number(settings[key]);
@@ -128,4 +138,8 @@ function scenes() {
   return JSON.parse(fs.readFileSync(manifest, 'utf8')).entries.map(e => ({ label: e.label, group: e.group, scene: path.posix.join(path.posix.dirname(e.baked), 'scene.json') }));
 }
 
-module.exports = { tune, save, scenes };
+function setBudget(splats) {
+  SPLAT_BUDGET = splats;
+}
+
+module.exports = { tune, save, scenes, setBudget };
