@@ -919,6 +919,61 @@ Raw views keep the baked shading and bypass those two render-time controls.
 The separate scene-wide palette dither still applies at palette resolve.
 Explicit texture colors and fine tiles keep priority over ramp dithering.
 
+## Material color clusters
+
+Use `finish.look.colorClusters` in scene data, `visual.look.colorClusters` in
+simulation worlds, or the `colorClusters` render option in Node and WebGL.
+The pass is opt-in and runs on the resolved image at native art size. It
+merges edge-connected islands of the same color into a neighboring cluster
+on the same visible object and material. It reuses the neighbor's existing
+color and leaves the depth and ID passes intact.
+
+```json
+{
+  "targets": [
+    {
+      "select": { "material": "paving" },
+      "minPixels": 9,
+      "grain": { "angle": 25, "strength": 0.8 },
+      "protect": {
+        "boundaries": true,
+        "details": true,
+        "swatches": ["#253548"],
+        "targets": [{ "tag": "grout-detail" }]
+      }
+    }
+  ]
+}
+```
+
+The last matching [selector](#shared-look-selectors) wins. `minPixels` is a
+target area in art pixels from 1 to 4096 and defaults to 4. A value of 1
+disables merging for that rule. Protected and isolated clusters can remain
+smaller than the target. `grain.angle` is measured clockwise from horizontal
+on the art grid, and `grain.strength` ranges from 0 (unbiased) to 1.
+Grain and color similarity weight the choice of neighboring cluster.
+
+`boundaries` and `details` default to `true`. Boundary protection keeps a
+one-pixel rim. Detail protection keeps marked sprite and emissive pixels,
+and the headless renderer also honors its ink, effects, and protected-color
+masks. Add exact output colors to `swatches` and scene selectors to `targets`
+to preserve authored details. WebGL reads the resolved art grid and its owner
+buffer back only when enabled, and its detail mask also protects locally
+constrained palette pixels. Headless renders keep their palette ownership
+boundaries and add `changedPixels` and `mergedClusters` to `frame.colorClusters`.
+`palette inspect <scene> --at x,y` reports a `color-clusters` decision for
+changed pixels.
+
+```sh
+node cli/ink-studio.js render examples/copperwind-crossing.json \
+  --color-clusters examples/copperwind-color-clusters.json --w 252 --h 144 --px 1 --out copperwind.png
+node cli/ink-studio.js render examples/review-sheltered-market.js \
+  --color-clusters examples/market-color-clusters.json --w 252 --h 144 --px 1 --out market.png
+```
+
+Use `--color-clusters off` or `{ colorClusters: false }` for a matched
+comparison. Raw renders bypass the pass.
+
 ## Shared look selectors
 
 Use `finish.look.targets` in a diorama, `visual.look.targets` on a world,

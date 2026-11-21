@@ -13,7 +13,9 @@ const SplatEffects = (() => {
     paletteFields = require('./palette-fields.js');
   }
   const contribution = typeof ContributionRules === 'undefined' ? require('./contribution-rules.js') : ContributionRules;
+  const cycling = typeof PaletteCycles === 'undefined' ? require('./palette-cycles.js') : PaletteCycles;
   const fieldBands = typeof FieldBands === 'undefined' ? require('./field-bands.js') : FieldBands;
+  const pixelStamps = typeof PixelStamps === 'undefined' ? require('./pixel-stamps.js') : PixelStamps;
   const clamp = x => Math.min(1, Math.max(0, x));
   const fract = x => x - Math.floor(x);
   const vector = (value, n) => Array.isArray(value) && value.length === n && Array.from(value).every(Number.isFinite);
@@ -120,14 +122,8 @@ const SplatEffects = (() => {
   }
 
   function indexedRaster(spec = {}, cycles = {}, resolveColor, roles) {
-    const { width, height, slots, size = [1, 1], wrap = false, palette, origin = 'bottom-left' } = spec;
-    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 ||
-        width * height > 2 ** 20 || !Array.isArray(slots) || slots.length !== width * height ||
-        !vector(size, 2) || size.some(value => value <= 0) || typeof wrap !== 'boolean' ||
-        !['top-left','bottom-left'].includes(origin))
-      throw new TypeError('Indexed rasters need bounded dimensions, one slot per texel, a valid origin and a positive size');
-    if (!cycles || Object.getPrototypeOf(cycles) !== Object.prototype)
-      throw new TypeError('Palette cycles must be named in an object');
+    const { entries, at } = pixelStamps.prepare(spec);
+    const read = pixelStamps.layout(spec), { palette } = spec;
     const local = outputColors(palette,resolveColor), swatches = new Map();
     const add = slot => {
       if (!Number.isInteger(slot) || slot < 0 || slot >= (local?.length ?? 0xffffffff))
@@ -136,54 +132,23 @@ const SplatEffects = (() => {
       return slot;
     };
     // Null paint leaves the underlying surface visible. Zero is a palette slot.
-    const texels = Uint32Array.from(slots, slot => slot === null ? 0 : add(slot) + 1);
-    const claimed = new Set();
-    const groups = Object.entries(cycles).map(([name, cycle]) => {
-      if (!name.trim() || !cycle || Object.getPrototypeOf(cycle) !== Object.prototype ||
-          Object.keys(cycle).some(key => !['role', 'slots', 'period', 'direction', 'phase'].includes(key)))
-        throw new TypeError('Each palette cycle needs a name and cycle settings');
-      const { role, slots, period, direction = 'forward', phase = 0 } = cycle;
-      if (role !== undefined && local) throw new TypeError('Palette cycles with a local palette need explicit slots');
-      if ((role === undefined) === (slots === undefined))
-        throw new TypeError('Palette cycle ' + name + ' needs either a role or a list of slots');
-      const order = role === undefined ? slots :
-        typeof role === 'string' && Object.hasOwn(roles, role) && roles[role];
-      if (!Array.isArray(order) || order.length < 2 || !Number.isFinite(period) || period <= 0 ||
-          !['forward', 'reverse'].includes(direction) || !Number.isFinite(phase))
-        throw new RangeError('Palette cycle ' + name + ' needs two or more slots, a positive period and valid direction and phase');
-      const indices = Array.from(order, add);
-      for (const slot of indices) {
-        if (claimed.has(slot)) throw new RangeError('Palette cycles cannot share a slot within one raster');
-        claimed.add(slot);
-      }
-      return { indices, period, direction: direction === 'forward' ? 1 : -1, phase: fract(phase) };
-    });
+    const texels = entries.map(entry => Uint32Array.from(entry.slots, slot => slot === null ? 0 : add(slot) + 1));
+    const groups = cycling.prepare(cycles, add, local ? undefined : roles ?? {});
     const active = new Map(swatches);
-    const [spanU, spanV] = size;
-    let lastTime;
+    let lastTime, current = texels[0];
     return {
       palette: Array.from(swatches.values()),
       sample(u, v, time, result) {
-        u /= spanU;
-        v /= spanV;
-        if (!Number.isFinite(u) || !Number.isFinite(v) || (!wrap && (u < 0 || v < 0 || u >= 1 || v >= 1))) return 0;
-        const x = Math.min(width - 1, Math.floor(fract(u) * width));
-        const y = Math.min(height - 1, Math.floor(fract(v) * height));
-        const row = origin === 'top-left' ? height-1-y : y;
-        const slot = texels[row * width + x] - 1;
-        if (slot === -1) return 0;
+        const texel = read(u,v);
+        if (texel < 0) return 0;
         if (!Number.isFinite(time)) time = 0;
         if (lastTime !== time) {
-          for (const { indices, period, direction, phase } of groups) {
-            const length = indices.length;
-            const position = fract((time % period) / period + phase) * length;
-            // A decimal period can land just below the step when sampled on its loop boundary.
-            const step = Math.floor(position + 4 * Number.EPSILON * length);
-            const offset = length + direction * step;
-            indices.forEach((index, i) => active.set(index, swatches.get(indices[(i + offset) % length])));
-          }
+          if (texels.length > 1) current = texels[at(time)];
+          cycling.visit(groups, time, (index, source) => active.set(index, swatches.get(source)));
           lastTime = time;
         }
+        const slot = current[texel] - 1;
+        if (slot === -1) return 0;
         const rgb = active.get(slot);
         for (let k = 0; k < 3; k++) result[k] = rgb[k];
         return 1;
@@ -292,6 +257,18 @@ const SplatEffects = (() => {
           if (!loc) return undefined;
           const alpha = pixels((loc.u - offset[0]) / scale[0], (loc.v - offset[1]) / scale[1], sample.time ?? 0, color);
           return slot === 4 || !alpha ? alpha : alpha * (slot === 3 ? dot(color, [.30, .55, .15]) : color[slot]);
+        };
+        break;
+      }
+      case 'indexed': {
+        const spec = { origin:'top-left', ...definition.raster };
+        const { entries, at } = pixelStamps.prepare(spec), texel = pixelStamps.layout(spec);
+        const lookup = coordinates({ projection:definition.projection, space },[],context);
+        read = sample => {
+          const loc = pointFor(sample,space) && lookup(sample);
+          if (!loc) return undefined;
+          const i = texel(loc.u,loc.v);
+          return Number(i>=0 && entries[at(sample.time)].slots[i]!==null);
         };
         break;
       }

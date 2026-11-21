@@ -221,7 +221,10 @@
       }
       return freeze(copy({time,listener:ear&&{position:ear.position,forward:ear.forward,up:ear.up},active,cues:shots}));
     }
-    return Object.freeze({frame});
+    function cue({ query, listener, cue, at, gain, pitch } = {}) {
+      return mix(query, listenerFrame(query, listener), { cue, at, gain, pitch, mode: 'cue' });
+    }
+    return Object.freeze({frame,cue});
   }
   W.spatialAudio=Object.freeze({create});
 })(KIT);

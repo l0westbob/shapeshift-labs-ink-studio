@@ -9,7 +9,7 @@ const fs = require('fs'),
 const CWD = process.cwd();
 let cfg = {};
 try {
-  cfg = require(path.join(CWD, 'ink-studio.config.js'));
+  if (process.env.INK_STUDIO_PORTABLE_SHOT !== '1') cfg = require(path.join(CWD, 'ink-studio.config.js'));
 } catch (e) {
   if (e.code !== 'MODULE_NOT_FOUND' || !/ink-studio\.config/.test(e.message)) throw e;
 }
@@ -32,7 +32,6 @@ for (let i = 1; i < argv.length; i++) {
   } else pos.push(a);
 }
 const Shot = require('./shot-recipes.js');
-const Pose = require('./pose.js');
 let shot, shotReplay, shotRender;
 const outputFile = name => opt.out ? path.resolve(opt.out) : path.join(OUT,name);
 const num = (k, d) => (opt[k] === undefined ? d : +opt[k]),
@@ -97,6 +96,8 @@ function dataScene(file, override, { installedPacks = false } = {}) {
   if (opt.style) spec.style = opt.style;
   const area = areaLightsOption();
   if (Array.isArray(area)) spec.finish = { ...spec.finish, areaLights:area };
+  const shotLights = shotLightingOption();
+  if (shotLights !== undefined && shotLights !== true) spec.finish = { ...spec.finish, shotLighting:shotLights };
   if (opt['shadow-art'] !== undefined)
     spec.finish = { ...spec.finish, look: { ...K.diorama.sceneLook(spec), shadowArt: shadowArtOption() } };
   if (!installedPacks && opt['asset-pack'] !== undefined)
@@ -169,7 +170,7 @@ function scene(id) {
 }
 const paintDirectory = id => path.resolve(CWD, opt.dir || path.join(cfg.paint || 'studio/paint', id));
 const readPaint = file => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-function build(id, seedOverride, { paint = true, parameterInputs, controls: suppliedControls } = {}) {
+function build(id, seedOverride, { paint = true, retainSdf = false, parameterInputs, controls: suppliedControls } = {}) {
   if (opt.focus) {
     const f = list('focus'); // uneven detail: x,y,z then near, far, coarse
     globalThis.INK_FOCUS = { p: [f[0] || 0, f[1] || 0, f[2] || 0], near: f[3], far: f[4], coarse: f[5] };
@@ -211,7 +212,14 @@ function build(id, seedOverride, { paint = true, parameterInputs, controls: supp
       ...(parameterInputs && { parameterInputs }) });
     return (s.animate && s.animate(built, seed)) || built;
   };
-  const w = liveSunOption() ? require('./look-preview.js').withAlbedo(assemble) : assemble();
+  const previousSdf = globalThis.INK_RETAIN_RENDER_SDF;
+  let w;
+  try {
+    if (retainSdf) globalThis.INK_RETAIN_RENDER_SDF = true;
+    w = liveSunOption() ? require('./look-preview.js').withAlbedo(assemble) : assemble();
+  } finally {
+    if (retainSdf) globalThis.INK_RETAIN_RENDER_SDF = previousSdf;
+  }
   if (inputs) {
     const actual = w.simulationInputs && lib().KIT.simulationInputs.tracks(w.simulationInputs);
     if (!actual || Object.entries(inputs).some(([id, track]) => JSON.stringify(actual[id]) !== JSON.stringify(track)))
@@ -268,13 +276,13 @@ function tap(w, t0, t1) {
     );
   }
 }
-// put the world at time t. A diorama that says it remembers the past (anim.stateful) is walked there a sixtieth of a second at a time
 function pose(w, t) {
   if (!w.anim) return;
   try {
-    Pose.pose(w, t, { direction: ArtDirection.prepare(w.look?.artDirection,artDirectionOption()), tap, kit: () => lib().KIT });
+    return require('./diarama-pose.js').pose(w, t, { kit: lib(), artDirection: artDirectionOption(), tap });
   } catch (error) {
-    if (error.code === 'BACKWARDS') die(error.message);
+    /* asking a world that only runs forwards for an earlier time is a usage error, not a crash */
+    if (error instanceof RangeError && /backwards/.test(error.message)) die(error.message);
     throw error;
   }
 }
@@ -295,6 +303,14 @@ function skyTransitionsOption() {
   if (value === 'off') return false;
   if (typeof value !== 'string') die('--sky-transitions needs a JSON array file or off');
   return skyTransitionsOverride ??= JSON.parse(fs.readFileSync(path.resolve(value),'utf8'));
+}
+let shutterOverride;
+function shutterOption() {
+  const value = opt.shutter;
+  if (value === undefined) return;
+  if (value === 'off') return false;
+  if (value === true || value === 'on') return true;
+  return shutterOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
 }
 let inspectionOverride, shadowArtOverride, compositeOverride, cutawayOverride, renderGraphOverride, afterimagesOverride, reconstructionOverride, passQualityOverride;
 function passQualityOption() {
@@ -517,7 +533,7 @@ function horizonOption() {
   if (value === undefined) return;
   if (value === 'off') return false;
   if (value === true || value === 'on') return true;
-  return horizonOverride ??= require('./horizon-bands.js').readHorizonBands(value);
+  return horizonOverride ??= require('./horizon-bands.js').readHorizonBands(value, shot?.dependency);
 }
 
 function silhouetteOption() {
@@ -615,6 +631,14 @@ function sdfAssistOption() {
   return sdfAssistOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
 }
 
+let colorClustersOverride;
+function colorClustersOption() {
+  const value = opt['color-clusters'];
+  if (value === undefined) return;
+  if (value === 'off') return false;
+  if (typeof value !== 'string') die('--color-clusters needs a JSON file or off');
+  return colorClustersOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
+}
 let edgeFilterOverride;
 function edgeFilterOption() {
   const value = opt['edge-filter'];
@@ -622,6 +646,15 @@ function edgeFilterOption() {
   if (value === true || value === 'on') return true;
   if (value === 'off') return false;
   return edgeFilterOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
+}
+
+let translucentSilhouettesOverride;
+function translucentSilhouettesOption() {
+  const value = opt['translucent-silhouettes'];
+  if (value === undefined) return undefined;
+  if (value === 'off') return false;
+  if (typeof value !== 'string') die('--translucent-silhouettes needs a JSON file or off');
+  return translucentSilhouettesOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
 }
 
 let inkOverride;
@@ -667,6 +700,17 @@ function areaLightsOption() {
   return areaLightsOverride;
 }
 
+let shotLightingOverride;
+function shotLightingOption() {
+  const value = opt['shot-lighting'];
+  if (value === undefined) return undefined;
+  if (value === 'off') return false;
+  if (value === true || value === 'on') return true;
+  shotLightingOverride ??= JSON.parse(fs.readFileSync(path.resolve(value), 'utf8'));
+  require('../src/shot-lighting.js').prepare(shotLightingOverride);
+  return shotLightingOverride;
+}
+
 let bounceProbesOverride;
 function bounceProbesOption() {
   const value = opt['bounce-probes'];
@@ -689,6 +733,7 @@ const view = extra =>
       stable: stabilityOption(),
       stableDetail: stableDetailOption(),
       edgeFilter: edgeFilterOption(),
+      colorClusters: colorClustersOption(),
       artDirection: artDirectionOption(),
       silhouetteProtection: silhouetteOption(),
       horizonBands: horizonOption(),
@@ -709,11 +754,18 @@ const view = extra =>
       ignoreLookGrade: opt.look === 'off',
       strictContract: onOffOption('strict-contract'),
       stepAnimation: onOffOption('step-animation'),
+      shutter: shutterOption(),
       raw: !!opt.raw,
       paintCorrections: opt['paint-corrections'] !== 'off',
       colored: !!opt.colored,
       splatOrder: opt['splat-order'],
       splatCoverage: opt['splat-coverage'],
+      translucentSilhouettes: translucentSilhouettesOption(),
+      splatFootprints: onOffOption('splat-footprints'),
+      brushwork: onOffOption('brushwork'),
+      renderGrid: opt['render-grid'] === 'off' ? false : opt['render-grid'] === undefined ? undefined :
+        { mode: opt['render-grid'], size: num('grid-size', 8), angle: num('grid-angle', 0),
+          aspect: num('grid-aspect', 1), gap: num('grid-gap', 0), origin: list('grid-origin', [0, 0]) },
       sdfAssist: sdfAssistOption(),
       stableTransparency: opt['stable-transparency'] === 'blend' ? { mode: 'blend' } : onOffOption('stable-transparency'),
       fragmentBudget: num('fragment-budget'),
@@ -734,6 +786,7 @@ const view = extra =>
       surface: opt.surface === 'off' ? false : undefined,
       water: opt.water === 'off' ? false : undefined,
       reflections: opt.reflections === 'off' ? false : undefined,
+      reflectionDetail: onOffOption('reflection-detail'),
       passQuality: passQualityOption(),
       reflectionProbes: onOffOption('reflection-probes'),
       transmission: onOffOption('transmission'),
@@ -743,6 +796,7 @@ const view = extra =>
       celestialTracks: celestialOption(),
       cloudField: cloudFieldOption(),
       cloudRepresentation: opt['cloud-representation'],
+      cloudSelfShadows: onOffOption('cloud-self-shadows'),
       cloudShadows: cloudShadowOption(),
       weatherBinding: weatherOption(),
       retainedWeather: onOffOption('retained-weather'),
@@ -756,6 +810,7 @@ const view = extra =>
       skyTransitions: skyTransitionsOption(),
       liveSun: liveSunOption(),
       areaLights: areaLightsOption(),
+      shotLighting: shotLightingOption(),
       bounceProbes: bounceProbesOption(),
       relighting: relightingOption(),
       shadowArt: shadowArtOption(),
@@ -812,14 +867,7 @@ function sceneEmbedConfig() {
   return JSON.parse(fs.readFileSync(path.resolve(opt['embed-config']), 'utf8'));
 }
 function sequenceHistory() {
-  const K = lib().KIT;
-  return {
-    artHistory: require('../src/art-effects.js').history({ frames: 24 }),
-    afterimageHistory: K.afterimages.history(),
-    renderHistory: K.renderGraph.history(),
-    volumeHistory: K.atmosphere.history(),
-    transparencyHistory: K.stableTransparency.history()
-  };
+  return R.sequenceHistory(lib().KIT);
 }
 function feedbackReplay(world, start, frame) {
   const api = lib().KIT.renderGraph;
@@ -827,7 +875,7 @@ function feedbackReplay(world, start, frame) {
   const definition = graph?.snapshot?.() ?? graph;
   const cuts = opt['feedback-cuts'];
   if (opt['feedback-fps'] === undefined && cuts === undefined &&
-      !definition?.passes?.some(pass => pass.type === 'feedback')) return null;
+      !definition?.passes?.some(pass => ['feedback', 'frameAge', 'motionSmear', 'frameBank'].includes(pass.type))) return null;
   if (opt['feedback-fps'] === true) die('--feedback-fps needs a rate in (0, 240]');
   if (cuts !== undefined && (typeof cuts !== 'string' && typeof cuts !== 'number' ||
       String(cuts).split(',').some(cut => !cut.trim())))
@@ -849,7 +897,7 @@ function die(m) {
   process.exit(1);
 }
 const worldCLI = () => require('./world.js')({kit:lib(),build,pose,dataScene,opt,renderOptions:view,sequenceHistory,inkOption,atmosphereEmittersOption,depthBandsOption,effectPalettesOption,stabilityOption,artDirectionOption,silhouetteOption,horizonOption,skyTransitionsOption,
-  weatherTracksOption:() => onOffOption('weather-tracks'),skyOptions,cameraOptions,compositeOption,shot,shotReplay,shotRender});
+  weatherTracksOption:() => onOffOption('weather-tracks'),skyOptions,cameraOptions,compositeOption,colorClustersOption,shot,shotReplay,shotRender});
 const worldCommands = new Set(['inspect','probe','trace','field','data-inputs','scene','sim']);
 const CMD = {
   help() {
@@ -873,6 +921,7 @@ const CMD = {
         '  palette dither-review <fit.json> [--out directory]   compare approved pairs and flag strong texture',
         '  palette shimmer <scene> [--from 0 --to 3 --fps 12] [--camera-pan x,y,z --camera-orbit degrees] [--animate] [--out directory]',
         '  palette readability <scene> [--select JSON | --plan file.json] [--directions N --times t1,t2] [--out directory]',
+        '  palette darks <scene> [--plan file.json] [--directions N --times t1,t2] [--out directory]',
         '  palette weather <scene> [--plan file.json | --select JSON --times t1,t2] [--out directory]',
         '  palette stages <scene> [--select JSON] [--allowed JSON] [--out directory]   review paint, lighting, grade and resolve',
         '  palette compare <scene|checkpoint> <palettes.json> [--out directory]   apply alternatives to one captured shot',
@@ -884,6 +933,7 @@ const CMD = {
         '  palette <recipe.json> [--t seconds] [--out palette.json]   sample palette recipes, paths and animation',
         '  inspect <scene|run>         discover fields, actions, ports and entities',
         '  environment inspect <scene|run> --at x,y,z [--t seconds] [--out report.json]   explain sky and local weather',
+        '  environment aesthetics <pack-or-bundle.json> [query] [--json]   discover named aesthetics',
         '  probe <scene|run> --field name [--at x,y,z | --entity id] [--explain]  sample world state',
         '  probe <scene|run> --field world/spatial-batch --spec queries.json   proximity, occupancy and sockets',
         '  inspect|validate|probe <scene|run> --select JSON   inspect, check, or sample a look target',
@@ -943,7 +993,8 @@ const CMD = {
         '  render <id> --coverage-aware on|off   grade target contributions before compositing',
         '  render <id> --look-masks off   bypass masked look bindings',
         '  render, clip, transition-review, sim render: --recipe <shot.json>   save reproducible review inputs',
-        '  shot replay <shot.json> --out <image.png> [--root project]   verify and recreate the review render',
+        '  shot replay <shot-or-bundle.json> --out <image.png> [--root project | --shot ID]   verify the saved render',
+        '  shot approve <scene> [--plan plan.json] --out report.json [--frame N] [--report-only]',
         '  render <scene.json> --asset-pack <pack-or-bundle.json> [--environment-preset pack/preset]   install and select a reusable look',
         '  ramps <id> [--n 12]         the ramps it is shaded on, and which only get darker without turning; a turning one is offered from the same palette',
         '  values <id> [--t 1.5]       the value check: the picture sorted into dark, middle and light, and whether it reads in three tones',
@@ -972,6 +1023,7 @@ const CMD = {
         '  paint export <id> [--layer name] [view options]  capture a view and the surface under each pixel',
         '  paint absorb <id> [--layer name] [--png file] [--paint-mask file]  pin the painted pixels to the surface',
         '  paint layers|tune|clear <id> [--layer name]  list, adjust or clear corrections',
+        '  paint cause <id> <recipe.json> [--replace]   bake solid edges, contacts and shelter into paint layers',
         '    layer controls: --angle degrees --feather degrees --opacity fraction --region JSON|file|off',
         '  lint <id ...> [--map]              pixel-art lint: orphans, doubles, jaggies, banding, pillow shading, noise, colours',
         '  review <id> [--ref pic --px 2]     a sheet of fixed shots (four sides, top, low, far, near, close), beside the last one',
@@ -992,17 +1044,46 @@ const CMD = {
         '  data-inputs <scene or catalog> [dataset] [--sample JSON --t seconds --rows --out report.json]  inspect typed source data',
         '  randomness <recipe.json> [--samples 16 --out report.json]  inspect named authoring streams and distributions',
         '  math-fields <field.json> [--point x,y,z --time n --integrate seconds --out report.json]  inspect procedural math fields',
+        '  splat-footprints <shape|profile.json> [--rotation n --stretch x,y --softness n --point x,y --preview file.png --out report.json]  inspect native splat silhouettes',
+        '  render-grid <hex|triangle|diamond|settings.json> [--size 8 --point x,y --bounds x,y,w,h --out report.json]  inspect tessellating cells',
         '  render-graph <graph.json> [--w 900 --h 620 --out report.json]  inspect effect resolution and memory/work budgets',
+        '  music audition <recipe.json> --out directory   compare audiovisual phrase variations',
+        '  music arrange <arrangement.json> [--out plan.json]   compile motifs and roles into a score',
+        '  music analyze <arrangement.json> [options.json]   inspect repetition, phrasing and rendered dynamics',
+        '  music suggest <arrangement.json> [options.json]   propose editable and auditionable changes',
+        '  music phrase <options.json>   generate a two- or four-bar melodic phrase',
+        '  music production <mode> <recipe.json> [config.json]   arrange, mix, audition and render adaptive music',
+        '  music soundfont <file.sf2> <preset.json> --out directory   sample a SoundFont preset with FluidSynth',
+        '  music revise <plan.json> <edits.json> [--out revised.json]   revise unpinned parts and bindings',
+        '  music reference <plan.json> --part ID --section ID [--out motif.json]   recover an audition idea',
+        '  graph nodes [--json]   list registered graph operations and their ports',
+        '  graph describe <op> [--json | --example]   show schema, units, limits and a runnable example',
         '  graph validate|plan <project.json> [--inputs values.json]   validate and describe a headless graph',
+        '    graph plan --memory   estimate peak raster buffers before execution',
+        '  graph dependencies <project.json> [--json]   list direct and nested group files and pins',
+        '  graph impact <group.json> [--root folder] [--json]   find consumers of a shared group',
+        '  graph snapshot <project.json> [--inputs values.json] [--seed N] [--at T]   capture graph bindings and asset hashes',
+        '  graph diff <before.json> <after.json> [--json]   explain node, port and named output changes',
         '  graph inspect <project.json> [--output NAME | --node PATH --port NAME] [--out directory]',
         '  graph run <project.json> [--inputs values.json --at seconds --seed N --out directory]',
+        '    run, inspect, batch, clip, session: --workers N   schedule eligible branches on 1–8 workers',
+        '    run, inspect, batch, clip: --cache DIR [--cache-bytes N --cache-entries N]   reuse graph artifacts on disk',
+        '  graph clip <project.json> --output NAME --from FRAME --to FRAME --out directory',
+        '    [--fps N|N/D --warmup FRAMES --cuts FRAME,FRAME --format frames|apng|both|sample --clock file.json --render-options file.json]',
+        '    --format sample [--capture-options file.json]   retain a reusable visual span with aligned planes',
         '  graph batch <project.json> <cases-or-sweep.json> [--out directory]   run named cases or a Cartesian sweep',
+        '    --resume --out directory   keep verified cases and retry failures',
+        '    --progress ndjson   stream case and batch records',
+        '  graph capture <request.json> [--adapters host.cjs --out file]   capture or send via a registered host adapter',
+        '  graph inspect-pxc <project.pxc> [--out info.json]   inspect a Pixel Composer container',
+        '  graph import-pxc <project.pxc> --out graph.json [--translate | --adapters host.cjs --using ID]   import saved art or translate editable nodes',
         '  graph session <project.json> [--protocol ndjson --out directory]   serve requests using a warm graph',
         '  material-controls <material.json> [--palette colors.json --out report.json]  inspect shared material controls',
         '  light-emitters <lights.json> [--at seconds --out report.json]  inspect shaped lights and cookies',
         '  typography <type.json> [--font font.ttf --at seconds --out report.json]  inspect glyph layout and animation',
         '  camera-impulses <motion.json> [--at seconds --eye x,y,z --yaw radians --pitch radians --out report.json]  inspect camera motion',
         '  camera-rig <scene or world> [--at seconds --camera-shot ID --out report.json]  sample a shot and its clearance',
+        '  take sample <take.json> --frame N [--resume checkpoint.json --checkpoint file.json --out report.json]',
         '  timeline <scene> [--at seconds] [--from seconds --to seconds] [--out report.json]  sample tracks and export cues',
         '  authored-contacts <id> [--at seconds] [--out report.json]  inspect contact ranges and socket transfer timing',
         '  motion-fx <id> [--at seconds] [--out report.json]  inspect keyed FX layers and sampled effect output',
@@ -1016,13 +1097,15 @@ const CMD = {
         '  retarget --profiles  show built-in role templates',
         '  passes <id> [--channels coverage,depth,normal,objectId,materialId,emission]  save art-pixel render pass previews',
         '  export-layers <id> [--t 0,1,2 | --from 0 --to 2 --n 3] [--out directory]   export aligned RGBA, depth, normals, IDs and material mattes',
-        '  export-scene <id> --out directory [--formats still,loop,replay,embed]   publish one scene in multiple formats',
+        '  export-scene <scene|world|take> --out directory [--formats still,loop,replay,embed]',
+        '    --audio soundtrack.json [--mux CODEC --adapters host.cjs]   export aligned WAV stems and optional video',
         '    --loop-join   inspect the actual frame join and excluded endpoint on a clip or scene export',
         '    --w width --h height --still-scale 2 --t seconds --from 0 --to 2 --fps 12 --embed-config file.json',
         '  scene-replay <recording.json> --out output.png [--at seconds]   save a frame from a replay',
         '  scene-replay <recording.json> --embed --out embed.html [--embed-config file.json]   package a replay for the web',
-        '  project pack <scene.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]',
-        '  project inspect <bundle.json>   show the bundle version, scene path and retained files',
+        '  project pack <scene-or-take.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]',
+        '  project inspect <bundle.json>   show the bundle version, entry path and retained files',
+        '  project unpack <bundle.json> --out new-directory   extract a portable project',
         '  environment-parity [--fixture observatory --out directory --chrome executable]  compare matched CLI and WebGL environment frames',
         '  passes <id> --channels environment --px1   export sky, fog transmittance, precipitation, reflections and foreground coverage',
         '  render|sheet|clip <id> or sim render <file> --passes environment   write environment passes beside the export',
@@ -1035,10 +1118,15 @@ const CMD = {
         'any command that plays a diorama takes --poke 2:x,y,z (tap it at 2 seconds, toward that point; several with ;)',
         'sun options: --live-sun on|off --sun-direction x,y,z --sun-ambient n --sun-intensity n --shadow-map-size n --shadow-bias n --sun-shadows off',
         'shadow art: --shadow-art file.json|off for baked JSON scenes and live sun',
+        'color clusters: --color-clusters file.json|off for material-specific cluster size, grain and protection',
         'pass quality: --pass-quality file.json|off for background, particles and secondary reflections',
+        'shot lighting: --shot-lighting on|off|file.json   scope key, fill, rim and negative fill',
+        'reflection detail: --reflection-detail on|off   compare the authored core, streaks and distance clusters',
+        'brushwork: --brushwork on|off   compare surface-aligned paint at export size',
         'detail-preserving relighting: --relighting on|off|file.json --sky-time seconds',
         'bounce options: --sky-bounce color|preset|off --ground-bounce color|preset|off --sky-bounce-intensity n --ground-bounce-intensity n',
-        'cloud options: --cloud-field cirrus|coastal-stratus|cumulus|storm-front|file.json|off --cloud-representation auto|card|impostor|volume|off --cloud-shadows on|off --cloud-shadow-strength 0..1 --cloud-shadow-softness units',
+        'cloud options: --cloud-field cirrus|coastal-stratus|cumulus|storm-front|file.json|off --cloud-representation auto|card|impostor|volume|off --cloud-self-shadows on|off --cloud-shadows on|off --cloud-shadow-strength 0..1 --cloud-shadow-softness units',
+        'translucent silhouette options: --translucent-silhouettes file.json|off',
         'celestial options: --celestial-tracks on|off|file.json',
         'sky options: --sky-environment file.json|off --sky-time seconds --sky-profile track=profile --sky-transitions file.json|off --sky-reflections scene|material',
         'weather options: --weather-binding on|off|file.json --retained-weather on|off --weather-fronts on|off --weather-tracks on|off --world-precipitation on|off|file.json --rain-impacts on|off|file.json',
@@ -1060,7 +1148,7 @@ const CMD = {
         'art direction: --art-direction on|off|painted-pixel|storm-silhouette|soft-dawn|file.json',
         'shared rendering: --strict-contract [on|off] --step-animation [on|off]',
         'effect palette options: --effect-palettes on|off|file.json',
-        'art options: --palette-remap off --color-curves off --lut <file.cube|file.json|off> --color-stack <file.json|off> --ink on|off|file.json --effects off --emissive-finishes off --stable on|off|file.json --stable-detail on|off|file.json --edge-filter on|off|file.json --contact-shadows on|off|file.json --area-lights on|off|file.json --bounce-probes on|off|file.json --snap on|off --dither-space screen|world|object --dither-spacing n --dither-origin x,y,z --resolve native|coverage|clusters --splat-order center|surface --splat-coverage legacy|continuous|soft --sdf-assist on|off|file.json --stable-transparency on|off|blend --fragment-budget N --inspection file.json|off --inspection-focus id --composite file.json|off --cutaway file.json|off --render-graph file.json|off --afterimages file.json|off --reconstruction file.json|off --volume-scale 2 --volume-steps 8 --volume-jitter off|blue-noise|spatiotemporal'
+        'art options: --palette-remap off --color-curves off --lut <file.cube|file.json|off> --color-stack <file.json|off> --ink on|off|file.json --effects off --emissive-finishes off --stable on|off|file.json --stable-detail on|off|file.json --edge-filter on|off|file.json --contact-shadows on|off|file.json --area-lights on|off|file.json --bounce-probes on|off|file.json --snap on|off --dither-space screen|world|object --dither-spacing n --dither-origin x,y,z --resolve native|coverage|clusters --splat-order center|surface --splat-coverage legacy|continuous|soft --splat-footprints on|off --render-grid hex|triangle|diamond|off --grid-size 8 --grid-angle 0 --grid-aspect 1 --grid-gap 0 --grid-origin x,y --sdf-assist on|off|file.json --stable-transparency on|off|blend --fragment-budget N --inspection file.json|off --inspection-focus id --composite file.json|off --cutaway file.json|off --render-graph file.json|off --shutter on|off|file.json --afterimages file.json|off --reconstruction file.json|off --volume-scale 2 --volume-steps 8 --volume-jitter off|blue-noise|spatiotemporal'
       ].join('\n')
     );
   },
@@ -1188,13 +1276,14 @@ const CMD = {
       console.log('wrote render-stage palette review to',directory);
       return;
     }
-    if (pos[0] === 'readability' || pos[0] === 'weather') {
-      const weather=pos[0]==='weather';
+    if (['readability','weather','darks'].includes(pos[0])) {
+      const weather=pos[0]==='weather', darks=pos[0]==='darks';
       if (pos.length!==2 || ['plan','select','directions','pitches','t','times','w','h','cols','out']
-        .some(key=>opt[key]===true))
-        die('Use palette '+pos[0]+' <scene> [--select JSON | --plan file.json] [--directions N --times t1,t2] [--out directory]');
+        .some(key=>opt[key]===true) || darks && opt.select!==undefined)
+        die('Use palette '+pos[0]+' <scene> '+(darks ? '[--plan file.json]' : '[--select JSON | --plan file.json]')+
+          ' [--directions N --times t1,t2] [--out directory]');
       const world=buildPreview(pos[1]), settings=view({t:num('t',0),transparent:onOffOption('transparent')});
-      const authored=weather ? world.paletteWeatherReview : world.readabilityReview;
+      const authored=weather ? world.paletteWeatherReview : darks ? world.shadowReadability : world.readabilityReview;
       const source=opt.plan===undefined ? authored??{} : JSON.parse(fs.readFileSync(path.resolve(opt.plan),'utf8'));
       if (!source || Object.getPrototypeOf(source)!==Object.prototype) die('Review plan needs a JSON object');
       const plan={...source};
@@ -1209,11 +1298,11 @@ const CMD = {
         plan.views=angles.map(({yaw,pitch},i)=>({id:'View '+(i+1),yaw,pitch}));
       }
       const run=weather ? require('./palette-weather.js').reviewPaletteWeather :
-        require('./readability-review.js').reviewSubjectReadability;
+        darks ? require('./shadow-readability.js').reviewShadowReadability : require('./readability-review.js').reviewSubjectReadability;
       const {image,report}=run(world,{
         plan,view:settings,pose,width:num('w',160),height:num('h',96),columns:num('cols')
       });
-      const directory=outputFile(weather ? 'palette-weather' : 'readability-review');
+      const directory=outputFile(weather ? 'palette-weather' : darks ? 'shadow-readability' : 'readability-review');
       const files={comparison:'comparison.png',report:'review.json'};
       const sources=[pos[1],opt.plan].filter(Boolean).map(name=>fs.statSync(path.resolve(name),{throwIfNoEntry:false}));
       for (const name of Object.values(files)) {
@@ -1224,7 +1313,7 @@ const CMD = {
       fs.mkdirSync(directory,{recursive:true});
       PNG.write(path.join(directory,files.comparison),image.w,image.h,image.rgb);
       fs.writeFileSync(path.join(directory,files.report),JSON.stringify({...report,files},null,2)+'\n');
-      console.log('wrote',weather ? 'palette weather review to' : 'subject readability review to',directory);
+      console.log('wrote',weather ? 'palette weather review to' : darks ? 'shadow readability review to' : 'subject readability review to',directory);
       return;
     }
     if (pos[0] === 'shimmer') {
@@ -1480,6 +1569,18 @@ const CMD = {
     console.log('baked',data.probes.length,'bounce probes to',file);
   },
   environment() {
+    if (pos[0] === 'aesthetics') {
+      if (pos.length < 2 || pos.length > 3)
+        die('Usage: ink-studio environment aesthetics <pack-or-bundle.json> [query] [--json]');
+      const {assetPacks,environments} = lib().KIT.authoring;
+      const packs = require('./asset-pack.js').install(assetPacks,[],pos[1]);
+      const found = environments.findAesthetics(assetPacks.create({packs}),pos[2]);
+      if (opt.json) process.stdout.write(JSON.stringify(found,null,2)+'\n');
+      else if (!found.length) console.log('No matching aesthetics');
+      else for (const {id,label,description,tags} of found)
+        console.log(id+'  '+label+'  ['+tags.join(', ')+']\n  '+description);
+      return;
+    }
     if (pos[0] !== 'inspect' || pos.length !== 2)
       die('Usage: ink-studio environment inspect <scene|run> --at x,y,z [--t seconds]');
     if (typeof opt.at !== 'string' || opt.at.split(',').length !== 3 || opt.at.split(',').some(value=>!value.trim()) ||
@@ -1742,7 +1843,34 @@ const CMD = {
     console.log(warn.length ? 'warnings:\n  ' + warn.join('\n  ') : 'no warnings');
   },
   shot() {
+    if (pos[0] === 'approve') {
+      if (pos.length !== 2 || opt.plan === true || typeof opt.out !== 'string' || !/\.json$/i.test(opt.out) ||
+          opt.frame === true || opt['report-only'] !== undefined && opt['report-only'] !== true)
+        die('Use shot approve <scene> [--plan plan.json] --out report.json [--frame N] [--report-only]');
+      const approval = require('./shot-approval.js');
+      const document = opt.plan === undefined ? undefined : JSON.parse(fs.readFileSync(path.resolve(opt.plan), 'utf8'));
+      if (document?.format === approval.format && document.version !== 1) die('Unsupported shot approval report version');
+      const world = buildPreview(pos[1]);
+      const settings = view({ w: num('w', undefined), h: num('h', undefined), transparent: onOffOption('transparent') });
+      const result = approval.approveShot(world, { plan:document?.format === approval.format ? document.plan : document,
+        view:settings, pose, camera:clipCamera(world), kit:lib(), frame:num('frame', undefined) });
+      const findings = require('./shot-approval-output.js').write(result, {
+        file:path.resolve(opt.out), source:pos[1], options:opt, cwd:CWD, entry:__filename
+      });
+      console.log('wrote', path.resolve(opt.out));
+      if (findings) {
+        console.log('First failure at frame', findings.frame, '(' + findings.time.toFixed(6) + 's)',
+          findings.category + '/' + findings.check, 'on', findings.subject);
+        console.log(findings.reproduce.command);
+        if (!opt['report-only']) process.exitCode = 2;
+      }
+      return;
+    }
     if (pos[0] !== 'replay') die('Use shot replay <recipe.json> --out <image.png>');
+    if (opt.shot !== undefined) {
+      if (opt.root !== undefined) die('A bundled shot uses its packaged project root');
+      return require('./project-bundle.js').replayProjectShot(pos[1], opt.shot, { out:opt.out, entry:__filename });
+    }
     Shot.replay(pos[1],{out:opt.out,root:opt.root,entry:__filename});
   },
   render() {
@@ -2039,6 +2167,9 @@ const CMD = {
       fs.writeFileSync(out, report);
     } else process.stdout.write(report);
   },
+  take() {
+    return require('./take.js').command(pos,opt,{kit:lib(),operations:cfg.graphOperations,adapters:cfg.graphAdapters});
+  },
   timeline() {
     return worldCLI().inspectTimeline(pos[0]);
   },
@@ -2048,11 +2179,20 @@ const CMD = {
   'math-fields'() {
     return require('./math-fields.js')(pos,opt,lib());
   },
+  'splat-footprints'() {
+    return require('./splat-footprints.js')(pos,opt,lib());
+  },
+  'render-grid'() {
+    return require('./render-grid.js')(pos,opt,lib());
+  },
   'render-graph'() {
     return require('./render-graph-plan.js')(pos,opt,lib());
   },
   graph() {
-    return require('./graph-cli.js')(pos,opt,{kit:lib(),operations:cfg.graphOperations});
+    return require('./graph-cli.js')(pos,opt,{kit:lib(),operations:cfg.graphOperations,adapters:cfg.graphAdapters});
+  },
+  music() {
+    return require('./music-composer.js')(pos,opt,lib());
   },
   'material-controls'() {
     return require('./material-controls.js')(pos,opt,lib());
@@ -2180,36 +2320,55 @@ const CMD = {
     });
     console.log('wrote', file, manifest.frames.length, 'frame(s)');
   },
-  'export-scene'() {
+  async 'export-scene'() {
     if (pos.length !== 1 || typeof opt.out !== 'string')
       die('Use export-scene <scene> --out directory [--formats still,loop,replay,embed]');
     if (['w', 'h', 'still-scale', 't', 'from', 'to', 'fps'].some(key => opt[key] === true) || opt.formats === true)
       die('Scene export flags need values');
-    const settings = sceneEmbedConfig();
+    const settings = sceneEmbedConfig(), kit = lib();
     const transparent = onOffOption('transparent');
-    const { file } = require('./scene-export.js').exportScene(({ width, height, moving, from }) => {
-      const world = buildPreview(pos[0], { parameterInputs: { time: num('parameter-time', from) } });
-      const frame = view({ ...(moving && sequenceHistory()), w: width, h: height, transparent,
-        ...(opt.px1 && { px: 1 }) });
-      const camera = moving ? clipCamera(world) : null, replay = moving ? feedbackReplay(world, from, frame) : null;
-      return {
-        scene: world.id, title: world.name,
-        ...(world.simulationInputs && { seed: world.simulationInputSeed,
-          simulationInputs: lib().KIT.simulationInputs.tracks(world.simulationInputs) }),
-        duration: Math.max(world.timeline?.duration ?? 0, world.cameraRig?.duration ?? 0),
-        sample(time, lastTime) {
-          function draw(t, resetRenderHistory) {
-            const phase = lastTime > from ? Math.max(0, Math.min(1, (t - from) / (lastTime - from))) : 0;
-            pose(world, t);
-            return R.render(world, { ...frame, ...camera?.(phase), time: t, t, resetRenderHistory });
+    if ([opt.audio, opt.mux, opt.adapters].includes(true))
+      die('Use --audio soundtrack.json with an optional --mux codec ID and --adapters module');
+    const host = await require('./graph-host-command.js').adapters(opt.adapters, {
+      kit, operations: cfg.graphOperations, adapters: cfg.graphAdapters
+    });
+    return require('./project-bundle.js').withTakeSource(pos[0], source => {
+      const native = require('./scene-export-world.js').readExportWorld(source, kit);
+      const soundtrack = opt.audio ?? native?.audio;
+      if (opt.mux !== undefined && soundtrack === undefined) die('A review mux needs a take soundtrack or --audio');
+      const audio = soundtrack === undefined ? undefined : require('./scene-audio.js').readSceneAudio(soundtrack, host);
+      const video = opt.mux === undefined ? undefined : require('./graph-host.js').createGraphHost(host.adapters, { kit });
+      video?.requireCodec(opt.mux, 'mux');
+      const fpsText = opt.fps, fraction = typeof fpsText === 'string' && /^(\d+)\/(\d+)$/.exec(fpsText);
+      const fps = fraction ? { numerator: Number(fraction[1]), denominator: Number(fraction[2]) } :
+        fpsText === undefined ? native?.fps ?? 12 : Number(fpsText);
+      const { file } = require('./scene-export.js').exportScene(({ width, height, moving, from }) => {
+        if (native) return native.capture({ width, height, from, render: R.render,
+          options: view({ ...(moving && sequenceHistory()), transparent, ...(opt.px1 && { px: 1 }) }) });
+        const world = buildPreview(source, { parameterInputs: { time: num('parameter-time', from) } });
+        const frame = view({ ...(moving && sequenceHistory()), w: width, h: height, transparent,
+          ...(opt.px1 && { px: 1 }) });
+        const camera = moving ? clipCamera(world) : null, replay = moving ? feedbackReplay(world, from, frame) : null;
+        return {
+          scene: world.id, title: world.name, timeline: world.timeline,
+          ...(world.simulationInputs && { seed: world.simulationInputSeed,
+            simulationInputs: lib().KIT.simulationInputs.tracks(world.simulationInputs) }),
+          duration: Math.max(world.timeline?.duration ?? 0, world.cameraRig?.duration ?? 0),
+          sample(time, lastTime) {
+            function draw(t, resetRenderHistory) {
+              const phase = lastTime > from ? Math.max(0, Math.min(1, (t - from) / (lastTime - from))) : 0;
+              pose(world, t);
+              return R.render(world, { ...frame, ...camera?.(phase), time: t, t, resetRenderHistory });
+            }
+            return replay ? replay.sample(time, draw) : draw(time);
           }
-          return replay ? replay.sample(time, draw) : draw(time);
-        }
-      };
-    }, { out: opt.out, formats: opt.formats?.split(',').map(format => format.trim()), embed: settings,
-      width: num('w', 640), height: num('h', 360), fps: num('fps', 12), from: num('from', 0), to: num('to'),
-      stillScale: num('still-scale', 2), stillTime: num('t'), loopJoin: onOffOption('loop-join') });
-    console.log('wrote', file);
+        };
+      }, { out: opt.out, formats: opt.formats?.split(',').map(format => format.trim()), embed: settings,
+        width: num('w', 640), height: num('h', 360), fps, from: num('from', 0), to: num('to'),
+        stillScale: num('still-scale', 2), stillTime: num('t'), loopJoin: onOffOption('loop-join'), kit, audio,
+        ...(video && { mux: payload => video.mux(opt.mux, payload) }) });
+      console.log('wrote', file);
+    });
   },
   'scene-replay'() {
     if (pos.length !== 1 || typeof opt.out !== 'string' || opt.at === true ||
@@ -2228,11 +2387,16 @@ const CMD = {
   },
   project() {
     const [mode, input] = pos, api = require('./project-bundle.js');
-    if (pos.length !== 2 || !['pack', 'inspect'].includes(mode))
-      die('Use project pack <scene.json> --out <bundle.json> or project inspect <bundle.json>');
+    if (pos.length !== 2 || !['pack', 'inspect', 'unpack'].includes(mode))
+      die('Use project pack <scene-or-take.json>, inspect <bundle.json>, or unpack <bundle.json> --out new-directory');
+    if (mode === 'unpack') {
+      const { entry } = api.unpackProject(input, { out: opt.out });
+      console.log('unpacked', entry);
+      return;
+    }
     if (mode === 'inspect') {
       const project = api.readProjectBundle(input), { format, version, attachments } = project.snapshot();
-      process.stdout.write(JSON.stringify({ format, version, ...project.metadata, files: project.files(), attachments }, null, 2) + '\n');
+      process.stdout.write(JSON.stringify({ format, version, ...project.metadata, files: project.files(), attachments, take: project.takeDocument?.() }, null, 2) + '\n');
       return;
     }
     if ([opt.root, opt.revision].includes(true)) die('--root and --revision need values');
@@ -2910,16 +3074,19 @@ const CMD = {
   paint() {
     if (['mix', 'ramp', 'table', 'swatches'].includes(pos[0])) return require('./paint.js')(pos, opt, lib());
     const [sub, id] = pos;
-    if (!['export', 'absorb', 'clear', 'layers', 'tune'].includes(sub) || !id)
+    if (!['export', 'absorb', 'clear', 'layers', 'tune', 'cause'].includes(sub) || !id)
       die(
-        'paint export|absorb|layers|tune|clear <id> [--layer name] [--dir studio/paint/<id>]'
+        'paint export|absorb|layers|tune|clear <id> [--layer name] [--dir studio/paint/<id>], or paint cause <id> <recipe.json> [--replace]'
       );
     const Paint = require('../src/paint-corrections.js'), name = opt.layer;
     if (name !== undefined && !Paint.idOK(name)) die('Paint layer needs a lowercase ID');
+    if (sub === 'cause' && (pos.length !== 3 || name !== undefined || opt.replace !== undefined && opt.replace !== true))
+      die('paint cause <scene> <recipe.json> [--dir path] [--replace]');
     if (sub === 'tune' && name === undefined) die('Paint tune needs --layer name');
     if (sub === 'absorb' && !name && ['angle', 'feather', 'opacity', 'region'].some(key => opt[key] !== undefined))
       die('Paint controls need a named layer');
-    const world = sub === 'export' ? build(id, undefined, { paint: name === undefined }) : null,
+    const world = sub === 'cause' ? build(id, undefined, { paint:false,retainSdf:true }) :
+      sub === 'export' ? build(id, undefined, { paint: name === undefined }) : null,
       dir = paintDirectory(opt.dir ? id : world ? world.id : scene(id).id),
       dfile = path.join(dir, 'decals.json'),
       capture = name ? path.join(dir, 'layers', name) : dir;
@@ -2937,8 +3104,10 @@ const CMD = {
         if (opt[option] === true) throw Error('--' + option + ' needs a number');
         return num(option);
       };
+      if (prior?.type === 'surface' && (opt.angle !== undefined || opt.feather !== undefined))
+        die('Surface paint uses opacity and region. Angle and feather belong to camera captures.');
       const angle = value('angle') ?? prior?.angle;
-      const feather = value('feather') ?? (prior && Math.min(prior.feather, angle));
+      const feather = value('feather') ?? (prior?.feather === undefined ? undefined : Math.min(prior.feather, angle));
       const opacity = value('opacity') ?? prior?.opacity;
       let region = prior?.region;
       if (opt.region !== undefined) {
@@ -2947,6 +3116,23 @@ const CMD = {
           JSON.parse(fs.existsSync(opt.region) ? fs.readFileSync(opt.region, 'utf8') : opt.region);
       }
       return { angle, feather, opacity, region };
+    }
+    if (sub === 'cause') {
+      const recipe = JSON.parse(fs.readFileSync(path.resolve(pos[2]),'utf8'));
+      const generated = lib().KIT.surfaceMarks.bake(world,recipe);
+      const existing = readPaint(dfile);
+      const doc = Array.isArray(existing) ? {decals:existing} : existing;
+      const layers = Paint.layers(doc);
+      for (const layer of generated.layers) {
+        const slot=layers.findIndex(entry=>entry.id===layer.id);
+        if (slot<0) layers.push(layer);
+        else if (opt.replace) layers[slot]=layer;
+        else die('Paint layer '+layer.id+' already exists. Use --replace to rebake it.');
+      }
+      fs.mkdirSync(dir,{recursive:true});
+      save({ ...doc,id:world.id,detail:world.detail,layers });
+      console.log(JSON.stringify({file:dfile,layers:generated.layers.map(layer=>({id:layer.id,samples:layer.decals.length}))},null,2));
+      return;
     }
     if (sub === 'layers') {
       const { decals = [], ...doc } = readPaint(dfile);
@@ -3106,13 +3292,16 @@ const CMD = {
       }
     const doc = readPaint(dfile), layers = name && Paint.layers(doc),
       slot = name ? layers.findIndex(layer => layer.id === name) : -1,
-      prior = name && layers[slot], source = name && Paint.view(meta.camera),
-      old = name ? prior && prior.time === meta.t && Paint.sameView(prior.view, source) ? prior.decals : [] : doc.decals ?? [],
+      prior = name && layers[slot], surface = prior?.type === 'surface',
+      source = name && !surface && Paint.view(meta.camera),
+      captureMatches = prior && (surface || prior.time === meta.t && Paint.sameView(prior.view, source)),
+      old = name ? (captureMatches ? prior.decals : []) : doc.decals ?? [],
       near = (d, e) => Math.hypot(d[0] - e[0], d[1] - e[1], d[2] - e[2]) < px * 0.45,
       kept = old.filter(d => !fresh.some(e => near(d, e)) && !erase.some(e => near(d, e))),
       decals = kept.concat(fresh);
     if (name) {
-      const correction = Paint.layer({ id: name, view: source, time: meta.t, ...controls(prior), decals });
+      const placement = surface ? {type:'surface'} : {view:source,time:meta.t};
+      const correction = Paint.layer({ id: name, ...placement, ...controls(prior), decals });
       if (slot < 0) layers.push(correction);
       else layers[slot] = correction;
       save({ ...doc, id, detail: meta.detail, layers });

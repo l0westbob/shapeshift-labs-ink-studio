@@ -5,8 +5,25 @@
    the combined surface, and coloured from a material ramp using the
    surface normal, a cast shadow, ambient occlusion and nearby lamps.
    ------------------------------------------------------------------ */
+function bakedShadowMarch(settings = {}) {
+  if (settings === null || typeof settings !== 'object' || Array.isArray(settings) ||
+      Object.keys(settings).some(key => key !== 'steps' && key !== 'distance'))
+    throw new TypeError('Shadow march accepts steps and distance');
+  const { steps = 20, distance = 16 } = settings;
+  if (!Number.isSafeInteger(steps) || steps < 0 || steps > 4096)
+    throw new RangeError('Shadow march steps must be an integer from 0 to 4096');
+  if (!Number.isFinite(distance) || distance < 0)
+    throw new RangeError('Shadow march distance must be finite and nonnegative');
+  return { steps, distance };
+}
+
 function makeSculpt(B, rest) {
-  const { P, n3, fbm, disc, stick, fib, TAU, clamp, norm, R } = B;
+  const { P, n3, fbm, stick, fib, TAU, clamp, norm, R } = B;
+  // A flat field sample supplies no normal. Its bake has round coverage.
+  const disc = (x, y, z, axis, radius, thickness, color, alpha, animation) =>
+    axis[0] === 0 && axis[1] === 0 && axis[2] === 0
+      ? B.iso(x, y, z, radius, color, alpha, animation)
+      : B.disc(x, y, z, axis, radius, thickness, color, alpha, animation);
   const detailBudget = B.detailBudget;
   const controlledMaterials = new WeakMap();
   function controlled(material) {
@@ -28,6 +45,12 @@ function makeSculpt(B, rest) {
     const cached = receives.get(owner);
     if (!cached.has(material)) cached.set(material, ShadowArt.allows(shadowArt.receive, shadowTarget(owner, material)));
     return cached.get(material);
+  }
+  const brushCache = new WeakMap();
+  function brushSettings(value) {
+    if (!value || typeof value !== 'object') return SurfaceBrush.prepare(value);
+    if (!brushCache.has(value)) brushCache.set(value, SurfaceBrush.prepare(value));
+    return brushCache.get(value);
   }
   const pixelStyles = new WeakMap();
   function materialStyle(value) {
@@ -54,7 +77,8 @@ function makeSculpt(B, rest) {
   let gid = 1,
     own = null,
     ownNeg = null,
-    L = null;
+    L = null,
+    shadowMarch = bakedShadowMarch();
   const S = {
     res: 0.09,
     adaptiveSampling: false,
@@ -66,7 +90,8 @@ function makeSculpt(B, rest) {
     aoR: 0.14,
     aoK: 1.5,
     shK: 9,
-    shLen: 16,
+    shLen: shadowMarch.distance,
+    shSteps: shadowMarch.steps,
     wob: 0.05,
     fat: 0.46,
     /* inked detail: 0 is off. Set to 1 and every plain dab also carries a 4 by 4 picture of the surface under it (its pattern, the
@@ -766,6 +791,7 @@ function makeSculpt(B, rest) {
        m.root  = 0.3                  darker by that much toward the root of a limb (along 0), lighter toward its tip */
   const A = { curv: 0, cav: 0, hollow: 0, up: 0, rel: 0, along: 0, y: 0, own: null },
     ATTR = [];
+  let stippleCandidates = null, stippleProfile = null, stippleProbes=0;
   let curP = null,
     FLO = null;
   S.attr = (name, fn) => ATTR.push([name, fn]);
@@ -878,6 +904,17 @@ function makeSculpt(B, rest) {
     }
     return bevelSculpt;
   }
+  function withBrushNormals(run) {
+    const saved = [g3[0], g3[1], g3[2], gm, own, ownNeg];
+    try {
+      return run((x, y, z) => {
+        grad(x, y, z, field(x, y, z));
+        return [g3[0], g3[1], g3[2]];
+      });
+    } finally {
+      [g3[0], g3[1], g3[2], gm, own, ownNeg] = saved;
+    }
+  }
   const RR = [null, 0];
   function light(m, res, x, y, z, nx, ny, nz, full, selected, fine, coarse = false) {
     if (!coarse && S.clip && !S.clip(x, y, z)) return;
@@ -933,7 +970,7 @@ function makeSculpt(B, rest) {
             sh = 1;
           if (coarse || PRB && (LSH === 0 || LSH === 1)) sh = LSH;
           else
-            for (let i = 0; i < 20 && tt < S.shLen; i++) {
+            for (let i = 0; i < shadowMarch.steps && tt < shadowMarch.distance; i++) {
               const h = shadowDistance(x + nx * 0.05 + L[0] * tt, y + ny * 0.05 + L[1] * tt, z + nz * 0.05 + L[2] * tt);
               if (h < 0.004) {
                 sh = 0;
@@ -970,7 +1007,7 @@ function makeSculpt(B, rest) {
           if (probe && LLS[i] !== undefined) k2 = LLS[i];
           else {
             let tt = 0.08;
-            for (let k = 0; k < 20 && tt < dist - 0.12; k++) {
+            for (let k = 0; k < shadowMarch.steps && tt < dist - 0.12; k++) {
               const h = shadowDistance(
                 x + nx * 0.05 + (lx / dist) * tt,
                 y + ny * 0.05 + (ly / dist) * tt,
@@ -1351,6 +1388,14 @@ function makeSculpt(B, rest) {
     // (a: how solid it is, 1 and over is solid, under 1 lets what is behind show through; glass also bends what is behind it)
     if (surface) B.surfaceNext(surface, nx, ny, nz, L, 1 - shd, undefined, bevel);
     if (alternate) B.shadowNext(ci, alternate);
+    const brushDefinition = m.brush === undefined ? (m0.brush ?? S.brush) : m.brush;
+    if (brushDefinition !== undefined && brushDefinition !== false && !m.glass && Math.hypot(nx, ny, nz) > 1e-8) {
+      const brush = brushSettings(brushDefinition);
+      const frame = withBrushNormals(normalAt =>
+        SurfaceBrush.direction(brush, [x, y, z], [nx, ny, nz], { spacing: res, normalAt }));
+      SurfaceBrush.stamp(B, frame, P[ci], brush, { opacity: m.a === undefined || glint ? 3 : m.a, animation: fl });
+      return;
+    }
     if (S.follow && !m.glass) {
       formDab(res, x, y, z, nx, ny, nz, P[ci], m.a === undefined || glint ? 3 : m.a, fl);
       return;
@@ -1753,11 +1798,14 @@ function makeSculpt(B, rest) {
     const preview = typeof globalThis !== 'undefined' && globalThis.INK_LOOK_ALBEDO;
     const capture = B.describeAlbedo && (preview || S.captureAlbedo || stagedAlbedo(material.surface) || stagedAlbedo(material.top?.surface));
     const fine = owner?.detailBudget?.fine;
+    const collectFootprint = B.describeFootprint && (material.footprint !== undefined || material.top?.footprint !== undefined);
+    const collectEngraving=material.engraving!==undefined||material.top?.engraving!==undefined||S.engraving!==undefined;
+    const collectPrint=material.screenPrint!==undefined||material.top?.screenPrint!==undefined||S.screenPrint!==undefined;
     const collectStyle = B.describePixelStyle && (material.pixelStyle || material.top?.pixelStyle);
-    if (!renderSdf && !capture && !B.describeSplats && !collectStyle && !material.optical && !material.top?.optical) return light(material, ...sample, undefined, fine);
+    if (!renderSdf && !capture && !B.describeSplats && !collectStyle && !collectFootprint && !collectEngraving && !collectPrint && !material.optical && !material.top?.optical) return light(material, ...sample, undefined, fine);
     const first = B.count();
     let effective = material, style, pair;
-    if (material.top || collectStyle) light(material, ...sample, (used, settings, shades) => {
+    if (material.top || collectStyle || collectFootprint || collectEngraving || collectPrint) light(material, ...sample, (used, settings, shades) => {
       effective = used;
       style = settings;
       pair = shades;
@@ -1770,6 +1818,23 @@ function makeSculpt(B, rest) {
       if (ranges.at(-1)?.[1] === first) ranges.at(-1)[1] = end;
       else ranges.push([first,end]);
     }
+    if (effective.footprint !== undefined) B.describeFootprint?.(first,end,effective.footprint);
+    if (collectFootprint) B.describeFootprint?.(first, end, effective.footprint ?? material.footprint);
+    if (collectEngraving && first < end && B.describeEngraving) {
+      const definition = effective.engraving ?? material.engraving ?? S.engraving;
+      const settings = Engraving.prepare(definition);
+      if (settings?.brushwork) {
+        const [spacing, x, y, z, nx, ny, nz] = sample;
+        if (effective.glass || effective.optical || Math.hypot(nx, ny, nz) < 1e-8)
+          B.describeEngraving(first, end, false);
+        else {
+          const frame = withBrushNormals(normalAt =>
+            Brushwork.frame(settings.brushwork, [x, y, z], [nx, ny, nz], { spacing, normalAt }));
+          B.describeEngraving(first, end, settings, frame);
+        }
+      } else B.describeEngraving(first, end, definition);
+    }
+    if(collectPrint)B.describeScreenPrint?.(first,end,effective.screenPrint??material.screenPrint??S.screenPrint);
     if (effective.optical !== undefined) B.describeOptical?.(first, end, effective.optical);
     if (style) B.describePixelStyle?.(first, end, style, pair);
     const surfaceId = effective.surfaceId ?? (effective === material ? undefined : effective.surface?.id) ?? material.surfaceId;
@@ -1840,6 +1905,7 @@ function makeSculpt(B, rest) {
         }
         const spacing = adaptive ? shadedSpacing((a, b, c) => psd(p, a, b, c), d, x, y, z, nx, ny, nz) : res;
         if (!spacing) return;
+        if(queueStipple(p,p.mat,res,x,y,z,nx,ny,nz,(a,b,c)=>psd(p,a,b,c)))return;
         curP = p;
         if (S.emit) {
           const n0 = B.count();
@@ -1900,6 +1966,7 @@ function makeSculpt(B, rest) {
       if (adaptive && !SculptSampling.surface(m)) return;
       const spacing = adaptive ? shadedSpacing(field, d, x, y, z, nx, ny, nz) : res;
       if (!spacing || S.merge && merged(x, y, z, spacing, m)) return;
+      if(queueStipple(source,m,res,x,y,z,nx,ny,nz,field))return;
       curP = source;
       if (S.emit) {
         const pr = curP,
@@ -1909,11 +1976,160 @@ function makeSculpt(B, rest) {
       } else shadeOwned(curP, m, spacing, x, y, z, nx, ny, nz, true);
     });
   }
+  function queueStipple(owner, material, res, x, y, z, nx, ny, nz, signed) {
+    if (
+      !stippleCandidates ||
+      material.stipple === false ||
+      !SculptSampling.surface(material)
+    )
+      return false;
+    if (stippleCandidates.length >= stippleProfile.maxCandidates)
+      throw new RangeError("Stippling: candidate budget exceeded");
+    const query = (a, b, c) => {
+      if (++stippleProbes > stippleProfile.maxProbes)
+        throw new RangeError("Stippling: probe budget exceeded");
+      return signed(a, b, c);
+    };
+    const base = res / stippleProfile.fine,
+      position = [x, y, z],
+      normal = [nx, ny, nz],
+      measured = Stippling.measure(
+        stippleProfile,
+        query,
+        position,
+        normal,
+        base * 0.8,
+      );
+    stippleCandidates.push({
+      group: owner.whole ? owner : undefined,
+      position,
+      normal,
+      spacing: base,
+      material,
+      owner,
+      ...measured,
+    });
+    return true;
+  }
+  function emitStipple(candidates, profile) {
+    const materials = new WeakMap(),
+      dotProfile = SplatFootprints.prepare({
+        shape: "circle",
+        softness: 0,
+        depth: "plane",
+      });
+    const plan = Stippling.sample(candidates, profile),
+      HALF = Math.sqrt(2 * Math.log(2)),
+      previousPixel = S.pixel,
+      previousFollow = S.follow,
+      previousFat = S.fat;
+    const draw = (c, radius, color, lift, shaped) => {
+      const { owner, material, position: p, normal: n } = c,
+        first = B.count();
+      curP = owner;
+      field(...p);
+      let m = materials.get(material);
+      if (!m) {
+        m = {
+          ...material,
+          fur: undefined,
+          leaf: undefined,
+          blade: undefined,
+          fiber: undefined,
+          brush: undefined,
+          footprint: undefined,
+          surface: undefined,
+          controls: undefined,
+          engraving: false,
+          screenPrint: false,
+          albedo: undefined,
+          pixelStyle: undefined,
+        };
+        materials.set(material, m);
+      }
+      B.withColor(color, () =>
+        shadeOwned(
+          owner,
+          m,
+          radius / (S.fat * HALF),
+          p[0] + n[0] * lift,
+          p[1] + n[1] * lift,
+          p[2] + n[2] * lift,
+          ...n,
+          true,
+        ),
+      );
+      const end = B.count();
+      if (end > first) {
+        const u = K_STIPPLE_TANGENT(n),
+          v = [
+            n[1] * u[2] - n[2] * u[1],
+            n[2] * u[0] - n[0] * u[2],
+            n[0] * u[1] - n[1] * u[0],
+          ];
+        B.describeFootprint(first, end, dotProfile, [
+          ...u.map((x) => x * radius),
+          ...v.map((x) => x * radius),
+        ]);
+      }
+      if (S.emit) S.emit(owner, first, end);
+    };
+    const K_STIPPLE_TANGENT = (n) => {
+      const u = Math.abs(n[1]) < 0.9 ? [n[2], 0, -n[0]] : [0, -n[2], n[1]],
+        l = Math.hypot(...u);
+      return u.map((x) => x / l);
+    };
+    try {
+      S.pixel = false;
+      S.follow = null;
+      S.fat = 1;
+      if (profile.paper) {
+        // The sparse marks and opaque support are independently distributed.
+        // Support is sampled at the authored resolution, with curvature retained.
+        const support = Stippling.sample(candidates, {
+          ...profile,
+          coarse: 1.05,
+          fine: 0.85,
+          density: 1,
+          toneDensity: 0,
+          size: [0.1, 0.42],
+          maxMarks: profile.maxCandidates,
+          importance: undefined,
+        });
+        for (const mark of support.marks)
+          draw(
+            candidates[mark.index],
+            mark.spacing * 0.9,
+            profile.paper,
+            -mark.spacing * 0.1,
+            false,
+          );
+      }
+      for (const mark of plan.marks) {
+        const c = candidates[mark.index];
+        draw(
+          c,
+          mark.radius,
+          (col) => Stippling.paint(profile, col, c.position),
+          c.spacing * 0.15,
+          true,
+        );
+      }
+    } finally {
+      S.pixel = previousPixel;
+      S.follow = previousFollow;
+      S.fat = previousFat;
+    }
+    return plan.stats;
+  }
   S.bake = () => {
+    shadowMarch = bakedShadowMarch({ steps: S.shSteps, distance: S.shLen });
     const override = typeof globalThis !== 'undefined' ? globalThis.INK_ADAPTIVE_SAMPLING : undefined;
     const sampling = !S.capture && SculptSampling.prepare(override ?? S.adaptiveSampling);
     const keepSdf = S.keepRenderSdf || (typeof globalThis !== 'undefined' && globalThis.INK_RETAIN_RENDER_SDF);
     renderSdf = keepSdf && !S.capture && B.keepRenderSdf ? captureRenderSdf() : null;
+    if(S.stipple&&S.stipple!==true&&(typeof S.stipple!=='object'||Array.isArray(S.stipple)))throw new TypeError('Stippling needs a boolean or settings');
+    stippleProfile=Stippling.prepare(S.stipple ? {light:S.sun,ambient:S.amb,...(S.stipple===true?{}:S.stipple)} : S.stipple);stippleCandidates=stippleProfile&&!S.capture?[]:null;stippleProbes=0;
     buildGrid();
     L = S.sun;
     for (const p of pos.concat(neg)) {
@@ -1924,7 +2140,8 @@ function makeSculpt(B, rest) {
       for (let bi = 0; bi < bands.length; bi++) {
         const band = bands === ONE_BAND ? -1 : bands[bi][0],
           res = bands === ONE_BAND ? res0 : res0 * bands[bi][1];
-        if (!adaptive) bakeBand(p, band, res, null);
+        if (stippleCandidates&&p.mat.stipple!==false&&SculptSampling.surface(p.mat))bakeBand(p,band,res*stippleProfile.fine,null);
+        else if (!adaptive) bakeBand(p, band, res, null);
         else {
           const probeStep = res * adaptive.coarse * .9;
           bakeBand(p, band, res * adaptive.coarse, adaptive, probeStep, false);
@@ -1932,6 +2149,7 @@ function makeSculpt(B, rest) {
         }
       }
     }
+    if(stippleCandidates){S.stippleStats=emitStipple(stippleCandidates,stippleProfile);stippleCandidates=null;stippleProfile=null;}
     // ghosts are drawn but take no part in shadows (things in the sky, glass, glowing shapes)
     for (const p of ghosts) {
       const res = p.res * (p.detailBudget?.spacing ?? 1),

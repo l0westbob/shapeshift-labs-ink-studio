@@ -1,4 +1,4 @@
-import { instancePlan, transformed, stampInstancePixelStyle, stampInstanceNormals } from './instances.mjs';
+import { instancePlan, transformed, stampInstancePixelStyle, stampInstanceNormals, expandedFootprints, expandedEngraving } from './instances.mjs';
 
 const rowSamples = 512;
 const instanceWidth = 256, instanceStride = 64;
@@ -45,16 +45,16 @@ function baseDirtyRows(world, rows) {
 
 export function createExpandedInstances() {
   let source, placementGroup, storage, revision;
-  let sourceData, sourceCount, sourceFine, sourcePix, sourceMetadata, sourceStyles, sourceOptical;
+  let sourceData, sourceCount, sourceFine, sourcePix, sourceMetadata, sourceStyles, sourceOptical, sourceFootprints,sourceEngraving;
   let packed;
   return function expand(world, group, changedRows) {
     const plan = instancePlan(group);
     if (world !== source || group !== placementGroup || world.data !== sourceData || world.count !== sourceCount ||
         world.fine !== sourceFine || world.pix !== sourcePix || world.renderMetadata !== sourceMetadata ||
-        world.materialPixelStyles !== sourceStyles || world.opticalSplats !== sourceOptical) {
+        world.materialPixelStyles !== sourceStyles || world.opticalSplats !== sourceOptical || world.splatFootprints !== sourceFootprints || world.engraving !== sourceEngraving) {
       storage = group.flatten(world);
-      const { data, count, fine, pix, renderMetadata, materialPixelStyles, opticalSplats } = storage;
-      packed = { data, count, fine, pix, renderMetadata, materialPixelStyles, opticalSplats };
+      const { data, count, fine, pix, renderMetadata, materialPixelStyles, opticalSplats, splatFootprints, engraving } = storage;
+      packed = { data, count, fine, pix, renderMetadata, materialPixelStyles, opticalSplats, splatFootprints, engraving };
       source = world;
       placementGroup = group;
       sourceData = world.data;
@@ -64,6 +64,7 @@ export function createExpandedInstances() {
       sourceMetadata = world.renderMetadata;
       sourceStyles = world.materialPixelStyles;
       sourceOptical = world.opticalSplats;
+      sourceFootprints = world.splatFootprints;sourceEngraving=world.engraving;
       revision = plan.revision;
       return { world:storage };
     }
@@ -79,6 +80,7 @@ export function createExpandedInstances() {
         normals.subarray(from / 16 * 3, end / 16 * 3), from / 16 * 3);
     }
     if (revision !== plan.revision) {
+      if(plan.rows.some(row=>row.asset.splatFootprints?.frames))packed.splatFootprints=storage.splatFootprints=expandedFootprints(world,plan);
       for (const row of plan.rows) {
         if (!(row.version > revision)) continue;
         const at = world.count + row.start;

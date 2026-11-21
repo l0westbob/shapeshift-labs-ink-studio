@@ -1,14 +1,18 @@
+import {createEngravingBinding} from './engraving.mjs';
+import { createFootprintBinding } from './footprints.mjs';
+import { createColorClusters } from './color-clusters.mjs';
+import { createRenderGrid } from './render-grid.mjs';
 import { createMaterialControls } from './material-controls.mjs';
 import { createLightEmitters } from './light-emitters.mjs';
 import { createInspection, inspectionDepth } from './inspection.mjs';
 import { waterReflectionPlan, selectReflectionWorld } from './reflections.mjs';
-import { createRenderGraph, graphOwner } from './render-graph.mjs';
+import { createRenderGraph, graphOwner, graphCapture } from './render-graph.mjs';
 import { createFrameComposite, frameCamera, captureFrameCamera } from './frame-composite.mjs';
 import { createSurfacePipeline } from './surfaces.mjs';
 import { createResources } from './resources.mjs';
 import { createTargets } from './targets.mjs';
 import { createSplatPipeline } from './pipeline.mjs';
-import { pixelShaderSources } from './shaders.mjs';
+import { pixelShaderSources, scenePaletteSize } from './shaders.mjs';
 import { createDepthSorter, makeCamera, cameraPose, withCameraPose, captureStreamingCamera } from './view.mjs';
 import { waterBackgroundShader } from './water-optics.mjs';
 import { createEnvironment } from './environment.mjs';
@@ -30,7 +34,7 @@ function reconstruct(toolkit, world, frame, definition) {
 }
 const rgb = hex => [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
 
-function palette(values, max = 64) {
+function palette(values, max = scenePaletteSize) {
   const result = new Float32Array(max * 3);
   for (let i = 0; i < Math.min(max, values.length); i++) result.set(rgb(values[i]), i * 3);
   return result;
@@ -110,8 +114,11 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
     // Rebirth hosts can opt into geometry specialization through the lower
     // level pipeline. The canvas path specializes its own fullscreen resolve.
     const motionAPI = toolkit.ArtDirection ?? toolkit.KIT?.artDirection;
+    const footprintAPI = toolkit.KIT?.splatFootprints;
+    let footprintBinding,engravingBinding;
+    const engravingAPI=toolkit.KIT?.engraving;
     const airflow = toolkit.KIT?.procedural?.airflow, climateAPI = toolkit.KIT?.environmentFrame;
-    pipeline = createSplatPipeline(gl, { specialize: false, sampleCoverage, coverageRules, stableDetail: stableDetailAPI, cutaway:cutawayAPI?.glsl, airflow });
+    pipeline = createSplatPipeline(gl, { specialize: false, sampleCoverage, coverageRules, stableDetail: stableDetailAPI, cutaway:cutawayAPI?.glsl, airflow, footprintGLSL:footprintAPI?.glsl,screenPrintGLSL:engravingAPI?.print?.glsl });
     const emptyVao = resources.allocate('VertexArray');
     const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE), maxBuffers = gl.getParameter(gl.MAX_DRAW_BUFFERS);
     const targets = createTargets(gl, resources);
@@ -131,9 +138,9 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
     const detailAPI = toolkit.DetailBudgets ?? toolkit.KIT?.detailBudgets;
     const qualityAPI = toolkit.KIT?.passQuality;
     const contract = toolkit.KIT?.renderContract;
-    const lighting = toolkit.KIT?.splatRelighting, relightUnit = 21;
+    const lighting = toolkit.KIT?.splatRelighting, shotLighting = toolkit.KIT?.shotLighting, relightUnit = 21;
     const relitSprites = new Map();
-    let relightData, relightRows, lastRelighting;
+    let relightData, relightRows, shotRows, lastRelighting;
     const opticalUnit = 22;
     let opticalData, opticalRows, lastOptical;
     const detailPlans = new WeakMap();
@@ -147,7 +154,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
     let constraintRows, constraintSlots, constraintPlan, constraintKey, constraintWorld, constraintMetadata, constraintCount, constraintMap, maskAt, constraintLab, constraintPairs;
     const contributionPost = new Map(), constrainedPosts = new Map();
     let maskSites, siteState, maskTexture, glassWorld, glassData, glassIndices;
-    const rasterKeys = new WeakMap();
+    const rasterKeys = new WeakMap(), warnedPalettes = new WeakSet();
     let rasterKey = 0;
     const sort = createDepthSorter(), transparencyAPI = toolkit.KIT?.procedural?.splatOrder;
     const afterimagesAPI = toolkit.KIT?.afterimages;
@@ -155,10 +162,12 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
     const mainTransparency = new WeakMap(), portalTransparency = new WeakMap();
     const previewPipelines = [];
     let surfacePipeline,emitterSurfacePipeline, reflectionTarget, secondaryReflectionTarget, reflectionAtlas, reflectionAtlasSize, reflectionAtlasFramebuffer;
+    let clusterRenderer;
+    const clusterAPI = toolkit.KIT?.colorClusters;
     let simple, simpleUnavailable = false, keyProgram, damp, copy, spriteProgram, spriteEnvProgram, spriteLayer, spriteTable, anchors;
     let lastWorld, lastData, lastCount, lastOutput, lastDetail, lastEnvironment, lastStaged, fineValues, materials, anchorCount = 0;
-    let packed = empty, historyIndex = 0, historyValid = false, previousVP, previousColorGrade, previousDetailRanges, previousSection, lastQualityKey;
-    let toneKey, tone, sorted, instanceDraw, expandInstances, lastInstances;
+    let packed = empty, historyIndex = 0, historyValid = false, previousVP, previousPalette, previousDetailRanges, previousSection, lastQualityKey;
+    let toneKey, tone, uploadedTone, sorted, instanceDraw, expandInstances, lastInstances;
 
     function orderFor(world, frame, camera, time, isNew, plan, width, height, scale,
       tolerance, histories, source, rainClocks, rainWind, quality) {
@@ -282,32 +291,30 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
     }
 
     function prepareTone(definition) {
+      if (!definition) return null;
       const next = JSON.stringify(definition);
       if (toneKey !== next) {
-        const prepared = definition ? toolkit.PixelLook.prepareTone(definition,
-          toolkit.KIT?.procedural?.materials?.blueNoise
-            ? ({ seed }) => toolkit.KIT.procedural.materials.blueNoise({ seed })
-            : undefined) : null;
-        if (prepared) {
-          // Reserve the first row for palette stops so the resolve needs only
-          // one texture for tone mapping, including in water and fog frames.
-          const width = Math.max(48, prepared.width), height = prepared.height + 1;
-          const table = new Float32Array(width * height * 4);
-          prepared.stops.forEach(([at, hex], i) => table.set([...rgb(parseInt(hex.slice(1), 16)), at], i * 4));
-          for (let y = 0; y < prepared.height; y++) for (let x = 0; x < prepared.width; x++)
-            table[((y + 1) * width + x) * 4] = prepared.thresholds[y * prepared.width + x];
-          textureUnit(12, toneStops);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, table);
-        }
+        tone = toolkit.PixelLook.prepareTone(definition, toolkit.KIT?.procedural?.materials?.blueNoise);
         toneKey = next;
-        tone = prepared;
       }
-      if (tone) {
-        textureUnit(12, toneStops);
-        return { u_toneOn: 1, u_toneCut: tone.cutoff, u_toneAmt: tone.amount, u_toneN: tone.stops.length,
-          u_toneStops: 12, u_toneThSize: [tone.width, tone.height] };
+      return tone;
+    }
+
+    function bindTone(prepared) {
+      if (!prepared) return { u_toneOn: 0 };
+      textureUnit(12, toneStops);
+      if (uploadedTone !== prepared) {
+        // The first row holds the stops and the rest hold the threshold tile.
+        const width = Math.max(prepared.stops.length, prepared.width), height = prepared.height + 1;
+        const table = new Float32Array(width * height * 4);
+        prepared.stops.forEach(([at, hex], i) => table.set([...rgb(parseInt(hex.slice(1), 16)), at], i * 4));
+        for (let y = 0; y < prepared.height; y++) for (let x = 0; x < prepared.width; x++)
+          table[((y + 1) * width + x) * 4] = prepared.thresholds[y * prepared.width + x];
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, table);
+        uploadedTone = prepared;
       }
-      return { u_toneOn: 0 };
+      return { u_toneOn: 1, u_toneCut: prepared.cutoff, u_toneAmt: prepared.amount, u_toneN: prepared.stops.length,
+        u_toneStops: 12, u_toneThSize: [prepared.width, prepared.height] };
     }
 
     function prepareConstraints(world, definition, skipMasks) {
@@ -446,7 +453,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       anchorCount = points.n;
     }
 
-    function waterUniforms(scene, camera, time, plane, captures, width, height) {
+    function waterUniforms(scene, camera, time, plane, captures, width, height, detailOn) {
       if (!scene) return null;
       waterTexture ??= resources.texture();
       textureUnit(3, waterTexture);
@@ -466,7 +473,8 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         u_waterCamera: [camera.tangent * camera.aspect, camera.tangent, +camera.ortho], u_waterTime: time,
         u_waterReflections: captures ? 23 : 0, u_waterReflectionCount: captures?.count ?? 0,
         u_waterReflectionActive: captures?.active ?? zero, u_waterReflectionHeights: captures?.heights ?? zero,
-        u_waterReflectionGrid: captures?.grid ?? [2,1], u_waterReflectionViewport:[width,height], u_waterProjection:camera.projection };
+        u_waterReflectionGrid: captures?.grid ?? [2,1], u_waterReflectionViewport:[width,height],
+        u_waterReflectionDetailOn:detailOn,u_waterProjection:camera.projection };
     }
 
     function wetVariant(water, media) {
@@ -525,7 +533,8 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       }
       const surfaces = options.surfaces, previews = options.scaleSurfaces;
       const hasSurfaces = Boolean(surfaces || previews?.some(Boolean));
-      if (hasSurfaces || options.surfaceFrame?.lighting?.display) {
+      const hasPlanes = !!shader.footprints && footprintBinding.hasPlanes && options.u_idx!==3;
+      if (hasSurfaces || hasPlanes || options.surfaceFrame?.lighting?.display) {
         const surfaceOptions = { geometryUpdatesSince: toolkit.SpriteSurface?.geometryUpdatesSince,
           updatesSince: toolkit.SpriteSurface?.updatesSince ?? toolkit.KIT?.ecology?.atlasUpdates, cutaway: cutawayAPI?.glsl };
         buffer.ensureDepth();
@@ -548,15 +557,23 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         gl.depthMask(false);
         if(!options.u_idx){gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);}
       }else if(options.u_idx!==3)gl.disable(gl.DEPTH_TEST);
+      if (shader.footprints) footprintBinding.rebind();
       gl.useProgram(shader.p);
       shader.set({
-        ...options,u_geometryDepth:+hasSurfaces,
+        ...options,u_geometryDepth:+(hasSurfaces||hasPlanes),
         u_paintPass: !!options.u_paintPass,
         u_materialGridScale: options.u_materialGridScale ?? 1,
         u_viewport: [width, height], u_lookViewport: [width,height],
         ...(options.lookGrid && { u_lookViewportScale: [options.lookGrid[0]/width,options.lookGrid[1]/height] }),
         u_focal: height / 2 / options.tangent
       });
+      if(hasPlanes){
+        // Only opaque retained planes enter the depth prepass. Ordinary soft
+        // splats and glass keep their established contribution blending.
+        gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);
+        gl.colorMask(false,false,false,false);shader.set({u_idx:4});pipeline.draw();
+        gl.colorMask(true,true,true,true);gl.depthMask(false);shader.set({u_idx:options.u_idx??0});
+      }
       if(options.u_idx===3){
         pipeline.drawSubset(options.indices);
         gl.disable(gl.DEPTH_TEST);
@@ -654,6 +671,12 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
           gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, x, y, 0, 0, width, height);
         }
       }
+      const clusters = frame.reflectionDetail!==false && world.water.reflectionClusters;
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,clusters ? gl.NEAREST_MIPMAP_LINEAR : gl.NEAREST);
+      if (clusters) {
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      }
       gl.activeTexture(gl.TEXTURE0);
       return plan;
     }
@@ -679,12 +702,23 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         world = toolkit.KIT?.shadowArt?.frame(world, camera.shadowFootprint) ?? world;
       const { raw = false, outline = true, dither = 0.35, scale = 1 } = frame;
       const look = world.look ?? {};
+      let engraved=frame.engraving!==false&&!!world.engraving;
+      let engravingUniforms;
+      const clusterDefinition = raw || reflectionCapture ? false : frame.colorClusters ?? look.colorClusters;
+      if (clusterDefinition !== undefined && clusterDefinition !== false && !clusterAPI)
+        throw new Error('Color clusters need the Ink Studio KIT');
+      const clusters = clusterAPI?.prepare(clusterDefinition);
       const clock = contract?.clock(world, frame);
       const t = clock?.time ?? frame.time ?? world.lookSnapshot?.time ?? 0;
       const time = clock?.scene ?? (frame.stepAnimation !== false && look.pixel ? Math.floor(t * 10) / 10 : t);
       if (frame.strictContract) {
         if (!contract) throw new Error('Strict frame validation needs the Ink Studio KIT');
         contract.requirePortable(world, frame);
+      }
+      if (!raw && world.pal.length > scenePaletteSize && !warnedPalettes.has(world.pal)) {
+        warnedPalettes.add(world.pal);
+        console.warn('Ink Studio WebGL resolves the first ' + scenePaletteSize + ' of ' + world.pal.length +
+          ' scene swatches. Use raw: true to draw baked colors without palette resolve.');
       }
       const canStage = contract?.hasStages(world, frame) && !contract.compatibility(world, frame).length;
       const qualityDefinition = frame.passQuality ?? look.passQuality;
@@ -709,11 +743,16 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       previousDetailRanges = detailRanges;
       const tolerance = transparencyAPI?.transparency(frame.stableTransparency ?? look.stableTransparency)?.depthTolerance ?? 0;
       const budget = raw ? null : detailAPI?.prepare(look.detailBudgets);
-      const globalCleanup = !raw && (frame.clean ?? !!look.clean);
+      const coverage = !raw && (frame.coverageAware ?? look.coverageAware) === true;
+      const toneDefinition = raw || coverage ? undefined : frame.tone ?? look.tone;
+      const frameTone = prepareTone(toneDefinition);
+      const globalCleanup = !raw && (frame.clean ?? (!!look.clean && !frameTone?.preserveDots));
       const needsDetailFlags = budget?.affectsCleanup && (globalCleanup || budget?.enablesCleanup);
       const constraintDefinition = frame.paletteConstraints ?? look.paletteConstraints;
       const wantsEmitters=frame.areaLights!==false&&world.areaLights?.length||Array.isArray(frame.areaLights)&&frame.areaLights.length||(frame.volumeLighting??world.volumeLighting)?.spots?.length;
       const wantsRelight = lighting && (frame.relighting ?? world.relighting);
+      const wantsShot = frame.shotLighting ?? world.shotLighting;
+      if (wantsShot && !shotLighting) throw new Error('Shot lighting needs the Ink Studio KIT');
       let group = frame.instances;
       const afterimageDefinition = frame.afterimages ?? look.afterimages;
       const trails = !reflectionCapture && !frame.order && afterimageDefinition !== undefined && afterimageDefinition !== false;
@@ -721,7 +760,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       const rules = trails ? afterimagesAPI.prepare(afterimageDefinition) : [];
       const normalCaptures = rules.length ? null : captureWater(world, frame, camera, width, height, 0, quality);
       // Per-pixel material, palette, and detail rules index the expanded world.
-      if (group && (materialControls.has(world) || canStage || quality?.rows || rules.length || frame[graphOwner] || frame.order || tolerance || wantsRelight || wantsEmitters || world.opticalSplats || instancePlan(group).hasOpticalSplats || !raw && (constraintDefinition || look.pixel && world.pix ||
+      if (group && (materialControls.has(world) || canStage || quality?.rows || rules.length || clusters || frame[graphOwner] || frame.order || tolerance || wantsRelight || wantsShot || wantsEmitters || world.engraving || world.splatFootprints || instancePlan(group).hasSplatFootprints || world.opticalSplats || instancePlan(group).hasOpticalSplats || !raw && (constraintDefinition || look.pixel && world.pix ||
           needsDetailFlags || budget?.fineOn || budget?.fineOff))) {
         expandInstances ??= createExpandedInstances();
         const expanded = expandInstances(world,group,frame.changedRows);
@@ -747,7 +786,6 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         query: () => toolkit.KIT.world.query.fromScene(world, time) });
       const selection = prepareQualityRows(world, frame, quality, qualityKey, trailStart || world.count);
       const constraints = !raw && prepareConstraints(world, constraintDefinition, frame.lookMasks === false);
-      const coverage = !raw && (frame.coverageAware ?? look.coverageAware) === true;
       const masked = Boolean(constraints?.masked);
       if (masked && !coverage) maskOwner ??= target(2);
       const owner = frame[graphOwner]?.depth ? (graphOwnership ??= target(3)) : masked && !coverage ? maskOwner : plainOwner;
@@ -803,11 +841,11 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       const coverageSetting = frame.splatCoverage ?? look.splatCoverage ?? 'legacy';
       const splatCoverage = coverageRules?.coverageMode?.(coverageSetting) ?? ['legacy', 'continuous', 'soft'].indexOf(coverageSetting);
       if (splatCoverage < 0) throw new RangeError('Splat coverage must be legacy, continuous or soft');
-      const colored = !raw && !portableStages && !patterned && !coverage && (frame.colored ?? true);
+      const colored = !raw && !portableStages && !frameTone && !patterned && !coverage && (frame.colored ?? true);
       const detail = prepareDetail(world, budget);
       const scopedCleanup = !!needsDetailFlags && !!detail?.flags;
       const cleaning = globalCleanup || scopedCleanup;
-      const damping = !raw && !portableStages && !coverage && !colored && !constraints && !!look.pixel && frame.damp !== false;
+      const damping = !raw && !portableStages && !frameTone && !coverage && !colored && !constraints && !!look.pixel && frame.damp !== false;
       const samples = colored ? 2 : 1, rw = width * samples, rh = height * samples;
       if (rw > maxSize || rh > maxSize ||
           rw > viewportLimit[0] || rh > viewportLimit[1])
@@ -821,7 +859,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
           (waterScene && frame.time !== lastWaterTime)) historyValid = false;
       geometry.resize(rw, rh);
       contours.resize(colored ? width : 1, colored ? height : 1);
-      const ownsPixels = !!frame[graphOwner] || patterned || !!constraints && !coverage || scopedCleanup;
+      const ownsPixels = !!clusters || !!frame[graphOwner] || patterned || !!constraints && !coverage || scopedCleanup;
       owner.resize(ownsPixels ? width : 1, ownsPixels ? height : 1);
       if (scopedCleanup) detailTable ??= table(512, 7, maxSize);
       if (materialStyles) materialStyleTable ??= table(512, 16, maxSize);
@@ -872,12 +910,22 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         flex = channel => airflow.frame(velocity(channel)).flex;
         if (direction?.cadence.rain !== undefined) rainWind = velocity('rain');
       }
-      const water = waterUniforms(waterScene, camera, motion?.water ?? time, plane, captures, width, height);
+      const water = waterUniforms(waterScene, camera, motion?.water ?? time, plane, captures, width, height,
+        frame.reflectionDetail!==false);
       if (water) water.u_waterWindGain = (windResponse?.water ?? 0) * Math.hypot(...flex('water'));
       const env = environment.prepare(world,frame,camera,t,width,height,reflectionCapture);
       if (env || lastEnvironment) historyValid = false;
       lastEnvironment = !!env;
       const wet = water && wetVariant(water,!!env?.media);
+      engraved=frame.engraving!==false&&!!world.engraving;
+      if(engraved)historyValid=false;
+      const footprints = (frame.splatFootprints ?? look.splatFootprints) !== false && !!world.splatFootprints?.styles.length;
+      let footprintUniforms;
+      if (footprints) {
+        if (!footprintAPI) throw new Error('Splat footprints need the Ink Studio KIT');
+        footprintBinding ??= createFootprintBinding(gl,footprintAPI,resources,targets,maxSize);
+        footprintUniforms=footprintBinding(world);
+      }
       const opticalMaterials = !!world.opticalSplats;
       if (opticalMaterials) {
         const K = toolkit.KIT;
@@ -887,24 +935,28 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       }
       if (opticalMaterials || lastOptical) historyValid = false;
       lastOptical = opticalMaterials;
-      let relighting = false;
+      const K = toolkit.KIT;
+      const sample = (wantsRelight || wantsShot) && K.splatFrames.create(world, time, K.M);
+      let lightRows;
       if (wantsRelight) {
-        const K = toolkit.KIT;
         const timeline = K.environmentFrame.timeline(world, frame, t,
           K.artDirection.prepare(look.artDirection, frame.artDirection), K.weather?.tracks);
-        const active = lighting.frame(world, frame, timeline);
-        if (active) {
-          const next = lighting.rows(world, active, K.splatFrames.create(world, time, K.M), null, relightRows);
-          if (next) {
-            relightRows = next;
-            relightData ??= table(512, relightUnit, maxSize);
-            relightData.upload(next);
-            relighting = true;
-          }
-        }
+        lightRows = lighting.rows(world, lighting.frame(world, frame, timeline), sample, null, relightRows);
+        if (lightRows) relightRows = lightRows;
+      }
+      if (wantsShot) {
+        const rig = shotLighting.frame(world.shotLighting, frame.shotLighting, t);
+        const joined = shotLighting.rows(world, rig, sample, lightRows, shotRows);
+        if (joined && joined !== lightRows) shotRows = joined;
+        lightRows = joined;
+      }
+      let relighting = !!lightRows;
+      if (relighting) {
+        relightData ??= table(512, relightUnit, maxSize);
+        relightData.upload(lightRows);
       }
       const emitterFrame=emitterLighting.prepare(world,frame,t,reflectionCapture,camera);
-      relighting=emitterLighting.compose(emitterFrame,world,time,relightRows,relighting);
+      relighting=emitterLighting.compose(emitterFrame,world,time,lightRows,relighting);
       emitterLighting.fog(emitterFrame,world,frame);
       if(emitterFrame){historyValid=false;if(env){env.emitters=emitterFrame;env.uniforms={...env.uniforms,...emitterFrame.uniforms};}}
       if(env)env.lit=!!(env.lit&&emitterFrame);
@@ -913,7 +965,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       const fineTiles = detail?.fine ?? world.fine;
       const hasFine = !raw && !!fineTiles;
       const pal = palette(world.pal);
-      const palCount = Math.min(world.pal.length, 64);
+      const palCount = Math.min(world.pal.length, scenePaletteSize);
       const fog = world.fog ?? {};
       // An editor may provide a row diff against the exact bake currently on the GPU.
       const incremental = frame.previousWorld && frame.previousWorld === lastWorld &&
@@ -926,7 +978,12 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       if (group) {
         instanceDraw ??= createInstanceDraw(table,data,maxSize);
         plan = instanceDraw.bind(group, world, geometryDirty, lastInstances !== group, geometryData);
-      } else data.upload(geometryData, world.count * 16, geometryDirty);
+      } else if(engraved){
+        if(!engravingAPI)throw new Error('Engraving needs the Ink Studio KIT');
+        engravingBinding??=createEngravingBinding(engravingAPI);
+        const attached=engravingBinding(world,geometryData,geometryDirty,frame.engravingLight??[-.45,.8,.55]);
+        data.upload(attached.data,attached.data.length,attached.changedRows);engravingUniforms=attached.uniforms;
+      }else data.upload(geometryData, world.count * 16, geometryDirty);
       if (materialStyles) bindMaterialStyles(world, group, plan, dirty);
       if (hasFine && (isNew || fineValues !== fineTiles)) {
         const fineDirty = incremental && !detail && fineValues === lastWorld.fine ? frame.changedFineRows : undefined;
@@ -953,9 +1010,14 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       }
 
       const paletteFrame = toolkit.PixelLook.framePalette?.(world, frame, { grading: !raw && !portableStages, tone: !raw && !coverage }) ??
-        { toneDefinition: raw || coverage ? null : frame.tone ?? look.tone, grade: frame.ignoreLookGrade ? undefined : world.anim?.grade };
-      const { toneDefinition: definition, colorGrade } = paletteFrame;
-      const grade = reflectionCapture ? null : paletteFrame.grade;
+        { grade: frame.ignoreLookGrade ? undefined : world.anim?.grade };
+      const { colorGrade } = paletteFrame;
+      let grade = null;
+      if (!raw && !portableStages && !reflectionCapture && !frameTone && paletteFrame.grade) {
+        grade = pal.slice();
+        for (let i = 0, n = Math.min(palCount * 3, paletteFrame.grade.length); i < n; i++)
+          grade[i] = paletteFrame.grade[i];
+      }
       if (masked) bindMaskSites(world,dirty);
       if (constraints?.textured) textureUnit(14,maskTexture);
       if (constraints && (coverage || masked)) {
@@ -972,8 +1034,9 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       const shader = pipeline.programFor({
         water: !!wet, airPockets: wet?.airPockets, layered: wet?.layered, atlas: wet?.atlas, portal: plane !== zero || !!cover,
         instances: !!plan, contributions:coverage && !!constraints, masked, textured:constraints?.textured, layeredGlass,
-        materialStyles, environment:env?.media,emitterFog:!!env?.lit, relighting, optical:opticalMaterials, cutaway:!!section
+        engraving:engraved, footprints, materialStyles, environment:env?.media,emitterFog:!!env?.lit, relighting, optical:opticalMaterials, cutaway:!!section
       });
+      shader.footprints=footprints;
       gl.useProgram(shader.p);
       const growth = world.grow ?? {};
       shader.set({
@@ -996,6 +1059,9 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         u_detailTexture: detailTexture, u_detailGeometry: detailGeometry,
         u_crisp: +!raw, u_splatCoverage: splatCoverage, u_dilate: raw ? 0.3 : 0.15, u_near: camera.clipNear,
         u_paintMarker: paint?.marker ?? 0, u_afterimageStart: trailStart,
+        ...footprintUniforms,...engravingUniforms,
+        u_screenPrintOn:frame.screenPrint!==false,
+        u_brushworkOn:frame.brushwork!==false,
         ...(opticalMaterials && { u_optical: opticalUnit }),
         ...(relighting && { u_relight: relightUnit }),
         u_fog: rgb(world.pal[fog.c ?? 0] ?? 0),
@@ -1074,7 +1140,13 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
           u_gh: gaps, u_ghn: count, u_gfl: glass.floor ?? -50
         });
       }
-      const destination = damping ? finished.framebuffer : output;
+      if (clusters) {
+        copy ??= program(sources.COPY_FS);
+        clusterRenderer ??= createColorClusters(gl, { api: clusterAPI, target, textureUnit, fullscreen, copy });
+        clusterRenderer.buffer.resize(width, height);
+      }
+      const presentation = clusters ? clusterRenderer.buffer.framebuffer : output;
+      const destination = damping ? finished.framebuffer : presentation;
       let resolve;
       const styledPattern = patterned && materialStyles;
       const relitPattern = patterned && relighting;
@@ -1094,7 +1166,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
           textureUnit(8,constraintRows);
           if (masked) textureUnit(7, owner.textures[1]);
         }
-      } else resolve = wet ? (wet.post ??= program(wet.sources.POST_FS)) : resolveProgram(patterned, glass, world.ao, definition, grade);
+      } else resolve = wet ? (wet.post ??= program(wet.sources.POST_FS)) : resolveProgram(patterned, glass, world.ao, frameTone, grade);
       if (water) textureUnit(11, (colored ? contours : geometry).textures[2]);
       if (layeredGlass) {
         const at = geometry.textures.length - 2;
@@ -1103,7 +1175,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         textureUnit(8, glassBoundary.textures[0]);
       }
       fullscreen(resolve, cleaning ? cleaned.framebuffer : destination, width, height, {
-        ...patternedUniforms, ...glassUniforms, ...prepareTone(definition), ...water, ...env?.uniforms, u_waterMask: 11,
+        ...patternedUniforms, ...glassUniforms, ...bindTone(frameTone), ...water, ...env?.uniforms, u_waterMask: 11,
         ...(layeredGlass&&{u_glassBoundary:8,u_glassBack:4,u_glassThrough:7,
           u_glassRange:camera.depthRange,u_glassProjection:camera.projection}),
         ...(constraints ? { u_constraintSlots: 4, u_constraintRows: 8, u_constraintDefault: constraints.defaultSlot,
@@ -1115,7 +1187,7 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         ...(relitPattern && { u_relight: relightUnit, u_relightFog: rgb(world.pal[fog.c ?? 0] ?? 0),
           u_relightFogRange: [fog.start ?? 1, fog.max ?? 0] }),
         u_idxTex: 9,
-        u_sprLayer: 13, u_markA: +cleaning, u_pal: pal, u_n: palCount, u_luma: 0,
+        u_sprLayer: 13, u_markA: +(cleaning || !!clusters), u_pal: pal, u_n: palCount, u_luma: 0,
         u_bypass: +(raw || !!portableStages), u_colored: +colored, u_dither: dither * 0.3 * (world.dither ?? 1),
         u_line: rgb(world.pal[lineIndex] ?? 0),
         u_remapLine: colorGrade && Number.isInteger(lineIndex) && lineIndex >= 0 && lineIndex < palCount ? lineIndex + 1 : 0,
@@ -1147,26 +1219,28 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       if (damping) {
         damp ??= program(sources.DAMP_FS);
         copy ??= program(sources.COPY_FS);
-        const activeColorGrade = colorGrade || empty;
-        if (!sameValues(previousColorGrade, activeColorGrade)) historyValid = false;
-        previousColorGrade = activeColorGrade;
+        const activePalette = (grade ?? pal).subarray(0, palCount * 3);
+        if (!sameValues(previousPalette, activePalette)) historyValid = false;
+        previousPalette = activePalette;
         const next = 1 - historyIndex, vp = viewProjection(camera.projection, camera.view);
         const still = previousVP && vp.every((v, i) => Math.abs(v - previousVP[i]) < 1e-6);
         textureUnit(8, finished.textures[0]);
         textureUnit(11, history[historyIndex].textures[0]);
         textureUnit(6, geometry.textures[1]);
         fullscreen(damp, history[next].framebuffer, width, height, {
-          u_cur: 8, u_hist: 11, u_dep: 6, u_pal: colorGrade || pal, u_n: palCount,
+          u_cur: 8, u_hist: 11, u_dep: 6, u_pal: activePalette, u_n: palCount,
           u_have: +(historyValid && !!still), u_iview: inverseView(camera.view, camera.eye),
           u_pvp: previousVP ?? vp, u_cam: [tangent, camera.aspect, +camera.ortho, 0],
           u_rng: camera.depthRange
         });
         textureUnit(8, history[next].textures[0]);
-        fullscreen(copy, output, width, height, { u_src: 8 });
+        fullscreen(copy, presentation, width, height, { u_src: 8 });
         historyIndex = next;
         historyValid = true;
         previousVP = vp;
       }
+      if (clusters) clusterRenderer.finish(world, clusters, owner,
+        cleaning ? cleaned : damping ? finished : clusterRenderer.buffer, output, width, height);
       gl.activeTexture(gl.TEXTURE0);
       lastWorld = world;
       lastInstances = group;
@@ -1207,11 +1281,11 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
         portalMask.resize(width, height);
         const nextCamera = withCameraPose(camera, opening.camera(cameraPose(camera)));
         const { raw, outline, dither, scale, clean, lineClean, colored, tone, edges, water, time, skyTime, cameraTime,
-          stepAnimation, artDirection, renderStages, strictContract, environment,
+          stepAnimation, artDirection, renderStages, strictContract, environment, colorClusters,
           stableTransparency, resetTransparency, stableDetail, passQuality, silhouetteProtection, scalePreviews } = frame;
         const destination = reconstructFrame(portal.destination, { raw, outline, dither, scale, clean, lineClean, colored, tone,
           edges, water, time, skyTime, cameraTime, stepAnimation, artDirection, renderStages, strictContract,
-          environment, stableTransparency, resetTransparency, stableDetail, passQuality,
+          environment, colorClusters, stableTransparency, resetTransparency, stableDetail, passQuality,
           silhouetteProtection, scalePreviews, ...portal.destinationFrame, damp: false },
           portalReconstructionInstances);
         render(destination.world, destination.frame, width, height, portalDestination.framebuffer, nextCamera, anchorPlane(opening.to));
@@ -1250,17 +1324,32 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       composite ??= createFrameComposite(gl, { program, resources, target, textureUnit, fullscreen });
       composite(world, drawFrame, plan, layers, output, present);
     }
+    let gridRenderer;
+    function presentGrid(world, frame, width, height, output) {
+      const definition = frame.renderGrid ?? world.look?.renderGrid;
+      if (definition === undefined || definition === false) return presentGraph(world, frame, width, height, output);
+      const api = toolkit.KIT?.renderGrid;
+      if (!api) throw new Error('Tessellated grids need the Ink Studio KIT');
+      // Immutable prepared plans are recommended for a host's animation loop.
+      const plan = api.prepare(definition);
+      api.dimensions(plan, width, height);
+      if (width > Math.min(maxSize, viewportLimit[0]) || height > Math.min(maxSize, viewportLimit[1]))
+        throw new RangeError('Render grid exceeds the WebGL viewport or texture size limit');
+      gridRenderer ??= createRenderGrid(gl, { api, program, target, textureUnit, fullscreen });
+      gridRenderer(world, frame, plan, width, height, output, presentGraph);
+    }
     let renderGraph;
     function presentGraph(world, frame, width, height, output) {
       const definition = frame.renderGraph ?? world.look?.renderGraph;
-      if (definition === false || definition === undefined) {
+      const capture = frame.renderGraphCapture;
+      if ((definition === false || definition === undefined) && capture === undefined) {
         renderGraph?.reset();
         return presentMixed(world, frame, width, height, output);
       }
       const api = toolkit.KIT?.renderGraph;
       if (!api) throw new Error('Render graphs need the Ink Studio KIT');
-      const plan = api.prepare(definition);
-      if (!plan?.passes.length) {
+      const plan = api.prepare(definition, capture);
+      if (!plan || !plan.passes.length && !plan.captures.size) {
         renderGraph?.reset();
         return presentMixed(world, frame, width, height, output);
       }
@@ -1279,13 +1368,13 @@ function createBackend(gl, toolkit, specialize, reuseOrder) {
       const presentation = toolkit.KIT?.presentationTimeline?.sample(world, frame.interfaceTime ?? frame.time ?? world.lookSnapshot?.time ?? 0, frame);
       if (presentation) frame = { ...frame, ...presentation };
       const definition = frame.inspection ?? world.look?.inspection;
-      if (definition === undefined || definition === false) return presentGraph(world, frame, width, height, output);
+      if (definition === undefined || definition === false) return presentGrid(world, frame, width, height, output);
       const api = toolkit.KIT?.inspection;
       if (!api) throw new Error('Target inspection needs the Ink Studio KIT');
       const settings = api.prepare(definition);
-      if (!settings.targets.length) return presentGraph(world, frame, width, height, output);
+      if (!settings.targets.length) return presentGrid(world, frame, width, height, output);
       inspection ??= createInspection(gl, { api, program, resources, target, textureUnit, fullscreen, maxSize, viewportLimit });
-      inspection(world, frame, settings, width, height, output, presentGraph);
+      inspection(world, frame, settings, width, height, output, presentGrid);
     }
     return { render: presentFrame, dispose() {
       surfacePipeline?.dispose();
@@ -1413,8 +1502,12 @@ export function createRenderer(canvas, { toolkit, specialize = true, reuseOrder 
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
         throw new RangeError('Ink Studio frame width and height must be positive integers');
       backend ??= createBackend(gl, toolkit, specialize, reuseOrder);
-      backend.render(world, frame, width, height, output);
+      let captures;
+      const settings = frame.renderGraphCapture === undefined ? frame :
+        { ...frame, [graphCapture]: value => { captures = value; } };
+      backend.render(world, settings, width, height, output);
       if (picking?.world === world && (frame.changedRows?.length !== 0 || world.anim?.bones?.length)) picking = undefined;
+      return captures;
     },
     pick(world, ray, frame = {}) {
       if (disposed) throw new Error('The Ink Studio renderer has been disposed');
@@ -1426,19 +1519,20 @@ export function createRenderer(canvas, { toolkit, specialize = true, reuseOrder 
       const withdrawal = frame.sampleWithdrawal ?? world.sampleWithdrawal ?? 0;
       const splatCoverage = frame.splatCoverage ?? world.look?.splatCoverage;
       const materialStyles = world.materialPixelStyles;
+      const footprintEnabled=(frame.splatFootprints??world.look?.splatFootprints)!==false;
       const marks = world.dataMarks?.snapshot();
       const definition = frame.reconstruction ?? world.look?.reconstruction;
       const reconstruction = definition === undefined || definition === false ? undefined : JSON.stringify(definition);
       if (picking?.world !== world || picking.data !== world.data || picking.count !== world.count || picking.opticalSplats !== world.opticalSplats ||
           picking.group !== group || picking.revision !== revision || picking.withdrawal !== withdrawal ||
-          picking.splatCoverage !== splatCoverage || picking.materialStyles !== materialStyles || picking.marks !== marks ||
+          picking.footprintEnabled !== footprintEnabled || picking.footprints !== world.splatFootprints || picking.splatCoverage !== splatCoverage || picking.materialStyles !== materialStyles || picking.marks !== marks ||
           picking.reconstruction !== reconstruction || picking.time !== time &&
             (reconstruction !== undefined || world.moving?.length || world.grow || world.anim?.bones)) {
         let posed = group ? pickInstances(world, group, frame.changedRows).world : world;
         if (reconstruction !== undefined) posed = reconstruct(toolkit, posed, frame, definition);
-        const picker = create(posed, { time, sampleWithdrawal: withdrawal, splatCoverage, cutaway:false });
+        const picker = create(posed, { time, sampleWithdrawal: withdrawal, splatCoverage, cutaway:false, splatFootprints:footprintEnabled });
         picking = { world, data: world.data, count: world.count, opticalSplats: world.opticalSplats,
-          group, revision, time, withdrawal, reconstruction, splatCoverage, materialStyles, marks, picker };
+          group, revision, time, withdrawal, reconstruction, splatCoverage, materialStyles, marks, footprints:world.splatFootprints, footprintEnabled, picker };
       }
       const section = toolkit.KIT.cutaway?.prepare(ray?.cutaway ?? frame.cutaway ?? world.look?.cutaway);
       let camera = ray?.camera;
@@ -1447,7 +1541,12 @@ export function createRenderer(canvas, { toolkit, specialize = true, reuseOrder 
           frame.height ?? frame.target?.height ?? canvas.height);
         camera = { ...cameraPose(view),setback:view.setback };
       }
-      return picking.picker.ray({ water:frame.water !== false,...ray,cutaway:section,camera });
+      let footprintView=ray?.footprintView;
+      if(footprintEnabled&&!footprintView&&(world.splatFootprints||group&&instancePlan(group).hasSplatFootprints)){
+        const width=frame.width??frame.target?.width??canvas.width,height=frame.height??frame.target?.height??canvas.height;
+        footprintView={...makeCamera(world,frame,width,height),width,height,variance:frame.raw?.3:.15,snap:!frame.raw&&!frame.colored};
+      }
+      return picking.picker.ray({ water:frame.water !== false,...ray,cutaway:section,camera,footprintView });
     },
     dispose() {
       if (disposed) return;

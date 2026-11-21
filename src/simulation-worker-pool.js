@@ -16,10 +16,7 @@ module.exports = function createSimulationWorkers(size, { timeoutMs = 30000, mod
   let bundle;
 
   function open() {
-    if (!bundle) {
-      require('..').load();
-      bundle = path.join(__dirname, '../dist/standalone.js');
-    }
+    bundle ??= require('..').nodeBundlePath();
     const { port1: port, port2: remote } = new MessageChannel();
     const ready = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
     const thread = new Worker(path.join(__dirname, 'simulation-worker.js'), {

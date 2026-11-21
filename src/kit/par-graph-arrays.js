@@ -88,28 +88,46 @@
     const type='array<'+item+'>';
     const inputs={items:type,...extra,...(reducing && {initial:accumulator}),
       ...(sorting && {direction:{type:'string',default:'asc'}})};
-    return {inputs,outputs:{value:reducing ? accumulator : 'array<'+(sorting || filtering ? item : value)+'>'},time:true,
-      run({items,...args},context) {
-        const {time,seed}=context, cost=Math.max(1,group.expandedNodes??1);
-        if (items.length*cost>maxRows) throw new RangeError('Array operation exceeds its '+maxRows+' node visit budget');
-        const start=reducing ? args.initial : undefined, order=sorting ? args.direction : undefined;
-        if (reducing) delete args.initial;
-        if (sorting) delete args.direction;
-        const evaluate=group.instantiate();
-        const apply=(item,i,accumulator)=>evaluate({...args,item,...(index && {index:i}),
-          ...(reducing && {accumulator})},{time,seed:P.data.hash(String(i),seed)}).value;
-        try {
-          if (reducing) return {value:items.reduce((acc,item,i)=>apply(item,i,acc),start)};
-          if (sorting) return {value:stableSort(items,apply,order)};
-          if (filtering) return {value:items.filter((item,i)=>{
-            const keep=apply(item,i);
-            if (typeof keep!=='boolean') throw new TypeError('Array filter groups must return a boolean');
-            return keep;
-          })};
-          return {value:items.map((item,i)=>apply(item,i))};
-        } finally {
-          evaluate.clear?.();
+    return {inputs,outputs:{value:reducing ? accumulator : 'array<'+(sorting || filtering ? item : value)+'>'},time:true,workerGroup:true,
+      instantiate() {
+        let segment;
+        const lanes=[];
+        function truncate(length) {
+          for (let i=length; i<lanes.length; i++) lanes[i]?.clear?.();
+          if (lanes.length>length) lanes.length=length;
         }
+        function run({items,...args},{time,seed,take,sequence},workers) {
+          const cost=Math.max(1,group.expandedNodes??1);
+          if (items.length*cost>maxRows) throw new RangeError('Array operation exceeds its '+maxRows+' node visit budget');
+          if (segment!==sequence) {
+            truncate(0);
+            segment=sequence;
+          }
+          truncate(items.length);
+          const start=reducing ? args.initial : undefined, order=sorting ? args.direction : undefined;
+          if (reducing) delete args.initial;
+          if (sorting) delete args.direction;
+          const transient=sequence===undefined ? group.instantiate() : undefined;
+          const apply=(item,i,accumulator)=>{
+            const evaluate=transient ?? (lanes[i]??=group.instantiate());
+            return evaluate({...args,item,...(index && {index:i}),...(reducing && {accumulator})},
+              {time,take,sequence,seed:P.data.hash(String(i),seed)},workers).value;
+          };
+          try {
+            if (reducing) return {value:items.reduce((acc,item,i)=>apply(item,i,acc),start)};
+            if (sorting) return {value:stableSort(items,apply,order)};
+            if (filtering) return {value:items.filter((item,i)=>{
+              const keep=apply(item,i);
+              if (typeof keep!=='boolean') throw new TypeError('Array filter groups must return a boolean');
+              return keep;
+            })};
+            return {value:items.map((item,i)=>apply(item,i))};
+          } finally {
+            transient?.clear?.();
+          }
+        }
+        run.clear=()=>truncate(0);
+        return run;
       }
     };
   }

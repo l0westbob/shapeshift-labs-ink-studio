@@ -24,6 +24,7 @@ The package includes geometry, materials, lighting, animation, character control
 - [Retained authoring](#retained-authoring)
 - [Editable 3D drawing](#editable-3d-drawing)
 - [Headless world simulation](headless-worlds.md)
+- [Editable starter recipes](../examples/starter-recipes/README.md)
 - [Rendering and command reference](#rendering-and-command-reference)
 - [View-dependent surface materials](#view-dependent-surface-materials)
 - [Projected and procedural effects](#projected-and-procedural-effects)
@@ -131,7 +132,7 @@ console.log(world.count, world.data instanceof Float32Array);
 console.log(SCENES.map(scene => scene.id));
 ```
 
-`makeSculpt(B)` creates the base sculptor. `K.sculpt(...)` adds the toolkit's extended shape operations. `load()` compiles and caches a concatenated CommonJS bundle in the package's `dist/standalone.js`; it needs a writable package directory on first use or after source changes.
+`makeSculpt(B)` creates the base sculptor. `K.sculpt(...)` adds the toolkit's extended shape operations. `load()` uses the precompiled Node toolkit in a packed install. A source checkout can build it with `npm run build` or compile on demand. See [authoring and playback builds](build-profiles.md).
 
 The package entry point exposes:
 
@@ -293,6 +294,9 @@ console.log(world.count);
 `K.diorama.scene(spec)` wraps a specification as a scene with a `build` method. `K.diorama.kinds` exposes the supported solid fields, and `K.diorama.styles` exposes style definitions. Programmatic mesh assets go in the second argument as `{ assets: { name: mesh } }`.
 
 Use the [headless scene editor](scene-editor.md) to select solids, edit transforms and materials, and save the resulting diorama JSON.
+
+Use the [Pixel Stamp Workshop](pixel-stamps.md) to draw indexed surface
+paint and contour masks, or author held cels for depth-aware effects.
 
 Reuse unchanged bake inputs in the editor and pass `--asset-cache DIR` to retain diorama bake results across CLI runs. [Incremental baking](scene-editor.md#incremental-baking)
 
@@ -894,7 +898,9 @@ Add `--layer name` to export and absorb an angle-specific correction. Each named
 
 Use the first three controls with `paint absorb` or `paint tune`. The CPU and WebGL renderers blend overlapping samples by their visibility from the current camera before resolving the scene palette. Corrections are pinned to the captured world-space surface positions. Use `--paint-corrections off` when rendering an uncorrected comparison.
 
-For programmatic scenes, pass the saved paint document as `paint` in `B.finish()`, or embed it under `finish.paint` in a JSON diorama. Each layer retains `view.direction` toward the capture camera. Perspective captures also retain `view.eye`. A decal row contains its XYZ position, XYZ normal, palette index, and optional opacity. Pass `paintCorrections: false` to either renderer to hide the view corrections.
+For programmatic scenes, pass the saved paint document as `paint` in `B.finish()`, or embed it under `finish.paint` in a JSON diorama. A camera correction retains `view.direction` toward the capture camera. Perspective captures also retain `view.eye`. A decal row contains its XYZ position, XYZ normal, palette index, and optional opacity. Pass `paintCorrections: false` to either renderer to hide named paint.
+
+Use [`paint cause`](caused-marks.md) to bake drips, scuffs, and lichen from solid edges, contact records, and overhead shelter into editable surface layers.
 
 The [art-pixel rendering guide](art-passes.md) describes the selectable
 render passes, selective ink, camera snapping, stable dithering, art-pixel
@@ -921,7 +927,7 @@ shows the core APIs and a runnable pool scene. The [depth import guide](depth-ma
 
 ## Embedding and custom scene collections
 
-Use [scene publishing](scene-publishing.md) to export a self-contained web player for rendered scene frames.
+Use [scene publishing](scene-publishing.md) to export a self-contained web player for rendered scene frames, or serve the [standalone playback module](build-profiles.md#play-baked-frames) with a published recording.
 
 Use a [portable project bundle](project-bundles.md) to carry an editable diorama and its local dependencies into Node, WebGL, or the CLI.
 
@@ -1110,3 +1116,27 @@ Camera rigs support dependency-free dolly zoom, tracked orbit, keyed crane moves
 `KIT.procedural.mathFields` supplies finite complex-plane, polar and logarithmic charts; analytic deformation/flow/mask adapters; and bounded fixed-step attractor integration. It shares existing field-expression, streamline and trace tooling. See [procedural math fields](math-fields.md) and the [strange garden](../examples/math-fields.html).
 
 `KIT.random` / `KIT.procedural.random` adds independent named streams, stable object/property keys, controlled distributions, correlated channels, coherent variation and replay checkpoints. See [randomness authoring](randomness.md) and the interactive [seeded courtyard](../examples/randomness.html).
+
+Use [tessellated render grids](render-grids.md) to resolve SDF/splat scenes into connected hexagons, alternating triangles or isometric diamonds. See the interactive [Prism Harbour demo](../examples/render-grid.html).
+
+Use [custom splat footprints](splat-footprints.md) for square, wedge, star, cross, chipped, polygonal or painted marks on individual materials. Explore the [Mark Foundry](../examples/splat-footprints.html), including a live silhouette editor.
+
+Use [surface-aligned brush strokes](surface-brush.md) for gouache, bristle, wash and ink marks following curvature, contours or authored vector fields. Their retained axes follow animated bones and CPU deformation. Try the [Pigment Coast / Painted Koi demos](../examples/surface-brush.html).
+
+Use [engraving and tonal art maps](engraving.md) for light-responsive hatching, cross engraving, white-cut woodcut and stippled native surfaces. Explore the [Copperplate Cabinet](../examples/engraving.html), with an animated moth and etched observatory.
+
+Use [irregular mosaics and stained glass](mosaic-surfaces.md) for fitted polygon pieces on flat or curved carriers, with real seams, bevels and optical transmission. Explore the [Tessera Collection](../examples/mosaic-surfaces.html), featuring an animated lapis koi and glass pavilion.
+
+Use [halftone and layered screen printing](screen-print.md) for analytic circle, diamond and line screens with registered ink plates, paper grain, overprint and knockout. Explore [The Moonflower Press](../examples/screen-print.html), with free camera controls and live plate proofs.
+
+Use [adaptive stippling and pointillism](stippling.md) to place native marks according to silhouette, curvature, light and authored detail. Explore [The Quiet Mark](../examples/stippling.html).
+
+Use [irregular mosaics and stained glass](mosaic-surfaces.md) for fitted polygon pieces on planar or curved carriers, opaque grout, geometric bevels and native optical transmission. Explore [The Tessera Collection](../examples/mosaic-surfaces.html).
+
+Use [contour ribbons and topographic rendering](contour-ribbons.md) to trace heightfields, SDF slices and curved-surface isolines into native marks. Explore [Lines of Matter](../examples/contour-ribbons.html), including ribbons peeling into particles.
+
+Use [faceted surface reconstruction](faceted-surfaces.md) for optional flat SDF patches with per-object size, lattice orientation and colour grouping. Explore [Amethyst Quarry / Copperworks](../examples/faceted-surfaces.html), including a rigged native flywheel and pixel-art façade decals.
+
+Use [layered cut paper and relief](paper-relief.md) for real apertures, paper thickness, parallax, native geometry and optional crisp front paint with baked soft shadows. Explore [The Quiet Orchard / Tidal Atlas](../examples/paper-relief.html).
+
+Use [voxel and relief-pixel surfaces](voxel-surface.md) to sample selected signed fields into cubes, columns, slabs or shallow relief. [Solid Signals](../examples/voxel-surface.html) includes a breakable tower and a sculpt that scatters into rigid blocks.

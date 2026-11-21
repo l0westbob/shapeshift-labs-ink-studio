@@ -33,7 +33,7 @@ const CloudDetail = (() => {
     const step=2*radius/steps;
     const tiles=new Map();
 
-    function integrate(o,d,start,stop,out,cutRay,counters) {
+    function integrate(o,d,start,stop,out,cutRay,counters,shadow) {
       let first=start,last=stop;
       for (let i=0;i<3;i++) {
         if (Math.abs(d[i])<1e-10) {
@@ -47,20 +47,52 @@ const CloudDetail = (() => {
       if (!(last>first)) return false;
       const count=Math.min(steps,Math.max(3,Math.ceil((last-first)/step)));
       const length=(last-first)/count;
-      let optical=0, from=last, to=first;
+      let optical=0, from=last, to=first, shadowed=0;
       for (let i=0;i<count;i++) {
         const edge=first+i*length, t=edge+length*.5;
         const occupied=cutRay?.distance(edge,edge+length)??length;
         if (counters) counters.cloudSamples++;
-        const mass=occupied*density(o[0]+t*d[0],o[1]+t*d[1],o[2]+t*d[2]);
+        const x=o[0]+t*d[0], y=o[1]+t*d[1], z=o[2]+t*d[2];
+        const mass=occupied*density(x,y,z);
         if (!mass) continue;
+        // Weight direct-light loss by each sample's contribution to the camera.
+        if (shadow) {
+          const weight=Math.exp(-optical)*-Math.expm1(-mass);
+          shadowed+=weight*shadow(x,y,z,counters);
+        }
         optical+=mass;
         from=Math.min(from,t-length*.5);
         to=t+length*.5;
       }
       if (!optical) return false;
       out[0]=optical; out[1]=from; out[2]=to;
+      if (shadow) out[3]=clamp(1-shadowed/-Math.expm1(-optical));
       return true;
+    }
+
+    // Sample extinction only along the part of the sun ray inside this cloud.
+    function sunShadow(direction, {steps,distance,strength}, offset, cutouts) {
+      const [dx,dy,dz]=direction;
+      const limits=direction.map((d,i)=>d<0 ? min[i] : max[i]);
+      const inverse=direction.map(d=>Math.abs(d)<1e-10 ? 0 : 1/d);
+      return (x,y,z,counters) => {
+        let reach=distance;
+        if (inverse[0]) reach=Math.min(reach,(limits[0]-x)*inverse[0]);
+        if (inverse[1]) reach=Math.min(reach,(limits[1]-y)*inverse[1]);
+        if (inverse[2]) reach=Math.min(reach,(limits[2]-z)*inverse[2]);
+        if (!(reach>0)) return 0;
+        if (counters) counters.cloudShadowRays=(counters.cloudShadowRays ?? 0)+1;
+        const step=reach/steps;
+        let optical=0;
+        for (let i=0;i<steps && optical<7;i++) {
+          const t=(i+.5)*step, sx=x+t*dx, sy=y+t*dy, sz=z+t*dz;
+          const gain=cutouts?.gain(sx+offset[0],sy+offset[1],sz+offset[2])??1;
+          if (!gain) continue;
+          if (counters) counters.cloudShadowSamples=(counters.cloudShadowSamples ?? 0)+1;
+          optical+=step*density(sx,sy,sz)*gain;
+        }
+        return strength*-Math.expm1(-optical);
+      };
     }
 
     function tile(key,yaw,pitch) {
@@ -105,7 +137,7 @@ const CloudDetail = (() => {
       }
     }
 
-    function view(eye,parallel,mode,offset,shade,opacity,cutouts) {
+    function view(eye,parallel,mode,offset,shade,opacity,cutouts,shadow) {
       const localEye=eye.map((x,i)=>x-offset[i]);
       const delta=localEye.map((x,i)=>x-center[i]);
       const distance=Math.hypot(...delta)/radius;
@@ -128,14 +160,14 @@ const CloudDetail = (() => {
           deltaOrigin[c]=center[c]-local[c];
         }
         const cutRay=cutouts?.ray(origin,dir,start,stop);
-        const contribute=(optical,depth,weight) => {
+        const contribute=(optical,depth,weight,visibility) => {
           const alpha=opacity*weight*(-Math.expm1(-optical));
-          shade(origin,dir,depth,optical,rgb);
+          shade(origin,dir,depth,optical,rgb,visibility);
           for (let c=0;c<3;c++) out[c]+=alpha*rgb[c];
           out[3]-=alpha;
         };
-        if (weightVolume && integrate(local,dir,start,stop,hit,cutRay,counters))
-          contribute(hit[0],(hit[1]+hit[2])*.5,weightVolume);
+        if (weightVolume && integrate(local,dir,start,stop,hit,cutRay,counters,shadow))
+          contribute(hit[0],(hit[1]+hit[2])*.5,weightVolume,hit[3]);
         if (!frame) return out;
         const d=-dot(dir,frame.normal);
         if (d<=1e-8) return out;
@@ -162,7 +194,7 @@ const CloudDetail = (() => {
         center:center.map((n,i)=>n+offset[i]), opacity } : null;
       return { weights, trace, card, horizon: origin => Math.hypot(...origin.map((x,i)=>x-offset[i]-center[i]))+radius };
     }
-    return { view };
+    return { view, sunShadow };
   }
 
   return Object.freeze({ compile, modes });

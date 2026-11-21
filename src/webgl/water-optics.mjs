@@ -55,28 +55,78 @@ uniform int u_waterReflectionBase, u_waterReflectionCount;
 uniform vec4 u_waterReflectionActive, u_waterReflectionHeights;
 uniform vec2 u_waterReflectionGrid, u_waterReflectionViewport;
 uniform mat4 u_waterProjection;
+uniform bool u_waterReflectionDetailOn;
+vec4 waterReflectionBinding(int index, int width) {
+  return texelFetch(u_waterData,ivec2(index % width,index / width),0);
+}
+vec3 waterReflectionTap(vec2 uv, vec2 tile, vec2 edge) {
+  return textureLod(u_waterReflections,(tile+clamp(uv,edge,1.0-edge))/u_waterReflectionGrid,0.0).rgb;
+}
+vec3 waterReflectionDetail(vec4 shape, vec4 fade, float blur, vec3 view, vec2 uv, vec2 shift, vec2 wave, vec2 tile, vec2 edge) {
+  float farWeight = fade.y > fade.x ? smoothstep(fade.x,fade.y,-view.z) : 0.0;
+  float core = shape.x*(1.0-farWeight), tail = (1.0-shape.x)*(1.0-farWeight);
+  vec3 result = vec3(0.0);
+  if (core > 0.0) result += core*waterReflectionTap(uv,tile,edge);
+  if (tail > 0.0) {
+    vec2 crest = shape.w > 0.5 && length(wave)>1e-8 ? normalize(vec2(wave.y,-wave.x)) : vec2(1.0,0.0);
+    float c = cos(fade.w), s = sin(fade.w);
+    vec2 turned = vec2(c*crest.x+s*crest.y,c*crest.y-s*crest.x);
+    vec3 axis = mat3(u_waterView)*vec3(turned.x,0.0,turned.y);
+    vec2 u = axis.xy;
+    if (u_waterCamera.z < 0.5) u += view.xy / max(1e-8,-view.z)*axis.z;
+    u = length(u)>1e-8 ? normalize(u) : vec2(1.0,0.0);
+    vec2 along = u*length(vec2(shape.y,blur))/u_waterReflectionViewport;
+    vec2 across = vec2(-u.y,u.x)*length(vec2(shape.z,blur))/u_waterReflectionViewport;
+    vec2 p = uv+shift;
+    result += tail*(
+      waterReflectionTap(p,tile,edge)*0.32+
+      (waterReflectionTap(p-along,tile,edge)+waterReflectionTap(p+along,tile,edge))*0.17+
+      (waterReflectionTap(p-along*0.5,tile,edge)+waterReflectionTap(p+along*0.5,tile,edge))*0.12+
+      (waterReflectionTap(p-across,tile,edge)+waterReflectionTap(p+across,tile,edge))*0.05);
+  }
+  if (farWeight > 0.0) {
+    float cell=fade.z;
+    if (cell <= 1.0) result += farWeight*waterReflectionTap(uv,tile,edge);
+    else {
+      vec2 center=(floor(uv*u_waterReflectionViewport/cell)+0.5)*cell/u_waterReflectionViewport;
+      vec2 size=0.5/edge;
+      float lod=log2(max(1.0,min(cell*min(size.x/u_waterReflectionViewport.x,size.y/u_waterReflectionViewport.y),
+        min(size.x,size.y)*0.25)));
+      // Leave room for the coarser mip as well as the finer sample beside an atlas boundary.
+      vec2 margin=min(vec2(0.5),edge*exp2(ceil(lod)+1.0));
+      vec2 at=(tile+clamp(center,margin,1.0-margin))/u_waterReflectionGrid;
+      result += farWeight*textureLod(u_waterReflections,at,lod).rgb;
+    }
+  }
+  return result;
+}
 vec3 waterReflectedColor(WaterStyle style, vec3 p, vec2 ripple) {
   if (u_waterReflectionCount == 0) return style.highlight.rgb;
   int offset = u_waterReflectionBase + style.index;
   int width = textureSize(u_waterData, 0).x;
-  vec3 binding = texelFetch(u_waterData, ivec2(offset % width, offset / width), 0).xyz;
+  vec4 binding = waterReflectionBinding(offset,width);
   int slot = int(binding.x) - 1;
   if (slot < 0 || u_waterReflectionActive[slot] == 0.0 || abs(p.y-u_waterReflectionHeights[slot]) > 0.002) return style.highlight.rgb;
-  vec4 clip = u_waterProjection * u_waterView * vec4(p, 1.0);
+  vec4 view = u_waterView * vec4(p, 1.0), clip = u_waterProjection * view;
   vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
   vec2 normal = (mat3(u_waterView) * vec3(ripple.x, 0.0, ripple.y)).xy;
-  uv += binding.y * normal / u_waterReflectionViewport;
+  vec2 shift = binding.y * normal / u_waterReflectionViewport;
   vec2 tile = vec2(slot % 2, slot / 2), size = vec2(textureSize(u_waterReflections, 0)) / u_waterReflectionGrid;
   vec2 edge = 0.5 / size;
-  vec2 at = (tile + clamp(uv, edge, 1.0-edge)) / u_waterReflectionGrid;
-  vec3 reflected = texture(u_waterReflections, at).rgb;
+  if (u_waterReflectionDetailOn && binding.w > 0.0) {
+    int detail = int(binding.w);
+    return waterReflectionDetail(waterReflectionBinding(detail,width),waterReflectionBinding(detail+1,width),
+      binding.z,view.xyz,uv,shift,ripple,tile,edge)*style.highlight.rgb;
+  }
+  uv += shift;
+  vec3 reflected = waterReflectionTap(uv,tile,edge);
   if (binding.z > 0.0) {
     vec2 blur = binding.z / u_waterReflectionViewport;
     reflected *= 0.4;
-    reflected += texture(u_waterReflections,(tile+clamp(uv+vec2(blur.x,0),edge,1.0-edge))/u_waterReflectionGrid).rgb * 0.15;
-    reflected += texture(u_waterReflections,(tile+clamp(uv-vec2(blur.x,0),edge,1.0-edge))/u_waterReflectionGrid).rgb * 0.15;
-    reflected += texture(u_waterReflections,(tile+clamp(uv+vec2(0,blur.y),edge,1.0-edge))/u_waterReflectionGrid).rgb * 0.15;
-    reflected += texture(u_waterReflections,(tile+clamp(uv-vec2(0,blur.y),edge,1.0-edge))/u_waterReflectionGrid).rgb * 0.15;
+    reflected += waterReflectionTap(uv+vec2(blur.x,0),tile,edge) * 0.15;
+    reflected += waterReflectionTap(uv-vec2(blur.x,0),tile,edge) * 0.15;
+    reflected += waterReflectionTap(uv+vec2(0,blur.y),tile,edge) * 0.15;
+    reflected += waterReflectionTap(uv-vec2(0,blur.y),tile,edge) * 0.15;
   }
   return reflected * style.highlight.rgb;
 }

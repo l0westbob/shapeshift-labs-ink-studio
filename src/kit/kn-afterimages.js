@@ -69,7 +69,7 @@
         return poseCache.get(i);
       }
 
-      const rows = [];
+      const rows = [], footprints = [], footprintFrames=[],engravings=[];
       for (const [r, rule] of rules.entries()) {
         if (!rule.opacity) continue;
         const state = states[r], sourceIds = [];
@@ -109,19 +109,22 @@
           let position = point.position, shape = point.covariance ? footprint : [
             footprint[0], footprint[1], footprint[2], footprint[1], footprint[3], footprint[4], footprint[2], footprint[4], footprint[5]];
           if (scale !== 1) shape = shape.map(value => value * scale * scale);
+          let brushFrame=SplatFootprints.posedFrame(world,index,poseTime,scale);
           if (guide) {
             position = V.sub(position, guide.position);
             if (rule.project) {
               const n = guide.normal;
               position = V.mad(position, n, rule.lift - V.dot(position, n));
               const flat = M.id().map((a, k) => a - n[k / 3 | 0] * n[k % 3]);
+              if(brushFrame)brushFrame=[...M.app(flat,brushFrame.slice(0,3)),...M.app(flat,brushFrame.slice(3))];
               shape = M.mul(M.mul(flat, shape), flat).map((a, k) => a + .000001 * n[k / 3 | 0] * n[k % 3]);
             }
+            if(brushFrame)brushFrame=[...M.app(inverse,brushFrame.slice(0,3)),...M.app(inverse,brushFrame.slice(3))];
             position = M.app(inverse, position);
             shape = M.mul(M.mul(inverse, shape), inverseTranspose);
           }
           current.set(world.splatIds?.[index] ?? index, { position, shape, alpha: Math.min(1, alpha),
-            color: rule.tint ?? data[q + 7] });
+            color: rule.tint ?? data[q + 7], brushFrame, engraving:world.engraving?.indices[index]?{style:world.engraving.styles[world.engraving.indices[index]-1],anchor:Array.from(world.engraving.anchors.subarray(index*3,index*3+3)),rest:Array.from(world.engraving.restFrames.subarray(index*6,index*6+6))}:null, footprint: world.splatFootprints?.styles[(world.splatFootprints.indices[index]??0)-1] });
         }
         state.frames = state.frames.filter(prior => time - prior.time < rule.duration);
         for (const prior of state.frames.filter(prior => prior.time < time).slice(-rule.copies)) {
@@ -133,6 +136,9 @@
                 matrixSlots.every(k => Math.abs(now.shape[k] - dab.shape[k]) <= rule.motionThreshold ** 2)) continue;
             const position = guide ? V.add(guide.position, M.app(guide.anchor, dab.position)) : dab.position;
             const cov = guide ? M.mul(M.mul(guide.anchor, dab.shape), transpose) : dab.shape;
+            engravings.push(dab.engraving);
+            footprints.push(dab.footprint);
+            footprintFrames.push(guide&&dab.brushFrame?[...M.app(guide.anchor,dab.brushFrame.slice(0,3)),...M.app(guide.anchor,dab.brushFrame.slice(3))]:dab.brushFrame);
             rows.push(...position, fade * dab.alpha, cov[0], cov[1], cov[2], dab.color, cov[4], cov[5], cov[8], noDepth, 0, 0, 0, 0);
           }
         }
@@ -143,7 +149,10 @@
         // draw at the same time produces the same trail.
         if (state.frames.length > rule.copies + 1) state.frames.shift();
       }
-      return Float32Array.from(rows);
+      const packed = Float32Array.from(rows);
+      if (footprints.some(Boolean)||footprintFrames.some(Boolean)){packed.splatFootprints = footprints;packed.footprintFrames=footprintFrames;}
+      if(engravings.some(Boolean))packed.engraving=engravings;
+      return packed;
     }
 
     return Object.freeze({ frame, clear });
@@ -187,6 +196,19 @@
     data.set(world.data.subarray(0, world.count * stride));
     data.set(rows, world.count * stride);
     const result = { ...world, count, data };
+    if (world.splatFootprints || rows.splatFootprints) {
+      const marks = SplatFootprints.recorder();
+      for (let i=0;i<world.count;i++) { const id=world.splatFootprints?.indices[i]??0; if(id||world.splatFootprints?.frames) marks.record(i,i+1,id?world.splatFootprints.styles[id-1]:false,world.splatFootprints.frames&&i*6+6<=world.splatFootprints.frames.length?world.splatFootprints.frames.subarray(i*6,i*6+6):undefined); }
+      rows.splatFootprints?.forEach((style,i)=>{if(style||rows.footprintFrames?.[i])marks.record(world.count+i,world.count+i+1,style??false,rows.footprintFrames?.[i])});
+      result.splatFootprints=marks.finish(count);
+    }
+    if(world.engraving||rows.engraving){
+      const E=Engraving,styles=[],keys=new Map(),indices=new Uint16Array(count),anchors=new Float32Array(count*3),restFrames=new Float32Array(count*6);
+      const add=(i,style,anchor,rest)=>{const key=JSON.stringify(style);if(!keys.has(key)){if(styles.length>=E.maxStyles)throw new RangeError('Afterimages exceed engraving style budget');keys.set(key,styles.push(style));}indices[i]=keys.get(key);anchors.set(anchor,i*3);restFrames.set(rest,i*6);};
+      const b=world.engraving;if(b)b.indices.forEach((id,i)=>{if(id)add(i,b.styles[id-1],b.anchors.subarray(i*3,i*3+3),b.restFrames.subarray(i*6,i*6+6));});
+      rows.engraving?.forEach((e,i)=>{if(e)add(world.count+i,e.style,e.anchor,e.rest)});
+      result.engraving=E.layout(count,styles,indices,anchors,restFrames);
+    }
     // These fixed-stride tables are uploaded for the whole draw stream.
     for (const [key, width] of [['pix', 8], ['fine', 12], ['opticalSplats', 12], ['materialPixelStyles', 4]]) {
       if (!world[key]) continue;

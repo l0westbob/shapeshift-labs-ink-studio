@@ -1,45 +1,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { write } = require('./asset-files.js');
-const { frameIndex, mount } = require('../src/scene-replay.js');
-
-const format = 'ink-studio/scene-replay';
-const maxFrames = 600, maxPixels = 120_000_000, maxImagePixels = 16_777_216;
-const maxReplayBytes = 128 * 1024 * 1024;
-const integer = (n, min, max) => Number.isSafeInteger(n) && n >= min && n <= max;
-const dimensions = (width, height) => [width, height].every(n => integer(n, 1, 8192)) && width * height <= maxImagePixels;
-
-function validate(document) {
-  const { version, width, height, start, fps, frames, title } = document ?? {};
-  if (document?.format !== format || version !== 1 || !dimensions(width, height) ||
-      !Number.isFinite(start) || !integer(fps, 1, 120) || typeof title !== 'string' ||
-      !Array.isArray(frames) || !integer(frames.length, 1, maxFrames) || frames.length * width * height > maxPixels)
-    throw new TypeError('Invalid Ink Studio scene replay');
-  return document;
-}
-
-function pixels(data, width, height) {
-  if (typeof data !== 'string' || data.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data))
-    throw new TypeError('Scene replay frames need base64 PNG data');
-  const bytes = Buffer.from(data, 'base64');
-  if (bytes.length < 45 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' ||
-      bytes.toString('ascii', 12, 16) !== 'IHDR' || bytes.readUInt32BE(16) !== width || bytes.readUInt32BE(20) !== height)
-    throw new TypeError('Scene replay PNG dimensions must match its recording');
-  return bytes;
-}
+const { format, maxFrames, maxPixels, maxReplayBytes, dimensions, frameIndex, mount,
+  sampleReplayFrame, validateSceneReplay } = require('../src/scene-replay.js');
 
 function readSceneReplay(file) {
   if (fs.statSync(file).size > maxReplayBytes) throw new RangeError('Scene replay exceeds the file size budget');
-  const document = validate(JSON.parse(fs.readFileSync(file, 'utf8')));
-  for (const frame of document.frames) pixels(frame, document.width, document.height);
-  return document;
+  return validateSceneReplay(JSON.parse(fs.readFileSync(file, 'utf8')));
 }
 
 function sampleSceneReplay(document, seconds = 0, { loop = false } = {}) {
-  const { frames, fps, start, width, height } = validate(document);
-  if (!Number.isFinite(seconds)) throw new RangeError('Replay time must be finite');
-  const index = frameIndex(frames.length, fps, seconds, loop);
-  return { index, time: start + index / fps, width, height, png: pixels(frames[index], width, height) };
+  const { index, time, width, height } = sampleReplayFrame(document, seconds, { loop });
+  return { index, time, width, height, png: Buffer.from(document.frames[index], 'base64') };
 }
 
 function embedSettings(options = {}, title = 'Ink Studio scene') {
@@ -106,8 +78,7 @@ window.inkScene = (${mount})(document.getElementById('ink-scene'),
 
 function writeSceneEmbed(document, { out, settings } = {}) {
   if (typeof out !== 'string' || !/\.html$/i.test(out)) throw new TypeError('Choose an .html embed filename');
-  const source = validate(document), file = path.resolve(out);
-  for (const frame of source.frames) pixels(frame, source.width, source.height);
+  const source = validateSceneReplay(document), file = path.resolve(out);
   write(file, embedPage(source, embedSettings(settings, source.title)));
   return { file };
 }

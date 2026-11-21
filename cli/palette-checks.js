@@ -89,6 +89,17 @@ function result({definition,fields}, metrics) {
   return {id:definition.id,passed:failures.length===0,metrics,failures};
 }
 
+function measureChecks(raw, subjects, thresholds, matte, active) {
+  const indices=[...new Set(active.filter(row=>row.definition.type==='readability').map(row=>row.index))];
+  const {frame,marked,subjects:measured}=measure(raw,subjects,thresholds,matte,indices);
+  const contours=new Map(indices.map((index,i)=>[index,contour(measured[i])]));
+  const marks=active.some(row=>row.definition.type==='swatch') && new Uint8Array(raw.w*raw.h);
+  const results=active.map(check=>result(check,check.definition.type==='swatch' ?
+    countSwatch(raw,check.index,check.expected,marks) : contours.get(check.index)));
+  if (marks) for (let p=0;p<marks.length;p++) if (marks[p]) marked.rgb.set(swatchMarks[marks[p]-1],p*3);
+  return {frame,marked,results};
+}
+
 function checkPaletteShot(world,options={}) {
   const {plan,view={}}=options;
   if (!record(plan)) throw new TypeError('Palette checks need a plan');
@@ -100,14 +111,7 @@ function checkPaletteShot(world,options={}) {
     (raw,subjects,thresholds,matte,_kit,sample)=>{
       const active=checks.filter(({definition})=>(!definition.views || definition.views.includes(sample.view)) &&
         (!definition.states || definition.states.includes(sample.state)));
-      const indices=[...new Set(active.filter(row=>row.definition.type==='readability').map(row=>row.index))];
-      const {frame,marked,subjects:measured}=measure(raw,subjects,thresholds,matte,indices);
-      const contours=new Map(indices.map((index,i)=>[index,contour(measured[i])]));
-      const hasSwatches=active.some(row=>row.definition.type==='swatch');
-      const marks=hasSwatches && new Uint8Array(raw.w*raw.h);
-      const results=active.map(check=>result(check,check.definition.type==='swatch' ?
-        countSwatch(raw,check.index,check.expected,marks) : contours.get(check.index)));
-      if (marks) for (let p=0;p<marks.length;p++) if (marks[p]) marked.rgb.set(swatchMarks[marks[p]-1],p*3);
+      const {frame,marked,results}=measureChecks(raw,subjects,thresholds,matte,active);
       const findings=results.filter(row=>!row.passed).map(row=>row.id);
       return {frame,marked,results,findings,status:findings.length ? findings.length+' failed' : results.length ? 'Pass' : 'No checks'};
     });
@@ -127,4 +131,4 @@ function checkPaletteShot(world,options={}) {
     checks:summaries,samples,legend:Object.fromEntries(legend)}};
 }
 
-module.exports = { checkPaletteShot };
+module.exports = { checkPaletteShot, prepareChecks, measureChecks };

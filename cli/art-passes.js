@@ -5,10 +5,25 @@ const { surfacePoint } = require('./scene-optics.js');
 const TargetSelectors = require('../src/target-selectors.js');
 
 const SplatFrames = require('../src/splat-frames.js');
+const { rows: shutterRows } = require('./programmable-exposure.js');
 let matrices;
 function sampleFrames(world, time) {
   if (!matrices && (world.anim?.rig || world.anim?.bones)) matrices = require('../index.js').load().KIT.M;
-  return SplatFrames.create(world, time, matrices);
+  const exposure = world[shutterRows];
+  const base = SplatFrames.create(world, time, matrices);
+  if (!exposure) return base;
+  const sources = new Map();
+  return index => {
+    const alternate = exposure.pose(index), clock = exposure.clock(index);
+    if (!clock || !alternate && clock.scene === time) return base(index);
+    const source = alternate ?? world;
+    const key = alternate ?? clock;
+    if (!sources.has(key)) {
+      if (!matrices && (source.anim?.rig || source.anim?.bones)) matrices = require('../index.js').load().KIT.M;
+      sources.set(key, SplatFrames.create(source, clock.scene, matrices));
+    }
+    return sources.get(key)(index);
+  };
 }
 
 function createArtPasses(request, w, h, emissiveSlots) {
@@ -149,7 +164,7 @@ function createArtPasses(request, w, h, emissiveSlots) {
     }
     for (const [channel, ids] of [['motion', owner], ['emissionMotion', emissionOwner]]) {
       if (!selected.has(channel)) continue;
-      const vectors = new Float32Array(size * 2);
+      const vectors = new Float32Array(size * 2), valid = new Uint8Array(size);
       const previous = channel === 'motion' ? geometry.motionFrom : geometry.emissionMotionFrom;
       const current = geometry.motionReference;
       if (previous?.w === w && previous.h === h && previous.centers.length === geometry.centers.length) {
@@ -161,11 +176,13 @@ function createArtPasses(request, w, h, emissiveSlots) {
               (current.splatSource !== previous.splatSource || current.emitterSource !== previous.emitterSource ||
                 current.baseCount !== previous.baseCount ||
                 current.birthIds[ownerId] !== previous.birthIds?.[ownerId])) continue;
+          valid[p] = 255;
           vectors[p * 2] = geometry.centers[i] - previous.centers[i];
           vectors[p * 2 + 1] = geometry.centers[i + 1] - previous.centers[i + 1];
         }
       }
       result[channel] = topDown(vectors, 2);
+      result[channel + 'Valid'] = topDown(valid, 1);
     }
     if (selected.has('splatId')) result.splatId = topDown(Uint32Array.from(owner, i => i + 1), 1);
     for (const [channel, names] of [['objectId', 'objects'], ['materialId', 'materials']]) {

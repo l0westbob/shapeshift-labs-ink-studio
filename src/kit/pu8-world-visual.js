@@ -40,7 +40,7 @@
     if (cached) return cached;
     const { read } = W.data, rig = sceneCameraRig(world);
     let look;
-    const timeline = K.timeline.compile(world.timeline, { channel(path) {
+    const timeline = K.timeline.compile(world.timeline, { exact: world.takeClock !== undefined, channel(path) {
       const [root, field] = path;
       if (root === 'camera' && path.length === 2) return K.cameraRig.channel(field, rig?.shots);
       if (root === 'renderGraph' || root === 'inspection') {
@@ -99,6 +99,7 @@
       HorizonBands.compile(look?.horizonBands);
       FrameComposite.settings(look?.composite);
       Cutaway.prepare(look?.cutaway);
+      ColorClusters.prepare(look?.colorClusters);
       RenderGraph.prepare(look?.renderGraph);
       RenderStages.prepare(look?.renderStages, paletteOptions);
       RenderStages.optics(look?.optics, paletteOptions);
@@ -123,9 +124,9 @@
     return { look, material, forEntity, validate };
   }
 
-  function visual({makeBuilder,makeSculpt},view,query,{ controls } = {}) {
-    const time = view.time ?? view.tick * view.world.dt;
-    const timeline = sceneTimeline(view.world), frame = timeline?.sample(time);
+  function visual({makeBuilder,makeSculpt},view,query,{ controls, take, time: presentationTime } = {}) {
+    const time = take?.start ?? presentationTime ?? view.time ?? view.tick * view.world.dt;
+    const timeline = sceneTimeline(view.world), frame = take && timeline?.forTake ? timeline.forTake(take) : timeline?.sample(time);
     const { world: bound, values, dataInputs } = visualParameters(view.world, { time, query, controls });
     const edits = frame?.edits.filter(edit => edit.path[0] === 'visual');
     const world = edits?.length ? W.apply(bound, edits, { validate: false }).world : bound;

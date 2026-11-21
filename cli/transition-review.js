@@ -18,6 +18,17 @@ const record = (value, name) => {
   return value;
 };
 
+function comparisonSettings(supplied = {}, paletteMode = 'entries') {
+  if (!['entries','visible'].includes(paletteMode)) throw new RangeError('Transition paletteMode must be entries or visible');
+  const thresholds = { ...defaults };
+  for (const [key, value] of Object.entries(record(supplied, 'Transition thresholds'))) {
+    if (!Object.hasOwn(defaults, key) || !Number.isFinite(value) || value < 0 || value > 1)
+      throw new RangeError('Invalid transition threshold ' + key);
+    thresholds[key] = value;
+  }
+  return { thresholds, paletteMode };
+}
+
 function camera(value, id) {
   const source = record(value, id + ' camera');
   for (const [field, n] of Object.entries(source)) {
@@ -34,13 +45,7 @@ function prepare(plan, view, world) {
   if (!Number.isFinite(fps) || fps <= 0 || fps > 240 || !integer(neighbors, 2, 6) || !integer(preroll, 0, 48))
     throw new RangeError('Transition review needs a frame rate up to 240, 2 to 6 frames per side, and up to 48 preroll frames');
   if (!Array.isArray(events) || !events.length || events.length > 24) throw new RangeError('Transition review needs 1 to 24 events');
-  if (!['entries','visible'].includes(paletteMode)) throw new RangeError('Transition paletteMode must be entries or visible');
-  const thresholds = { ...defaults };
-  for (const [key, value] of Object.entries(record(supplied, 'Transition thresholds'))) {
-    if (!Object.hasOwn(defaults, key) || !Number.isFinite(value) || value < 0 || value > 1)
-      throw new RangeError('Invalid transition threshold ' + key);
-    thresholds[key] = value;
-  }
+  const comparison = comparisonSettings(supplied,paletteMode);
   if (view.skyTime !== undefined && !Number.isFinite(view.skyTime)) throw new RangeError('Sky time must be finite');
   const base = camera({ yaw:world.cam.yaw, pitch:world.cam.pitch, target:world.cam.target, lensScale:1, ortho:false,
     ...Object.fromEntries(fields.filter(key => view[key] !== undefined).map(key => [key, view[key]])) }, 'Base');
@@ -64,7 +69,7 @@ function prepare(plan, view, world) {
     return { id, kind, at, skyTime, skyRate, outgoing:freeze(from),
       ...(kind === 'cut' && { incoming:freeze({ ...from, ...camera(incomingCamera, id + ' incoming') }) }) };
   });
-  return { rows, fps, neighbors, preroll, thresholds, paletteMode };
+  return { rows, fps, neighbors, preroll, ...comparison };
 }
 
 function delta(before, after, thresholds, paletteMode) {
@@ -284,4 +289,8 @@ function transitionReview(world, { plan = world.transitionReview, width = 160, h
       flagCount:events.reduce((sum,event) => sum+event.flagCount,0),events } };
 }
 
-module.exports = { transitionReview };
+function compareFrames(from, to, { thresholds, paletteMode }) {
+  return evidence(from,to,thresholds,paletteMode,'screen').result;
+}
+
+module.exports = { transitionReview, comparisonSettings, compareFrames };

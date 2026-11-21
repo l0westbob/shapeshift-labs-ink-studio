@@ -2,10 +2,10 @@
 // The sources are plain scripts (they are concatenated into a web page as they stand), so this file offers them three ways:
 //   files()   the library's source files, in the order they must be loaded
 //   bundle()  those files as one piece of text, to put in a page or in front of your own scripts
-//   load()    the same compiled for Node, with the demo dioramas: { makeBuilder, makeSculpt, KIT, SCENES, ... }
+//   load()    the prebuilt Node toolkit and demos, or a source build in a development checkout
 const fs = require('fs'),
   path = require('path'),
-  { randomUUID } = require('crypto');
+  { createHash, randomUUID } = require('crypto');
 const KIT_DIR = path.join(__dirname, 'src', 'kit'),
   read = f => fs.readFileSync(f, 'utf8').replace(/\nif \(typeof module[^\n]*\n?$/, '\n');
 /* where load() keeps its compiled bundle: dist/ in the package, or, when the package directory is read-only (an installed
@@ -33,12 +33,12 @@ function bundlePath(newest) {
 }
 const files = () =>
   [
-    'src/randomness.js', 'src/math-fields.js', 'src/typography-truetype.js', 'src/typography.js', 'src/frame-budget.js', 'src/target-inspection.js', 'src/drawing-primitives.js', 'src/view-annotations.js', 'src/frame-composite.js', 'src/ink-veil.js', 'src/textured-surface.js', 'src/sprite-surface.js', 'src/camera-atlas.js', 'src/sprite-cels.js', 'src/atlas-sprites.js', 'src/target-selectors.js', 'src/camera-lens.js', 'src/camera-impulses.js', 'src/camera-staging.js', 'src/splat-provenance.js',
-    'src/art-passes.js', 'src/art-direction.js', 'src/art-ink.js', 'src/art-effects.js', 'src/art-stability.js', 'src/stable-detail.js', 'src/edge-filter.js', 'src/material-pixel-style.js',
-    'src/color-space.js', 'src/paint-corrections.js', 'src/color-curves.js', 'src/color-lut.js', 'src/color-stack.js', 'src/pixel-look.js', 'src/palette-fields.js', 'src/palette-extract.js', 'src/palette-distributions.js', 'src/reflection-plane.js', 'src/airflow.js', 'src/wind-field.js', 'src/light-schedule.js', 'src/geometric-caustics.js', 'src/light-cookies.js', 'src/area-lights.js', 'src/emissive-finishes.js',
+    'src/stippling.js', 'src/splat-footprints.js', 'src/surface-brush.js', 'src/brushwork.js', 'src/screen-print.js', 'src/engraving.js', 'src/render-grid.js', 'src/randomness.js', 'src/fft.js', 'src/math-fields.js', 'src/typography-truetype.js', 'src/typography.js', 'src/frame-budget.js', 'src/target-inspection.js', 'src/drawing-primitives.js', 'src/palette-cycles.js', 'src/raster-schedule.js', 'src/texture-address.js', 'src/view-annotations.js', 'src/frame-composite.js', 'src/frame-bank.js', 'src/motion-smear.js', 'src/ink-veil.js', 'src/textured-surface.js', 'src/sprite-surface.js', 'src/camera-atlas.js', 'src/sprite-cels.js', 'src/atlas-sprites.js', 'src/target-selectors.js', 'src/camera-lens.js', 'src/camera-impulses.js', 'src/camera-staging.js', 'src/splat-provenance.js',
+    'src/art-passes.js', 'src/art-direction.js', 'src/art-ink.js', 'src/art-effects.js', 'src/art-stability.js', 'src/color-clusters.js', 'src/stable-detail.js', 'src/edge-filter.js', 'src/translucent-silhouettes.js', 'src/material-pixel-style.js', 'src/glitter-burst-cels.js', 'src/pixel-stamp-presets.js', 'src/pixel-stamps.js',
+    'src/color-space.js', 'src/paint-corrections.js', 'src/color-curves.js', 'src/color-lut.js', 'src/color-stack.js', 'src/pixel-look.js', 'src/palette-fields.js', 'src/palette-extract.js', 'src/palette-distributions.js', 'src/reflection-plane.js', 'src/reflection-detail.js', 'src/airflow.js', 'src/wind-field.js', 'src/light-schedule.js', 'src/geometric-caustics.js', 'src/light-cookies.js', 'src/area-lights.js', 'src/emissive-finishes.js',
     'src/route-visibility.js', 'src/sample-coverage.js', 'src/contribution-rules.js', 'src/sample-visibility.js', 'src/swept-disc.js', 'src/splat-order.js', 'src/cutaway.js', 'src/splat-codec.js', 'src/ripple-field.js',
-    'src/volume-field.js', 'src/field-bands.js', 'src/atmosphere-palette.js', 'src/geometry-density.js', 'src/volume-cutouts.js', 'src/cloud-recipes.js', 'src/cloud-detail.js', 'src/cloud-field.js', 'src/lightning.js', 'src/volume-light.js', 'src/celestial-tracks.js', 'src/sky-environment.js', 'src/environment-frame.js', 'src/weather-front.js', 'src/weather-binding.js', 'src/optical-materials.js', 'src/atmosphere-depth-bands.js', 'src/scene-optics.js', 'src/scene-exposure.js', 'src/splat-effects.js',
-    'src/look-inputs.js', 'src/render-effects.js', 'src/render-graph.js', 'src/render-stages.js', 'src/render-contract.js', 'src/effect-palettes.js', 'src/silhouette-protection.js', 'src/pass-quality.js', 'src/detail-budgets.js', 'src/shadow-art.js', 'src/reflection-probes.js', 'src/contact-shadows.js', 'src/bounce-probes.js', 'src/horizon-bands.js', 'src/surface-detail-kits.js', 'src/surface-look.js', 'src/material-controls.js', 'src/splat-frames.js', 'src/splat-relighting.js', 'src/sdf-assist.js', 'src/sculpt-sampling.js', 'src/builder.js', 'src/sculpt.js'
+    'src/volume-field.js', 'src/field-bands.js', 'src/atmosphere-palette.js', 'src/geometry-density.js', 'src/volume-cutouts.js', 'src/cloud-recipes.js', 'src/cloud-detail.js', 'src/cloud-field.js', 'src/lightning.js', 'src/volume-light.js', 'src/celestial-tracks.js', 'src/sky-environment.js', 'src/environment-frame.js', 'src/weather-front.js', 'src/material-history.js', 'src/weather-binding.js', 'src/optical-materials.js', 'src/atmosphere-depth-bands.js', 'src/scene-optics.js', 'src/scene-exposure.js', 'src/splat-effects.js',
+    'src/look-inputs.js', 'src/render-effects.js', 'src/render-graph.js', 'src/render-stages.js', 'src/render-contract.js', 'src/programmable-exposure.js', 'src/effect-palettes.js', 'src/silhouette-protection.js', 'src/pass-quality.js', 'src/detail-budgets.js', 'src/shadow-art.js', 'src/shot-lighting.js', 'src/reflection-probes.js', 'src/contact-shadows.js', 'src/bounce-probes.js', 'src/horizon-bands.js', 'src/surface-detail-kits.js', 'src/surface-look.js', 'src/material-controls.js', 'src/splat-frames.js', 'src/splat-relighting.js', 'src/sdf-assist.js', 'src/sculpt-sampling.js', 'src/builder.js', 'src/sculpt.js'
   ]
     .map(f => path.join(__dirname, f))
     .concat(
@@ -51,17 +51,53 @@ const files = () =>
 const demoFiles = () => [path.join(__dirname, 'demos', 'labscenes.js')];
 // the names the bundle defines at top level (add them to your own module.exports)
 const EXPORTS =
-  'Typography, Randomness, MathFields, MaterialControls, CameraLens, CameraImpulses, makeBuilder, makeSculpt, basis, flame, motes, pondMat, lilies, courses, PALETTES, PAL_HEX, KIT, FrameBudget, InkVeil, TexturedSurface, SpriteSurface, TargetSelectors, SplatProvenance, ColorSpace, PaintCorrections, ColorCurves, ColorLUT, ColorStack, PixelLook, PaletteFields, LookInputs, RenderStages, ContributionRules, SurfaceDetailKits, SurfaceLook, SceneOptics, ReflectionProbes, SceneExposure, SkyEnvironment, AtmospherePalette, EnvironmentFrame, CelestialTracks, CloudField, Lightning, VOX, SplatEffects, ArtPasses, ArtDirection, ArtInk, EffectPalettes, SilhouetteProtection, DetailBudgets, ContactShadows, BounceProbes, LightCookies, AreaLights, EmissiveFinishes, HorizonBands, ArtStability, StableDetail, EdgeFilter, ArtEffects, VolumeField, VolumeLight';
+  'Typography, Stippling, ScreenPrint, Engraving, SurfaceBrush, SplatFootprints, RenderGrid, Randomness, MathFields, MaterialControls, CameraLens, CameraImpulses, makeBuilder, makeSculpt, basis, flame, motes, pondMat, lilies, courses, PALETTES, PAL_HEX, KIT, FrameBudget, InkVeil, TexturedSurface, SpriteSurface, TargetSelectors, SplatProvenance, ColorSpace, PaintCorrections, ColorCurves, ColorLUT, ColorStack, PixelLook, PaletteFields, LookInputs, RenderStages, ContributionRules, SurfaceDetailKits, SurfaceLook, SceneOptics, ReflectionProbes, SceneExposure, SkyEnvironment, AtmospherePalette, EnvironmentFrame, CelestialTracks, CloudField, Lightning, VOX, SplatEffects, ArtPasses, ArtDirection, ArtInk, EffectPalettes, SilhouetteProtection, DetailBudgets, ContactShadows, BounceProbes, LightCookies, AreaLights, EmissiveFinishes, HorizonBands, ArtStability, ColorClusters, StableDetail, EdgeFilter, ArtEffects, VolumeField, VolumeLight';
+const prebuiltNode = path.join(__dirname, 'dist', 'ink-studio.node.cjs');
+const playbackSource = path.join(__dirname, 'src', 'scene-replay.js');
+const playbackExports = 'mountSceneReplay, sampleReplayFrame, validateSceneReplay';
+
+function bundle({ format = 'script', profile = 'development' } = {}) {
+  if (!['script', 'module', 'commonjs'].includes(format)) throw Error('Ink bundle format must be script, module or commonjs');
+  if (profile === 'playback') {
+    const source = read(playbackSource);
+    if (format === 'module') return source + '\nexport { ' + playbackExports + ' };\n';
+    if (format === 'commonjs') return source + '\nmodule.exports = { ' + playbackExports + ' };\n';
+    return 'const InkScenePlayer = (() => {\n' + source + '\nreturn { ' + playbackExports + ' };\n})();\n';
+  }
+  if (profile !== 'development') throw Error('Ink bundle profile must be development or playback');
+  const sources = files().map(read).join('\n');
+  if (format === 'module') return sources + '\nexport { ' + EXPORTS + ' };\n';
+  if (format === 'commonjs')
+    return sources + '\nconst SCENES = [];\n' + demoFiles().map(read).join('\n') +
+      '\nmodule.exports = { SCENES, ' + EXPORTS + ' };\n';
+  return sources;
+}
+
+function nodeBundlePath() {
+  if (process.env.INK_STUDIO_DEVELOPMENT !== '1' && fs.existsSync(prebuiltNode)) return prebuiltNode;
+  const newest = Math.max(...files().concat(demoFiles(), [__filename]).map(f => fs.statSync(f).mtimeMs));
+  /* dist/ in the package, or the user's own cache folder when the package directory is read-only (see bundlePath) */
+  const out = bundlePath(newest);
+  if ((fs.statSync(out, { throwIfNoEntry: false })?.mtimeMs ?? -1) < newest) {
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    // Parallel consumers may compile together. Publish only complete bundles.
+    const temporary = out + '.' + randomUUID() + '.tmp';
+    try {
+      fs.writeFileSync(temporary, bundle({ format: 'commonjs' }));
+      fs.renameSync(temporary, out);
+    } finally {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    }
+  }
+  return out;
+}
+
 module.exports = {
   files,
   demoFiles,
   EXPORTS,
   version: require('./package.json').version,
-  bundle: ({ format = 'script' } = {}) => {
-    if (format !== 'script' && format !== 'module') throw Error('Ink bundle format must be script or module');
-    const sources = files().map(read).join('\n');
-    return format === 'module' ? sources + '\nexport { ' + EXPORTS + ' };\n' : sources;
-  },
+  bundle,
   // the seven built-in demo dioramas. They push onto an array called SCENES, which must already exist
   demos: () => demoFiles().map(read).join('\n'),
   // refuse-to-build check: code written after a // comment on the same line never runs. Returns the offending lines
@@ -127,7 +163,19 @@ module.exports = {
   exportGlb: require('./cli/export-glb.js'),
   ...require('./cli/gltf-asset.js'),
   render: require('./cli/render.js').render,
-  ...require('./cli/graph-project.js'),
+  createGraphProject: require('./cli/graph-project.js').createGraphProject,
+  createGraphWorkers: require('./cli/graph-workers.js').createGraphWorkers,
+  readGraphProject: require('./cli/graph-project.js').readGraphProject,
+  findGraphGroupUsers: require('./cli/graph-groups.js').findGraphGroupUsers,
+  diffGraphs: require('./cli/graph-diff.js').diffGraphs,
+  listGraphNodes: require('./cli/graph-catalog.js').listGraphNodes,
+  describeGraphNode: require('./cli/graph-catalog.js').describeGraphNode,
+  createTake: require('./cli/take.js').createTake,
+  readTake: require('./cli/take.js').readTake,
+  ...require('./cli/graph-host.js'),
+  readWav: require('./cli/wav.js').read,
+  decodeWav: require('./cli/wav.js').decode,
+  encodeWav: require('./cli/wav.js').encode,
   ...require('./cli/graph-render.js'),
   paletteUsage: require('./cli/palette-usage.js').paletteUsage,
   reviewRampShot: require('./cli/ramp-review.js').reviewRampShot,
@@ -137,16 +185,22 @@ module.exports = {
   inspectPalettePixel: require('./cli/palette-pixel.js').inspectPalettePixel,
   reviewPaletteShimmer: require('./cli/palette-shimmer.js').reviewPaletteShimmer,
   reviewSubjectReadability: require('./cli/readability-review.js').reviewSubjectReadability,
+  reviewShadowReadability: require('./cli/shadow-readability.js').reviewShadowReadability,
   reviewPaletteWeather: require('./cli/palette-weather.js').reviewPaletteWeather,
   reviewPaletteStages: require('./cli/palette-stages.js').reviewPaletteStages,
   compareShotPalettes: require('./cli/palette-compare.js').compareShotPalettes,
   checkPaletteShot: require('./cli/palette-checks.js').checkPaletteShot,
+  approveShot: require('./cli/shot-approval.js').approveShot,
   exportLayers: require('./cli/export-layers.js').exportLayers,
   exportScene: require('./cli/scene-export.js').exportScene,
+  ...require('./cli/scene-audio.js'),
   readSceneReplay: require('./cli/scene-replay.js').readSceneReplay,
   sampleSceneReplay: require('./cli/scene-replay.js').sampleSceneReplay,
   writeSceneEmbed: require('./cli/scene-replay.js').writeSceneEmbed,
-  ...require('./cli/project-bundle.js'),
+  packProject: require('./cli/project-bundle.js').packProject,
+  readProjectBundle: require('./cli/project-bundle.js').readProjectBundle,
+  writeProjectBundle: require('./cli/project-bundle.js').writeProjectBundle,
+  unpackProject: require('./cli/project-bundle.js').unpackProject,
   describeRenderFrame: (world, frame) => require('./src/render-contract.js').describe(world, frame),
   createCameraAtlas(options) {
     return module.exports.load().KIT.cameraAtlas.raster(options, (world, frame) => {
@@ -186,29 +240,10 @@ module.exports = {
   },
   createSimulationWorkers: require('./src/simulation-worker-pool.js'),
   openCheckpointStore: require('./src/simulation-checkpoint-store.js').openCheckpointStore,
-  load() {
-    const srcs = files().concat(demoFiles()),
-      newest = Math.max(...srcs.map(f => fs.statSync(f).mtimeMs)),
-      out = bundlePath(newest);
-    if (!fs.existsSync(out) || fs.statSync(out).mtimeMs < newest) {
-      fs.mkdirSync(path.dirname(out), { recursive: true });
-      // Parallel consumers may compile together. Publish only complete bundles.
-      const temporary = out + '.' + randomUUID() + '.tmp';
-      try {
-        fs.writeFileSync(
-          temporary,
-          module.exports.bundle() +
-            '\nconst SCENES = [];\n' +
-            module.exports.demos() +
-            '\nmodule.exports = { SCENES, ' +
-            EXPORTS +
-            ' };\n'
-        );
-        fs.renameSync(temporary, out);
-      } finally {
-        if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-      }
-    }
-    return require(out);
-  }
+  nodeBundlePath,
+  toolkitBuildHash(kit) {
+    const file = nodeBundlePath();
+    if (require.cache[file]?.exports === kit) return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  },
+  load() { return require(nodeBundlePath()); }
 };

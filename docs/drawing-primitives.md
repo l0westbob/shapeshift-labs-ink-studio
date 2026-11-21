@@ -19,4 +19,31 @@ Stroke widths default to output pixels. Set `widthUnits: "world"` on a world pri
 
 A calibrated screen scale bar uses `lengthUnits: "world"` and a world XYZ `reference`. Its anchor stays in screen pixels and its length reports world units at the reference depth. In perspective views, this measurement applies at that depth. With an orthographic camera, it applies across the view.
 
+## Drawing falloff
+
+Use `falloff: { from: [x0,y0], to: [x1,y1] }` for a directional fade,
+or `{ type: "radial", center: [x,y], radii: [inner,outer] }` for a circular fade.
+Both use output-pixel coordinates, including when applied to projected world geometry.
+`opacity: [1,0]` and `curve: "smooth"` are the defaults. Reverse the opacity
+pair to reveal the mark along the same direction. Set `curve: "linear"` for
+a constant rate between the two endpoints. The fade multiplies the ink alpha.
+
+On polygons use `fillFalloff` and `strokeFalloff` to control the two
+independently. On grids use `uFalloff` and `vFalloff` for strokes parallel
+to either axis. Set an override to `false` to remove the shared fade from
+that part. A rectangle, path, arrow, axes or scale bar can use the shared
+`falloff`. Standalone `drawing2d.render` also applies the polygon options to
+ellipses, rounded rectangles and filled paths. In that tool, a command's
+`translate` offset moves the fade anchors with the shape.
+
 Use `--composite <file.json>` with the CLI render commands or `sim render` to supply a drawing definition. Scene-authored settings use `finish.look.composite` in dioramas and `visual.look.composite` in simulation worlds. [Mixed-resolution compositing](mixed-resolution.md) · [Editable render graph](render-graph.md)
+
+[Ray fans](drawing-ray-fan.md) and [registration grids](drawing-registration-grid.md)
+can use the same drawing falloff. The [drawing studies](../examples/drawing-falloff-studies.cjs)
+show the three controls independently and in one composition.
+
+```sh
+node examples/drawing-falloff-studies.cjs drawing-studies
+```
+
+Add `--frames` for 84 evenly spaced frames of the looping combined study.

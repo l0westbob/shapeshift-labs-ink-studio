@@ -1,4 +1,9 @@
 const FrameComposite = require('../src/frame-composite.js');
+const { passImages } = require('./programmable-exposure.js');
+const MotionSmear = require('../src/motion-smear.js');
+const FrameBank = require('../src/frame-bank.js');
+const RasterSchedule = require('../src/raster-schedule.js');
+const TextureAddress = require('../src/texture-address.js');
 const {
   cube,
   selection,
@@ -7,13 +12,38 @@ const {
   feedbackMotion,
   volumeCoverage,
   rowTable,
+  scheduleTable,
+  indexedSchedule,
+  addressRaster,
   resources,
   ownerGroups,
+  motionRaster,
   effects
 } = require('../src/render-graph.js');
 const wrap = (n, size) => n - Math.floor(n / size) * size;
 
-function runGraph(plan, frame, world, time, text, camera, resolve, options) {
+function smearFrame(node, work, input, field, refresh, output, weightAt, memory, w, h) {
+  const { width: W, height: H } = work;
+  const elapsed = memory.sampleElapsed;
+  const decay = elapsed > 0 ? 2 ** (-elapsed / node.halfLife) : 0;
+  const donor = [0, 0], color = new Float64Array(4), filter = node.budget.filter;
+  const locate = MotionSmear.address(node, { width: w, height: h, elapsed, field, raw: Boolean(node.motion), refresh });
+  let stamp = memory.value;
+  if (memory.capture) {
+    stamp = MotionSmear.write(input, stamp, { w, h, width: W, height: H, filter, decay, locate });
+    memory.save(stamp);
+  }
+  if (!decay || !node.opacity) return;
+  const retained = { data: stamp, w: W, h: H, filter };
+  for (let y = .5, q = 0; y < h; y++) for (let x = .5; x < w; x++, q += 4) {
+    const weight = weightAt(x, y) * node.opacity;
+    if (!weight || !locate(x, y, donor)) continue;
+    FrameComposite.sample(retained, x * W / w, y * H / h, color);
+    for (let c = 0; c < 4; c++) output[q + c] = Math.round(input[q + c] * (1 - weight) + color[c] * weight);
+  }
+}
+
+function runGraph(plan, frame, world, time, text, camera, resolve, options, procedural) {
   const { w, h, passes } = frame;
   const layout = resources(plan, w, h),
     groups = plan.passes.some(n => n.effect) && ownerGroups(world);
@@ -50,7 +80,8 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
     const input = outputs.get(node.input);
     const maskPass = node.type === 'mask';
     let output;
-    if (!node.enabled) output = maskPass ? new Uint8Array(w * h) : input;
+    if (options[passImages]?.has(node.id)) output = options[passImages].get(node.id);
+    else if (!node.enabled) output = maskPass ? new Uint8Array(w * h) : input;
     else {
       const rows = selected(node.select),
         mask = outputs.get(node.mask),
@@ -58,10 +89,13 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
       const table = node.type === 'grade' && cube(node);
       const feedback = node.type === 'feedback';
       const memory = node.type === 'history' || feedback ? openHistory(node) : null;
+      const age = node.type === 'frameAge' && openHistory(node);
+      const smear = node.type === 'motionSmear';
       const work = layout.passes[index];
       const held = memory && (memory.capture ? new Uint8Array(work.width * work.height * 4) : memory.value);
       const raster =
-        node.layer && (!feedback || memory.capture) && layer(node, w, h, world, time, text, camera, resolve);
+        node.layer && (!feedback || memory.capture) &&
+        layer(node, w, h, world, time, text, camera, resolve, undefined, options.renderGraphInputs, procedural?.raster);
       const oldSignal = feedback &&
         memory.capture &&
         memory.decay > 0 && { data: memory.value, w, h, filter: node.filter };
@@ -69,10 +103,59 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
       output = maskPass ? new Uint8Array(w * h) : node.isolated ? new Uint8Array(w * h * 4) : input.slice();
       const { rect, feather, opacity, depthThreshold } = node;
       const at = (x, y) => nativeIndex(x, y, Math.floor(y) * w + Math.floor(x));
+      const chosenAt = (x, y) => !rows || rows[owner?.[at(x, y)] ?? 0] !== 0;
       const weightAt = (x, y) =>
-        (rows ? Number(rows[owner?.[at(x, y)] ?? 0] !== 0) : 1) *
+        Number(chosenAt(x, y)) *
         (mask ? mask[Math.floor(y) * w + Math.floor(x)] / 255 : 1) *
         effects.depthWeight(node.depth, depth?.[at(x, y)]);
+      if (smear) {
+        const field = node.motion ? motionRaster(node, options.renderGraphInputs, w, h) : outputs.get(node.field);
+        smearFrame(node, work, input, field, outputs.get(node.refresh), output, weightAt, openHistory(node), w, h);
+      }
+      if (node.bank) {
+        const bank = openHistory(node);
+        const { width: W, height: H } = work;
+        const stamp = bank.capture ? FrameBank.write(bank, source, bank.value, w, h, W, H, name => outputs.get(name)) : bank.value;
+        bank.save(stamp);
+        const retained = { data: stamp, w: W, h: H, filter: node.budget.filter };
+        for (let y = .5, p = 0; y < h; y++) for (let x = .5; x < w; x++, p += 4) {
+          const weight = weightAt(x, y) * opacity;
+          if (!weight) continue;
+          FrameComposite.sample(retained, x * W / w, y * H / h, color);
+          for (let c = 0; c < 4; c++) output[p + c] = Math.round(input[p + c] * (1 - weight) + color[c] * weight);
+        }
+      }
+      if (age) {
+        const { width: W, height: H } = work;
+        if (age.capture) {
+          const stamp = age.spare ?? new Uint8Array(W * H * 4);
+          for (let j = 0; j < H; j++)
+            for (let i = 0; i < W; i++) {
+              const x = ((i + 0.5) * w) / W,
+                y = ((j + 0.5) * h) / H,
+                from = (Math.floor(y) * w + Math.floor(x)) * 4,
+                to = (j * W + i) * 4,
+                chosen = chosenAt(x, y);
+              for (let c = 0; c < 4; c++) stamp[to + c] = chosen ? source[from + c] : 0;
+            }
+          age.save(stamp);
+        }
+        for (const region of node.regions) {
+          const stamp = age.sample(region);
+          if (!stamp) continue;
+          const regionMask = outputs.get(region.mask);
+          const raster = { data: stamp, w: W, h: H, filter: node.budget.filter };
+          for (let y = 0; y < h; y++)
+            for (let x = 0; x < w; x++) {
+              const p = y * w + x, q = p * 4;
+              const weight = weightAt(x + 0.5, y + 0.5) * (regionMask ? regionMask[p] / 255 : 1) * opacity;
+              if (!weight) continue;
+              FrameComposite.sample(raster, ((x + 0.5) * W) / w, ((y + 0.5) * H) / h, color);
+              if (rows && color[3] === 0) continue;
+              for (let c = 0; c < 4; c++) output[q + c] = Math.round(output[q + c] * (1 - weight) + color[c] * weight);
+            }
+        }
+      }
       if (node.effect) {
         output = effects.render(node, input, w, h, work, {
           time,
@@ -162,10 +245,15 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
 
       const line = node.line ?? (node.axis === 'x' ? w : h) * 0.5;
       const isReflection = node.type === 'reflection';
-      const scanlines = rowTable(node.rows, w, h, time);
+      const scanlines = rowTable(node.rows, w, h, time, node.rowEdits);
+      const packet = node.schedule && scheduleTable(node.schedule, w, h, time);
+      const scheduled = packet && RasterSchedule.sampler(packet, node.indices === undefined ? { w, h, data: source } :
+        indexedSchedule(node, options.renderGraphInputs, packet), w, h, node.schedule.wrap);
+      const addresses = node.address && addressRaster(node, options.renderGraphInputs, w, h);
+      const readAddress = addresses && TextureAddress.sampler(source, w, h, node.address);
       const theta = node.type === 'distortion' ? 2 * Math.PI * ((node.phase + time * node.rate) % 1) : 0;
       const frequency = (2 * Math.PI) / node.period;
-      if (!node.effect && !budgetedMemory)
+      if (!node.effect && !budgetedMemory && !age && !smear && !node.bank)
         for (let y = 0.5, p = 0; y < h; y++)
           for (let x = 0.5; x < w; x++, p++) {
             const native = nativeIndex(x, y, p);
@@ -173,6 +261,8 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
             let weight = (chosen ? (mask ? mask[p] / 255 : 1) : 0) * effects.depthWeight(node.depth, depth?.[native]);
             const q = p * 4;
             if (maskPass) {
+              if (raster && weight)
+                weight *= FrameComposite.samplePlaced(raster, x, y, color) ? color[3] / 255 : 0;
               if (node.volume && weight) {
                 const z = depth?.[native];
                 const u = ((native % passes.w) + 0.5) / passes.w,
@@ -263,6 +353,17 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
               table.sample(rgb, graded);
               for (let c = 0; c < 3; c++)
                 output[q + c] = Math.round(input[q + c] * (1 - weight) + graded[c] * alpha * weight);
+            } else if (scheduled || readAddress) {
+              if (scheduled) scheduled(Math.floor(x), Math.floor(y), color);
+              else {
+                const coverage = addresses[q + 2];
+                if (coverage) readAddress(addresses[q], addresses[q + 1], color);
+                else color.fill(0);
+                for (let c = 0; c < 4; c++) color[c] *= coverage;
+              }
+              if (node.blend === 'over') FrameComposite.blend(output, q, color, weight, false);
+              else for (let c = 0; c < 4; c++)
+                output[q + c] = Math.round(input[q + c] * (1 - weight) + color[c] * weight);
             } else if (node.type === 'composite') {
               if (node.layer && !raster) continue;
               if (raster) {
@@ -285,8 +386,15 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
               } else {
                 if (scanlines) {
                   row = Math.floor(y) * 8;
+                  const address = scanlines[row + 7];
+                  if (address < 0) {
+                    if (node.blend !== 'over')
+                      for (let c = 0; c < 4; c++) output[q + c] = Math.round(input[q + c] * (1 - weight));
+                    continue;
+                  }
+                  if (address > 0) Y = address - .5;
                   X = (x - w * 0.5) * scanlines[row + 2] + w * 0.5 + scanlines[row];
-                  Y = (y - h * 0.5) * scanlines[row + 3] + h * 0.5 + scanlines[row + 1];
+                  Y = (Y - h * 0.5) * scanlines[row + 3] + h * 0.5 + scanlines[row + 1];
                 }
                 X += node.offset[0] + node.amplitude[0] * Math.sin(y * frequency + theta);
                 Y += node.offset[1] + node.amplitude[1] * Math.sin(x * frequency + theta);
@@ -323,6 +431,13 @@ function runGraph(plan, frame, world, time, text, camera, resolve, options) {
     outputs.set(node.id, output);
     for (const dependency of node.dependencies) if (plan.lastUse.get(dependency) === index) outputs.delete(dependency);
   }
-  return FrameComposite.straight(outputs.get(plan.output), w, h, frame.alpha);
+  const result = FrameComposite.straight(outputs.get(plan.output), w, h, frame.alpha);
+  if (plan.captures?.size) result.renderGraphPasses = Object.fromEntries([...plan.captures].map(([id, kind]) => {
+    const data = outputs.get(id);
+    const raster = kind === 'mask' ? { width: w, height: h, channels: 1, data: data.slice() } :
+      procedural.sceneGraph.rasterFrame(FrameComposite.straight(data, w, h, true));
+    return [id, { kind, ...raster }];
+  }));
+  return result;
 }
 module.exports = runGraph;

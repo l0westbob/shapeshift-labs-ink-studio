@@ -88,11 +88,17 @@ const AtlasSprites = (() => {
     const { metadata:m,images }=source??{};
     const { width,height,scenery:painted,frames=painted===undefined?undefined:[{rect:{x:0,y:0,width,height}}],
       encodings={},normalSpace=typeof encodings.normal==='string'?'asset':'view',
-      emissionMode=typeof encodings.emission==='string'?'baked':'add', depthFormat='rgb24' }=m??{};
+      emissionMode=typeof encodings.emission==='string'?'baked':'add', depthFormat='rgb24',outputPalette }=m??{};
     if (!integer(width,1,8192)||!integer(height,1,8192)||!Array.isArray(frames)||!frames.length||frames.length>32768)
       throw new RangeError('Sprite atlas needs valid dimensions and view frames');
     if (!['view','asset'].includes(normalSpace)||!['baked','add'].includes(emissionMode)||!['rgb24','gray'].includes(depthFormat))
       throw new RangeError('Invalid sprite atlas map encoding');
+    if (outputPalette!==undefined && (!Array.isArray(outputPalette) || !outputPalette.length || outputPalette.length>64 ||
+        !Array.from(outputPalette).every(color=>integer(color,0,0xffffff))))
+      throw new RangeError('Sprite atlas output palettes need 1 to 64 packed RGB swatches');
+    const swatches=outputPalette && Object.freeze(outputPalette.map(color=>Object.freeze([
+      (color>>16)/255,(color>>8&255)/255,(color&255)/255
+    ])));
     const names=['color','depth','normal','emission','silhouette'];
     const pixels=width*height*names.filter(name=>images?.[name]).length;
     if (pixels>32e6)
@@ -200,17 +206,22 @@ const AtlasSprites = (() => {
     const editedDepth=edits&&Array.from(edits.edited.values()).some(edit=>edit.maps.depth||edit.extensionDepth!==undefined);
     return Object.freeze({[assetBrand]:true,select,sample,effect,playback:mode=>cels.playback(timing,fps,mode),
       snapshot:()=>({metadata:structuredClone(metadata),images:structuredClone(sourceMaps)}),
-      normalSpace,emissionMode,hasDepth:Boolean(maps.depth||scenery||editedDepth),sceneryPlanes:scenery?.planes});
+      normalSpace,emissionMode,swatches,hasDepth:Boolean(maps.depth||scenery||editedDepth),sceneryPlanes:scenery?.planes});
   }
 
   function place(value) {
     if (value?.[placedBrand]) return value;
-    const { atlas,at,mode,yaw=0,scale=1,opacity=1,frame,playback,depth=true,lighting=true,emission=true,objectId,materialId }=value??{};
+    const { atlas,at,mode,yaw=0,scale=1,opacity=1,frame,playback,depth=true,lighting=true,emission=true,
+      nativePixels=false,pixelOffset,visibleAt,objectId,materialId }=value??{};
     const asset=compile(atlas), placementMode=mode===undefined?(asset.sceneryPlanes?'scenery':'impostor'):mode;
     if (!['card','impostor','scenery'].includes(placementMode)||placementMode==='scenery'&&!asset.sceneryPlanes||!Number.isFinite(opacity)||opacity<0||opacity>1||
-        [depth,lighting,emission].some(value=>typeof value!=='boolean')||
+        [depth,lighting,emission,nativePixels].some(value=>typeof value!=='boolean')||
+        (visibleAt!==undefined&&typeof visibleAt!=='function')||
+        (pixelOffset!==undefined&&(!nativePixels||typeof pixelOffset!=='function'))||
         (frame!==undefined&&(playback!==undefined||typeof frame!=='function'&&!integer(frame,0,32767))))
       throw new RangeError('Invalid sprite atlas placement');
+    if (nativePixels && (placementMode !== 'card' || scale !== 1))
+      throw new RangeError('Native-pixel placement needs a camera-facing card at scale 1');
     if (objectId!==undefined || materialId!==undefined) {
       const selectors = typeof TargetSelectors === 'undefined' ? require('./target-selectors.js') : TargetSelectors;
       if (objectId!==undefined) selectors.prepare({object:objectId});
@@ -219,7 +230,9 @@ const AtlasSprites = (() => {
     const anchor=typeof at==='function'?at:Object.freeze(vector(at,'Sprite atlas anchor'));
     return Object.freeze({[placedBrand]:true, atlas:asset, at:anchor, mode:placementMode,
       yaw:finite(yaw,'Sprite placement yaw'), scale:positive(scale,'Sprite placement scale'),
-      opacity,frame,depth,lighting,emission,...(playback!==undefined&&{frameAt:asset.playback(playback)}),...(objectId!==undefined&&{objectId}),...(materialId!==undefined&&{materialId}) });
+      opacity,frame,depth,lighting,emission,...(nativePixels&&{nativePixels}),...(pixelOffset&&{pixelOffset}),
+      ...(visibleAt&&{visibleAt}),...(playback!==undefined&&{frameAt:asset.playback(playback)}),
+      ...(objectId!==undefined&&{objectId}),...(materialId!==undefined&&{materialId}) });
   }
   function placements(authored,override) {
     const source=override===true?authored:override??authored;

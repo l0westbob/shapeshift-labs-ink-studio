@@ -1,11 +1,12 @@
 /* Box-projected directional captures and roughness filtering for local reflections. */
 const ReflectionProbes = (() => {
-  let selectors, shadows, colors;
-  try { selectors = TargetSelectors; shadows = ShadowArt; colors = ColorSpace; }
+  let selectors, shadows, colors, detail;
+  try { selectors = TargetSelectors; shadows = ShadowArt; colors = ColorSpace; detail = ReflectionDetail; }
   catch {
     selectors = require('./target-selectors.js');
     shadows = require('./shadow-art.js');
     colors = require('./color-space.js');
+    detail = require('./reflection-detail.js');
   }
   const centerTap = [[0, 1]];
   const linear = colors.prepare('srgb', 'srgb-linear');
@@ -124,6 +125,13 @@ const ReflectionProbes = (() => {
     }
   }
 
+  function block(level, direction, gain, out) {
+    const { size, faces } = level;
+    const [face,x,y] = coordinates(direction,size);
+    const offset = (clamp(Math.round(y),0,size-1)*size+clamp(Math.round(x),0,size-1))*4;
+    for (let c=0;c<4;c++) out[c]+=faces[face][offset+c]*gain;
+  }
+
   function parallax(probe, point, ray) {
     if (!probe.bounds) return ray;
     const { min, max } = probe.bounds;
@@ -140,7 +148,7 @@ const ReflectionProbes = (() => {
     const byId = new Map(definitions.map(entry=>[entry.id,entry]));
     const filtered = [0,0,0,0], rgb = [0,0,0], sample = { rgb, coverage:0 };
     const taps = [[-1,.12],[-.5,.23],[0,.30],[.5,.23],[1,.12]];
-    function read(id, point, ray, roughness, axis) {
+    function read(id, point, ray, roughness, axis, captureDetail) {
       const probe=byId.get(id);
       if (!probe) return null;
       let influence=1;
@@ -161,10 +169,34 @@ const ReflectionProbes = (() => {
       const lod=Math.min(mip.length-1,Math.log2(1+(minor*minor+spread*.29)*probe.size*.65));
       const low=Math.floor(lod), high=Math.min(low+1,mip.length-1), fraction=lod-low;
       filtered.fill(0);
-      for(const [offset,weight] of spread && axis ? taps : centerTap) {
-        const direction=parallax(probe,point,offset ? ray.map((n,i)=>n+axis[i]*offset*spread) : ray);
-        bilinear(mip[low],direction,weight*(1-fraction),filtered);
-        if(fraction) bilinear(mip[high],direction,weight*fraction,filtered);
+      const tap = (direction, weight) => {
+        const sample=parallax(probe,point,direction);
+        bilinear(mip[low],sample,weight*(1-fraction),filtered);
+        if(fraction) bilinear(mip[high],sample,weight*fraction,filtered);
+      };
+      if (captureDetail) {
+        const {settings,depth,pixelAngle,axis:grain,sharp} = captureDetail;
+        const far = detail.weight(settings,depth), core = settings.core*(1-far), tail = (1-settings.core)*(1-far);
+        if (core) bilinear(mip[0],parallax(probe,point,sharp),core,filtered);
+        if (tail) {
+          const rayLength = Math.hypot(...ray);
+          const normal = ray.map(n=>n/rayLength), projection=dot(grain,normal);
+          let u = grain.map((n,i)=>n-projection*normal[i]);
+          if (Math.hypot(...u)<1e-8) u = cross(normal, Math.abs(normal[1])<.8 ? [0,1,0] : [1,0,0]);
+          const length=Math.hypot(...u);
+          u=u.map(n=>n/length);
+          const v=cross(normal,u);
+          detail.streak(Math.hypot(spread,settings.stretch[0]*pixelAngle),settings.stretch[1]*pixelAngle,tail,
+            (a,b,gain)=>tap(ray.map((n,i)=>n+u[i]*a+v[i]*b),gain));
+        }
+        if (far) {
+          const count=Math.min(mip.length-1,Math.log2(settings.cluster*Math.max(1,probe.size*.5*pixelAngle)));
+          const level=Math.floor(count), blend=count-level, direction=parallax(probe,point,sharp);
+          block(mip[level],direction,far*(1-blend),filtered);
+          if (blend) block(mip[level+1],direction,far*blend,filtered);
+        }
+      } else for (const [offset,weight] of spread && axis ? taps : centerTap) {
+        tap(offset ? ray.map((n,i)=>n+axis[i]*offset*spread) : ray,weight);
       }
       const alpha=filtered[3];
       if(alpha<=1e-6) return null;

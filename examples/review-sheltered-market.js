@@ -37,7 +37,7 @@ module.exports = ({KIT:K,makeBuilder,makeSculpt}) => {
       for (let i=0;i<17;i++) for (let j=0;j<12;j++) {
         const x=-4.8+i*.585+(j%2)*.093, z=-3.05+j*.567;
         if (x>pool.min[0]-.2 && x<pool.max[0]+.2 && z>pool.min[1]-.2 && z<pool.max[1]+.2) continue;
-        const paving=(i+3*j)%5===0 ? {r:[0,1,2,3,4]} : stone;
+        const paving={r:(i+3*j)%5===0 ? [0,1,2,3,4] : stone.r,materialId:'paving'};
         S.box([x,.003,z],[.287,.056,.282],paving,{res:.124,rd:.042,objectId:'aisle-paving'});
       }
       for (const x of [pool.min[0]-.05,pool.max[0]+.05])

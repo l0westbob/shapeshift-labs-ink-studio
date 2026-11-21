@@ -766,6 +766,7 @@
       r[j * 9 + 7] = d[q + 9];
       r[j * 9 + 8] = d[q + 10];
     }
+    if(W.splatFootprints?.frames)r.footprintFrames=Float32Array.from(Array.from(ids).flatMap(i=>i*6+6<=W.splatFootprints.frames.length?Array.from(W.splatFootprints.frames.subarray(i*6,i*6+6)):[0,0,0,0,0,0]));
     return r;
   };
   /* a splat's shape through a 3x3: J S J' (S kept as its six different numbers) */
@@ -798,6 +799,7 @@
     const d = W.data,
       rows = W.anim && W.anim.rows,
       shape = !o || o.shape !== false;
+    const frames=shape&&rest.footprintFrames&&W.splatFootprints?.frames?.slice();
     for (let j = 0; j < ids.length; j++) {
       const r = j * 9,
         q = ids[j] * 16,
@@ -806,9 +808,10 @@
       d[q] = n[0];
       d[q + 1] = n[1];
       d[q + 2] = n[2];
-      if (shape) carry(D.jac(map, p), rest, r, d, q);
+      if (shape) {const J=D.jac(map,p);carry(J,rest,r,d,q);if(frames)SplatFootprints.carryFrame(frames,ids[j]*6,rest.footprintFrames,j*6,J);}
       if (rows) rows[ids[j] >> 9] = 1;
     }
+    if(frames)SplatFootprints.setFrames(W,frames);
   };
 
   /* cut splats into bones. o.axis and o.slices: slabs across an axis; o.grid [nx, ny, nz]: boxes. A splat near the border of its slab or

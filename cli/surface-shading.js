@@ -18,7 +18,8 @@ function surfaceShading(world, options, camera) {
 
   function rigFrame(i) {
     const part = rig?.bid[i];
-    if (!part || rig.free?.[i] || !(projected(i) || bevel(i) || local(i) || thin(i))) return null;
+    if (!part || rig.free?.[i] || !(projected(i) || bevel(i) || local(i) || thin(i) ||
+        options.reflectionDetail!==false && planar(i) && materials[surfaceData[i*STRIDE]-1]?.captureDetail)) return null;
     if (!rigFrames.has(part)) {
       const { M } = require('../index.js').load().KIT;
       const matrix = rig.M.subarray(part * 12, part * 12 + 9);
@@ -121,8 +122,8 @@ function surfaceShading(world, options, camera) {
   }
 
   const sampleSky = sky && ((direction, out) => sky(direction, out, sample.worldPosition));
-  const sampleLocal = localReflection && ((layer, ray, axis) =>
-    localReflection(layer.probe, sample.worldPosition, ray, layer.roughness, axis));
+  const sampleLocal = localReflection && ((layer, ray, axis, detail) =>
+    localReflection(layer.probe, sample.worldPosition, ray, layer.roughness, axis, detail));
   function shade(i, x, y, z, centerX, centerY, centerZ, r, g, b, sx, sy, visit, reflected, paintedAlbedo, stagePaint) {
     const offset = i * STRIDE;
     const { position, normal, view } = sample;
@@ -133,7 +134,8 @@ function surfaceShading(world, options, camera) {
     const angle = rotation(i);
     const c = Math.cos(angle),
       s = Math.sin(angle);
-    const source = prepared.projected || prepared.bevelDistance || local(i) || prepared.thin ? rest : data;
+    const captureDetail = options.reflectionDetail!==false && prepared.captureDetail && (planar(i) || local(i));
+    const source = prepared.projected || prepared.bevelDistance || local(i) || prepared.thin || captureDetail ? rest : data;
     const frame = rigFrame(i);
     const ox = c * dx - s * dz, oy = y - centerY, oz = s * dx + c * dz;
     if (frame) {
@@ -147,6 +149,9 @@ function surfaceShading(world, options, camera) {
     sample.worldPosition[0] = x;
     sample.worldPosition[1] = y;
     sample.worldPosition[2] = z;
+    sample.reflectionDepth = captureDetail ? (eye[0]-x)*forward[0]+(eye[1]-y)*forward[1]+(eye[2]-z)*forward[2] : undefined;
+    sample.reflectionPixelAngle = captureDetail ? 1/(camera.pixelsPerUnit*
+      (camera.orthographic ? Math.max(.1,sample.reflectionDepth) : 1)) : undefined;
     sample.exposure = prepared.kitExposure ? kitExposure : undefined;
     if (prepared.settings.rainRipple) {
       const slope = camera.rain?.normal(prepared.settings.rainRipple, sample.worldPosition, footprint);
@@ -182,7 +187,7 @@ function surfaceShading(world, options, camera) {
     }
     sample.sky = environment(i) ? sampleSky : undefined;
     sample.localReflection = local(i) ? sampleLocal : undefined;
-    if (sample.sky || sample.localReflection || prepared.thin) {
+    if (sample.sky || sample.localReflection || prepared.thin || captureDetail) {
       sample.skyView[0] = vx;
       sample.skyView[1] = view[1];
       sample.skyView[2] = vz;
@@ -210,10 +215,14 @@ function surfaceShading(world, options, camera) {
     }
     sample.reflection =
       planar(i) && sx !== undefined
-        ? (layer, n, original) => {
+        ? (layer, n, original, detail) => {
+            if (detail && sample.skyNormal) {
+              const tilted = sample.skyNormal(n), flat = sample.skyNormal(original);
+              return reflection(layer,sx,sy,tilted[0]-flat[0],tilted[1]-flat[1],tilted[2]-flat[2],undefined,detail);
+            }
             const dx = n[0] - original[0],
               dz = n[2] - original[2];
-            return reflection(layer, sx, sy, c * dx + s * dz, n[1] - original[1], c * dz - s * dx);
+            return reflection(layer, sx, sy, c * dx + s * dz, n[1] - original[1], c * dz - s * dx, undefined, detail);
           }
         : undefined;
     sample.transmissionSun = prepared.thin ? {

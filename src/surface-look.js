@@ -7,17 +7,20 @@ const SurfaceLook = (() => {
   const effects = typeof SplatEffects === 'undefined' ? require('./splat-effects.js') : SplatEffects;
   const stages = typeof RenderStages === 'undefined' ? require('./render-stages.js') : RenderStages;
   const pixelLook = typeof PixelLook === 'undefined' ? require('./pixel-look.js') : PixelLook;
-  let curves, luts, stacks, colorSpace;
+  const history = typeof MaterialHistory === 'undefined' ? require('./material-history.js') : MaterialHistory;
+  let curves, luts, stacks, colorSpace, reflectionDetail;
   try {
     curves = ColorCurves;
     luts = ColorLUT;
     stacks = ColorStack;
     colorSpace = ColorSpace;
+    reflectionDetail = ReflectionDetail;
   } catch {
     curves = require('./color-curves.js');
     luts = require('./color-lut.js');
     stacks = require('./color-stack.js');
     colorSpace = require('./color-space.js');
+    reflectionDetail = require('./reflection-detail.js');
   }
   const STRIDE = 8; // binding ID (one-based), normal XYZ, visibility, optional tangent XYZ
   const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
@@ -215,11 +218,13 @@ const SurfaceLook = (() => {
     return mask.invert ? 1 - weight : weight;
   }
 
+  const weatherMasks = ['wetness','standingWater','snow','frost',...history.channels];
+  const weatherSignals = [...weatherMasks,'temperature','exposure'];
   function weatherMask(mask) {
     const { channel = 'wetness', low = 0, high = 1, invert = false } = mask;
-    if (!['wetness', 'standingWater', 'snow', 'frost'].includes(channel) || !Number.isFinite(low) || !Number.isFinite(high) ||
+    if (!weatherMasks.includes(channel) || !Number.isFinite(low) || !Number.isFinite(high) ||
         low < 0 || high <= low || typeof invert !== 'boolean')
-      throw new RangeError('Weather masks need wetness, standingWater, snow or frost and increasing nonnegative bounds');
+      throw new RangeError('Weather masks need a moisture or material history channel and increasing nonnegative bounds');
     return weather => {
       const value = weather?.[channel];
       if (!Number.isFinite(value)) return 0;
@@ -235,7 +240,7 @@ const SurfaceLook = (() => {
       if (!isRecord(source)) throw new TypeError('Surface signal ' + id + ' needs a source');
       const { type, channel, range = [0, 1], interpolation = 'smooth' } = source;
       if (['weather','time','light'].includes(type)) {
-        if (type === 'weather' && !['wetness', 'standingWater', 'snow', 'frost', 'temperature', 'exposure'].includes(channel))
+        if (type === 'weather' && !weatherSignals.includes(channel))
           throw new RangeError('Unknown weather channel on surface signal ' + id);
         if (Object.keys(source).some(key => !['type', 'range', 'interpolation', ...(type === 'weather' ? ['channel'] : [])].includes(key)) ||
             !Array.isArray(range) || range.length !== 2)
@@ -437,13 +442,27 @@ const SurfaceLook = (() => {
         const grain = q.t.map((value,i)=>along ? value*c+q.b[i]*s : q.b[i]*c-value*s);
         axis = tangent(q.reflectionTangent ? q.reflectionTangent(grain) : grain, ray);
       }
-      const reflected = q.localReflection(layer, ray, axis);
+      let captureDetail;
+      if (layer.detail && q.reflectionPixelAngle !== undefined) {
+        const n = q.skyNormal ? unit(q.skyNormal(q.geometricNormal), normal) : q.geometricNormal;
+        const facing = dot(n,view);
+        const tangent = reflectionDetail.axis(layer.detail,q.geometricNormal,q.n,q.geometricTangent);
+        const worldAxis = q.reflectionTangent ? q.reflectionTangent(tangent) : tangent;
+        captureDetail = {settings:layer.detail,depth:q.reflectionDepth,pixelAngle:q.reflectionPixelAngle,axis:worldAxis,
+          sharp:facing>0 ? n.map((value,i)=>2*facing*value-view[i]) : ray};
+      }
+      const reflected = q.localReflection(layer, ray, axis, captureDetail);
       if (!reflected) return 0;
       for (let i=0;i<3;i++) col[i]*=reflected.rgb[i];
       return reflected.coverage*fresnel(facing, layer.f0 ?? 0.04, layer.power ?? 5);
     },
     planarReflection(layer, q, col) {
-      const reflected = q.reflection?.(layer, q.n, q.geometricNormal);
+      let captureDetail;
+      if (layer.detail && q.reflectionDepth !== undefined) {
+        const tangent = reflectionDetail.axis(layer.detail,q.geometricNormal,q.n,q.geometricTangent);
+        captureDetail = {depth:q.reflectionDepth,axis:q.reflectionTangent ? q.reflectionTangent(tangent) : tangent};
+      }
+      const reflected = q.reflection?.(layer, q.n, q.geometricNormal, captureDetail);
       if (!reflected) return 0;
       for (let i = 0; i < 3; i++) col[i] *= reflected.rgb[i];
       return reflected.coverage * fresnel(q.nv, layer.f0 ?? 0.04, layer.power ?? 5);
@@ -704,6 +723,8 @@ const SurfaceLook = (() => {
         }
         const roughness = roughnessPair(layer.roughness);
         const local = layer.type === 'localReflection';
+        const capture = local || layer.type === 'planarReflection';
+        const captureDetail = capture && reflectionDetail.prepare(layer.detail);
         if (local && (typeof layer.probe !== 'string' || !layer.probe.trim() ||
           roughness.some(n=>n !== undefined && (n < 0 || n > 1)) ||
           (layer.f0 ?? .04) < 0 || (layer.f0 ?? .04) > 1 || (layer.power ?? 5) < 0))
@@ -718,6 +739,7 @@ const SurfaceLook = (() => {
           retainedMask,
           model: models[layer.type],
           lightingRamp,
+          ...(capture && {detail:captureDetail}),
           strength: clamp(layer.strength ?? 1),
           roughness: [roughness[0], roughness[1] ?? roughness[0]].map(v =>
             local ? v ?? 0.22 : positive(v, layer.type === 'glints' ? 0.085 : 0.22)
@@ -743,6 +765,7 @@ const SurfaceLook = (() => {
     const kitExposure = layers.some(layer=>layer.kit?.exposure);
     return {
       settings, normal, layers, driven, weather, thin, thinLocal, hasKits, kitExposure, paintsBase,
+      captureDetail: layers.some(layer=>(layer.type==='planarReflection'||layer.type==='localReflection') && layer.detail),
       needsDistance: layers.some(layer=>layer.type==='bevel' || layer.kit?.recipe==='crevice-moss' && layer.kit.crevices!=='joints'),
       finishBeforeFog: thin || driven || hasKits || paintsBase || layers.some(layer => layer.type === 'tint'), sun: unit(vector(lightDirection, AXES.y)),
       paletteConstraint: paletteConstraints && settings.paletteConstraint !== undefined
@@ -794,12 +817,14 @@ const SurfaceLook = (() => {
       footprint,
       seed,
       geometricNormal,
+      geometricTangent,
       sun,
       transmissionSun: sample.transmissionSun,
       transmissionLights: sample.transmissionLights,
       reflection: sample.reflection,
       localReflection: sample.localReflection,
       reflectionTangent: sample.reflectionTangent,
+      reflectionDepth:sample.reflectionDepth, reflectionPixelAngle:sample.reflectionPixelAngle,
       sky: sample.sky, skyOverlay: sample.skyOverlay, skyReflectionSource: sample.skyReflectionSource,
       skyNormal: sample.skyNormal, skyView: sample.skyView, skyAccess: sample.skyAccess ?? 1,
       nt: dot(n, half),

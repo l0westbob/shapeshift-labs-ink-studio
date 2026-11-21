@@ -38,7 +38,7 @@ function target(opt) {
   return {};
 }
 
-module.exports = function createCLI({kit,build,pose,dataScene,opt,renderOptions,sequenceHistory,inkOption,atmosphereEmittersOption,depthBandsOption,effectPalettesOption,stabilityOption,artDirectionOption,silhouetteOption,horizonOption,skyTransitionsOption,weatherTracksOption,skyOptions,cameraOptions,compositeOption,shot,shotReplay,shotRender}) {
+module.exports = function createCLI({kit,build,pose,dataScene,opt,renderOptions,sequenceHistory,inkOption,atmosphereEmittersOption,depthBandsOption,effectPalettesOption,stabilityOption,artDirectionOption,silhouetteOption,horizonOption,skyTransitionsOption,weatherTracksOption,skyOptions,cameraOptions,compositeOption,colorClustersOption,shot,shotReplay,shotRender}) {
   const W = kit.KIT.world, R = W.runtime;
   let workerPool;
   const args = () => opt.args ? parse(opt.args) : {};
@@ -606,6 +606,7 @@ module.exports = function createCLI({kit,build,pose,dataScene,opt,renderOptions,
           colorCurves:opt['color-curves']==='off'?false:undefined,
           colorLut:require('./lut.js').override(opt.lut),
           paletteConstraints:require('./palette-constraints.js').override(opt['palette-constraints']),
+          colorClusters:colorClustersOption?.(),
           water:opt.water==='off'?false:undefined, effectPalettes:effectPalettesOption?.(), stable:stabilityOption?.(), artDirection:artDirectionOption?.(), silhouetteProtection:silhouetteOption?.(),
           horizonBands:horizonOption?.(), skyTransitions:skyTransitionsOption?.(), weatherTracks:weatherTracksOption?.(),
           ...skyOptions?.(), ...cameraOptions?.(), composite:compositeOption?.(),

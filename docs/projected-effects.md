@@ -187,6 +187,9 @@ projected units before the layer's uniform `scale`. It defaults to `[1, 1]`.
 Use `wrap: true` to repeat the tile. A wrapping one-texel tile also works with
 an ordinary material mask to cycle a whole region.
 
+The same raster can use [hard brush strokes or held animation cels](pixel-stamps.md).
+Its painted texels can also gate a material finish or a selective ink line.
+
 ```json
 {
   "type": "projected",
@@ -202,9 +205,9 @@ an ordinary material mask to cycle a whole region.
 }
 ```
 
-- Each named cycle selects an ordered palette role or an explicit `slots`
-  list. It needs at least two distinct indices. Within one layer each index
-  can belong to one cycle.
+- Each named cycle selects an ordered palette role, an explicit `slots`
+  list, or an inclusive `range: [first, last]`. It needs at least two
+  distinct indices. Within one layer each index can belong to one cycle.
 - `period` is the time in seconds for a full rotation. Each step lasts
   `period / number of slots`. The default `direction` of `forward` selects
   the next swatch for each painted index. Use `reverse` to select the
@@ -218,6 +221,8 @@ an ordinary material mask to cycle a whole region.
   By default the projected layer contributes its exact swatches to palette
   resolution. As with other projected layers, strength, blending, fog and
   later grading can change the visible color.
+
+For flat indexed rasters or screen passes, use the [raster palette cycling controls](headless-authoring.md#cycle-an-indexed-palette).
 
 Use indexed rasters in the Node renderer and CLI, or through the shared
 surface sampler in browser hosts. The default WebGL renderer uses its

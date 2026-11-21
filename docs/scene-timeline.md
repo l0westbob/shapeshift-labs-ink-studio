@@ -7,6 +7,7 @@ Add `timeline` to a JSON diorama, an authored simulation world, or a scene built
 | `tracks` | `target` is a JSON Pointer or path array. Each key has `time`, `value`, and optional `ease`. |
 | `markers` | A unique `id`, a `time`, and an optional `label`. |
 | `audio` | A unique `id`, a `time`, and a `cue` resolved by the host. Optional `duration`, source `offset`, and `gain` default to zero, zero, and one. |
+| `cueTracks` | Named portable musical tracks or pulse recordings, with optional offsets and channel filters. [Audio cue routing](event-actions.md#route-audio-cue-tracks) |
 | `events` | A unique `id`, a `time`, a world event `kind`, and optional JSON object `detail`. |
 | `sequences` | A catalog of named reusable timelines with their own tracks, markers, audio, events, and clips. |
 | `clips` | A unique instance `id`, a `sequence`, and a start `time`. Optional `in` and `out` trim source seconds. Optional `duration` scales the retained range in the parent. |
@@ -14,6 +15,76 @@ Add `timeline` to a JSON diorama, an authored simulation world, or a scene built
 Keys hold their first and last values within the sequence. The easing on a key controls the interval after it. Supported easings are `smooth` (the default), `linear`, `step`, `in-sine`, `out-sine`, and `in-out-sine`. Angle channels interpolate by the shortest arc. Positive channels such as camera distance and pose scale interpolate geometrically. Boolean and string channels hold their values until the next key.
 
 Each clip maps track samples, cue ranges, and point events through the same trim and rate. Nested clips can reuse the same source under different instance IDs. Cue records carry the instance IDs in `path`. A clip overrides a parent track while its range is active. If sibling clips overlap on a target, the later-listed clip takes precedence. Point events at either trim boundary are included.
+
+Use [editable musical event tracks](graph-media.md#editable-musical-event-tracks) to place named markers and world events at detected or edited times in a soundtrack.
+
+## Beat, bar, and phrase timing
+
+Set `timeline.tempoMap` to place visual keys and cues on a musical grid.
+The defaults are 120 BPM, four beats per bar, four bars per phrase, and
+straight eighths. `origin` places beat zero in seconds. Each entry in
+`changes` starts at an increasing whole beat and can set a new
+`tempo` or `swing`. The beat count and elapsed time remain continuous.
+
+Use `swing` to set the fraction of a beat where its eighth-note midpoint
+lands. A value of 0.5 is straight timing. A ratio of 2/3 puts the
+offbeat two-thirds of the way through the beat. Whole beats remain fixed.
+Apply a signed `offset` in seconds to any musical address for an early
+or late hit. Tempo, swing, origin, fractional beats and offsets also accept
+exact `{ "numerator": n, "denominator": d }` values.
+
+```json
+{
+  "tempoMap": {
+    "tempo": 120,
+    "barsPerPhrase": 2,
+    "changes": [
+      { "beat": 8, "tempo": 150, "swing": { "numerator": 2, "denominator": 3 } }
+    ]
+  },
+  "tracks": [
+    { "target": "/camera/yaw", "keys": [
+      { "time": { "beat": 0 }, "value": 0 },
+      { "time": { "phrase": 1 }, "value": 0.6 },
+      { "time": { "bar": 2, "beat": 0.5, "offset": 0.09 }, "value": 0.8 }
+    ] }
+  ],
+  "markers": [{ "id": "chorus", "time": { "phrase": 1 } }]
+}
+```
+
+Beat, bar, and phrase addresses are zero-based. With only `beat`, it
+counts across the sequence. With `bar`, the beat is local to that bar.
+With `phrase`, the bar is local to the phrase. If a phrase address has
+no bar, the beat is local to the whole phrase. Each local address stays
+within its parent. A resolved timeline time must be nonnegative.
+
+Numeric seconds can appear alongside musical addresses. Musical addresses
+work on track keys, markers, audio and event starts, sequence endpoints,
+and clip starts and trim points. A nested sequence uses its own map or
+the root map on its local clock. Clip trims resolve on the source
+sequence's grid before the existing clip rate is applied. Explicit clip
+and audio durations and audio source offsets still use seconds.
+The timeline uses its existing easing between resolved key times.
+
+For procedural graphs, `music.clock` reports the current beat, bar,
+phrase, tempo, swing, and positions within the bar and phrase. It uses
+the graph clock or `options.time` and honors exact take frames.
+Use `music.resolve` to convert `items` with musical `time` addresses
+to seconds and feed them to `anim.keyframes` or
+[`audio.editEvents`](graph-media.md#editable-musical-event-tracks).
+Item order and other fields are preserved.
+
+From JavaScript, use `KIT.procedural.musicTiming.compile(map)` and
+call `sample(time)`, `timeAt(position)`, or `timecodeAt(position)`.
+The last method returns a portable exact timecode when its numerator
+and denominator fit safe JSON integers.
+
+[Browser demo](../examples/beat-phrase-timing.cjs)
+
+```sh
+node examples/beat-phrase-timing.cjs beat-phrase-timing.html
+```
 
 ## Dioramas
 

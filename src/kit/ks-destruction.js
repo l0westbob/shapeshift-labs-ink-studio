@@ -153,7 +153,8 @@
         throw new RangeError('Invalid structural mass, strength, fragments or motion');
       const saved = new Float32Array(ids.length * 16), appearance = new Float32Array(ids.length * 2), free = new Uint8Array(ids.length);
       ids.forEach((id, k) => { saved.set(D.subarray(id * 16, id * 16 + 16), k * 16); appearance[k * 2] = st.base[id * 16 + 3]; appearance[k * 2 + 1] = st.base[id * 16 + 7]; free[k] = st.rig?.free[id] ?? 0; owner.set(id, spec.id); });
-      groups.set(spec.id, { id: spec.id, ids, saved, appearance, free, mass, strength, mode, fragmentSize,
+      const footprints = SplatFootprints.captureFrames(st.W, ids);
+      groups.set(spec.id, { id: spec.id, ids, saved, appearance, free, footprints, mass, strength, mode, fragmentSize,
         anchor: Boolean(spec.anchor), breakable: spec.breakable !== false, static: Boolean(spec.static), motion: spec.motion,
         solid: spec.solid, parts: authored && spec.parts, guide: guide(ids, D), intact: true, damage: 0, v: [0, 0, 0], w: [0, 0, 0], sampled: false });
     }
@@ -446,11 +447,19 @@
       alive();
       for (const shot of projectiles) shot.active = false;
       projectiles.length = 0; events.length = 0; accumulator = 0; clock = 0; serial = 0;
+      let frames;
       for (const g of groups.values()) {
+        if (g.footprints) {
+          frames ??= st.W?.splatFootprints?.frames?.slice();
+          if (frames) g.ids.forEach((id, k) => {
+            if (id * 6 + 6 <= frames.length) frames.set(g.footprints.subarray(k * 6, k * 6 + 6), id * 6);
+          });
+        }
         ownership.deactivate(token,g.ids);
         g.ids.forEach((id, k) => { D.set(g.saved.subarray(k * 16, k * 16 + 16), id * 16); st.base[id * 16 + 3] = g.appearance[k * 2]; st.base[id * 16 + 7] = g.appearance[k * 2 + 1]; if (st.rig) st.rig.free[id] = g.free[k]; st.touch(id); });
         g.intact = true; g.damage = 0; g.v = [0, 0, 0]; g.w = [0, 0, 0]; g.sampled = false;
       }
+      if (frames) SplatFootprints.setFrames(st.W, frames);
       for (const edge of links) edge.active = true;
       solvers(); sync();
     }

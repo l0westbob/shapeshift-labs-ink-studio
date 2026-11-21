@@ -4,7 +4,8 @@ const fs = require('node:fs'),
   lib = require('..'),
   webgl = path.join(__dirname, '../src/webgl'),
   gpuFiles = fs.readdirSync(webgl).filter(file => file.endsWith('.mjs')).map(file => path.join(webgl, file)),
-  bad = lib.lint(lib.files().concat(lib.demoFiles(), path.join(__dirname, '../webgl.mjs'), gpuFiles));
+  bad = lib.lint(lib.files().concat(lib.demoFiles(), path.join(__dirname, '../webgl.mjs'),
+    path.join(__dirname, '../src/scene-replay.js'), gpuFiles));
 if (bad.length) {
   console.error('code after a // comment on the same line (it would never run):\n  ' + bad.join('\n  '));
   process.exit(1);

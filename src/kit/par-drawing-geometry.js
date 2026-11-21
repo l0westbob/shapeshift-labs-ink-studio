@@ -5,6 +5,7 @@
   const tuple = (value, n, valid = finite) => Array.isArray(value) && value.length === n && Array.from(value).every(valid);
   const point = value => tuple(value, 2, n => finite(n) && Math.abs(n) <= 1e9);
   const solid = color => DrawingPrimitives.color(color);
+  const record = P.graphTypes.validator('record');
 
   function pathSource(source) {
     const points = Array.isArray(source) ? source : source?.points;
@@ -86,7 +87,7 @@
   }
 
   let glyphs;
-  function text(value, {scale = 1, tracking = 0, leading = 0, align = 'left', columns, color = '#ffffff', customGlyphs} = {}) {
+  function text(value, {scale = 1, tracking = 0, leading = 0, align = 'left', columns, color = '#ffffff', customGlyphs, kerning = {}} = {}) {
     if (typeof value !== 'string' || value.length > 4096 || ![scale,tracking,leading].every(Number.isSafeInteger) ||
         scale < 1 || scale > 32 || tracking < 0 || tracking > 256 || leading < 0 || leading > 256 ||
         !['left','center','right'].includes(align) || columns !== undefined && (!Number.isSafeInteger(columns) || columns < 1))
@@ -101,33 +102,48 @@
       return Array.from({length:Math.ceil(chars.length/columns)},(_,i)=>chars.slice(i*columns,(i+1)*columns));
     });
     const rgba = solid(color), cell = 6*scale + tracking, step = 8*scale + leading;
-    const rowWidth = row => Math.max(0,row.length*cell-tracking);
-    const width = Math.max(1,...rows.map(rowWidth)), height = rows.length*step-leading;
+    if (!record(kerning) || Object.keys(kerning).length > 4096 ||
+        Object.entries(kerning).some(([pair, shift]) => [...pair].length !== 2 ||
+          !Number.isSafeInteger(shift) || shift < -cell || shift > 256))
+      throw new RangeError('Bitmap kerning needs character pairs and bounded pixel adjustments');
+    const runs = rows.map(row => {
+      let x = 0;
+      return row.map((char, i) => {
+        const pair = i && row[i - 1] + char;
+        if (i) x += cell + (Object.hasOwn(kerning, pair) ? kerning[pair] : 0);
+        return {char, x};
+      });
+    });
+    const rowWidth = row => row.length ? row.at(-1).x + 6*scale : 0;
+    const width = Math.max(1,...runs.map(rowWidth)), height = rows.length*step-leading;
     if (width*height > 4e6) throw new RangeError('Bitmap text exceeds its pixel budget');
-    const result = R.canvas({width,height});
+    const result = R.canvas({width,height}), anchors = {};
     const anchor = align === 'left' ? 0 : align === 'center' ? .5 : 1;
-    for (let line = 0; line < rows.length; line++) {
-      const row = rows[line], x = Math.floor((width-rowWidth(row))*anchor), y = line*step;
-      row.forEach((char,index) => {
-        const glyph = font.get(char) ?? font.get('?');
+    for (let line = 0; line < runs.length; line++) {
+      const run = runs[line], x = Math.floor((width-rowWidth(run))*anchor), y = line*step;
+      const baseline = y + 7*scale;
+      anchors['line:' + line] = [x, baseline];
+      run.forEach(({char, x: advance},index) => {
+        const gx = x + advance, glyph = font.get(char) ?? font.get('?');
+        anchors['glyph:' + line + ':' + index] = [gx, baseline];
         if (!glyph) return;
         for (let v=0; v<8; v++) for (let u=0; u<6; u++) if (glyph[v*6+u])
           for (let dy=0; dy<scale; dy++) for (let dx=0; dx<scale; dx++) {
-            const at = ((y+v*scale+dy)*width + x+index*cell+u*scale+dx)*4;
+            const at = ((y+v*scale+dy)*width + gx+u*scale+dx)*4;
             result.data.set(rgba,at);
           }
       });
     }
-    return {value:result,metrics:{width,height,lines:rows.length,scale}};
+    return {value:result,metrics:{width,height,lines:rows.length,scale},anchors};
   }
 
   function shape(draw) {
-    const {type, rect, radius = 0, color, stroke, fill = color ?? '#ffffff', width} = draw;
+    const {type, rect, radius = 0, color, stroke, fill = color ?? '#ffffff', width, falloff, fillFalloff, strokeFalloff} = draw;
     if (!tuple(rect, 4) || rect[2] <= 0 || rect[3] <= 0 || !finite(radius) || radius < 0)
       throw new RangeError('Shape needs a positive rectangle and a nonnegative radius');
     const [x,y,w,h] = rect;
-    if (type === 'rect' && !radius && stroke === undefined && fill !== false)
-      return {type:'rect',rect,color:fill};
+    if (type === 'rect' && !radius && stroke === undefined && fill !== false && strokeFalloff === undefined)
+      return {type:'rect',rect,color:fill,falloff:fillFalloff === undefined ? falloff : fillFalloff};
     const r = Math.min(radius,w/2,h/2);
     let points;
     if (type === 'ellipse') {
@@ -144,11 +160,12 @@
         return [cx+r*Math.cos(angle),cy+r*Math.sin(angle)];
       }));
     } else points = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
-    return {type:'polygon',points,fill,...(stroke!==undefined && {stroke}),...(width!==undefined && {width})};
+    return {type:'polygon',points,fill,falloff,fillFalloff,strokeFalloff,
+      ...(stroke!==undefined && {stroke}),...(width!==undefined && {width})};
   }
 
   function drawingPath(draw) {
-    const {source, d, points, closed, fill, color, stroke, width, steps} = draw;
+    const {source, d, points, closed, fill, color, stroke, width, steps, falloff, fillFalloff, strokeFalloff} = draw;
     const vertices = source === undefined ? points : Array.isArray(source) ? source : source?.points;
     const paths = d === undefined ? [pathSource({points:vertices,closed:closed ?? source?.closed})] : contours(d,steps);
     const lines = stroke ?? (fill ? false : color ?? '#ffffff');
@@ -156,10 +173,39 @@
     const output = [];
     if (fill) {
       if (!paths.every(p => p.closed)) throw new TypeError('A filled path needs closed contours');
-      output.push({type:'polygon',rings:paths.map(p=>p.points),fill,...size});
+      output.push({type:'polygon',rings:paths.map(p=>p.points),fill,falloff:fillFalloff === undefined ? falloff : fillFalloff,...size});
     }
-    if (lines) for (const p of paths) output.push({type:'path',...p,color:lines,...size});
+    if (lines) for (const p of paths) output.push({type:'path',...p,color:lines,falloff:strokeFalloff === undefined ? falloff : strokeFalloff,...size});
     return output;
+  }
+
+  function translate(draw, [x, y]) {
+    const at = value => {
+      if (!point(value)) throw new TypeError('Drawing translation needs screen-space XY coordinates');
+      return [value[0] + x, value[1] + y];
+    };
+    const result = { ...draw };
+    if (draw.rect) {
+      const [u, v, w, h] = draw.rect;
+      result.rect = [u + x, v + y, w, h];
+    }
+    if (draw.points) result.points = draw.points.map(at);
+    if (draw.rings) result.rings = draw.rings.map(ring => ring.map(at));
+    if (draw.from) result.from = at(draw.from);
+    if (draw.to) result.to = at(draw.to);
+    if (draw.origin) result.origin = at(draw.origin);
+    for (const key of ['falloff','fillFalloff','strokeFalloff','uFalloff','vFalloff']) {
+      const fade = draw[key];
+      if (fade && (fade.type === undefined || fade.type === 'linear'))
+        result[key] = { ...fade, from: at(fade.from), to: at(fade.to) };
+      if (fade?.type === 'radial') result[key] = { ...fade, center: at(fade.center) };
+    }
+    if (draw.type === 'text') {
+      const origin = draw.at ?? [0, 0];
+      if (!point(origin) || !origin.every(Number.isSafeInteger)) throw new TypeError('Bitmap text needs an integer XY anchor');
+      result.at = at(origin).map(Math.round);
+    }
+    return result;
   }
 
   function render({width, height, commands, edges = 'smooth'} = {}) {
@@ -173,11 +219,15 @@
     }
     const shapes = [];
     let vertices = 0;
-    for (const draw of commands) for (const shape of compile(draw)) {
-      vertices += shape.points?.length ?? 0;
-      if (Array.isArray(shape.rings)) for (const ring of shape.rings) vertices += ring?.length ?? 0;
-      if (vertices > 262144 || shapes.length >= 8192) throw new RangeError('Drawing exceeds its geometry budget');
-      shapes.push(shape);
+    for (const draw of commands) {
+      const { translate: offset, ...source } = draw ?? {};
+      if (offset !== undefined && !point(offset)) throw new TypeError('Drawing translation needs a finite XY offset');
+      for (const shape of compile(offset === undefined ? draw : source)) {
+        vertices += shape.points?.length ?? 0;
+        if (Array.isArray(shape.rings)) for (const ring of shape.rings) vertices += ring?.length ?? 0;
+        if (vertices > 262144 || shapes.length >= 8192) throw new RangeError('Drawing exceeds its geometry budget');
+        shapes.push(offset === undefined ? shape : translate(shape, offset));
+      }
     }
     return FrameComposite.screenDrawing(width,height,shapes,{edges,bitmap(draw) {
       const {at = [0,0], color = '#ffffff'} = draw;

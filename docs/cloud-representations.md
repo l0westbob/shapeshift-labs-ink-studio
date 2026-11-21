@@ -32,6 +32,33 @@ Shadows still use the shared cloud field. Scene-sky reflections sample the same 
 
 Use `cloudRepresentation` in render options or `--cloud-representation auto|card|impostor|volume|off` on the CLI. `off` uses the regular cloud field backdrop path. `--cloud-field off` hides the cloud entirely. Force the exterior representations to inspect them from outside the cloud.
 
+## Internal shadows for hero clouds
+
+Enable `selfShadows` on a bounded, nonrepeating cloud with positive thickness. Ink samples toward the cloud's light direction at each occupied step of the volume march. Extinction along those rays softens the transition from lit edges to shadowed interiors. The samples use the same moving density and clear pockets as the view ray. The effect attenuates direct and rim lighting while preserving the cloud's extinction, ambient term, and lightning. The light follows the active scene sun unless the asset specifies `lighting.direction`. Projected [cloud shadows](cloud-shadows.md) on the scene have their own controls.
+
+```js
+const cloudField = K.clouds.asset({
+  recipe: 'storm-front',
+  bounds: { min: [-18, -24], max: [16, -2] },
+  selfShadows: { strength: 0.85, distance: 14, steps: 8 }
+});
+```
+
+`selfShadows: true` uses the defaults. `strength` ranges from 0 to 1 and defaults to 1. `distance` caps each light ray in world units, with the cloud bounds as the default cap. `steps` budgets 1–16 midpoint density samples per light ray and defaults to 6. A cloud with no authored lighting uses the default directional lighting for its self-shadowed volume. A bounded cloud with self-shadows and no LOD uses the volume by default.
+
+Headless renders apply self-shadows to the volume portion of `auto` blends and to the reflected volume in `auto` or `volume`. The card and directional impostor keep their baked optical depth and approximate shading. Pass `cloudSelfShadows: false` to `render`, or `--cloud-self-shadows off` on the CLI, to compare the same volume with no shadow rays. The `on` override enables defaults on a bounded field or uses its authored settings. The WebGL cloud path supports the card.
+
+The [beacon storm shot](../examples/beacon-cloud-self-shadows.js) uses the same moving field and camera for all three representations.
+
+```sh
+ink-studio render examples/beacon-cloud-self-shadows.js --t 2.4 --w 384 --h 216 --px 1 --raw --out beacon-volume.png
+ink-studio render examples/beacon-cloud-self-shadows.js --t 2.4 --w 384 --h 216 --px 1 --raw --cloud-self-shadows off --out beacon-volume-unshadowed.png
+ink-studio render examples/beacon-cloud-self-shadows.js --t 2.4 --w 384 --h 216 --px 1 --raw --cloud-representation card --out beacon-card.png
+ink-studio render examples/beacon-cloud-self-shadows.js --t 2.4 --w 384 --h 216 --px 1 --raw --cloud-representation impostor --out beacon-impostor.png
+```
+
+## From distant sky to fly-through
+
 The [fly-through](../examples/cloud-flythrough.js) starts at the distant card, goes through the directional impostor and both blends, then follows the survey lights into and out of the volume.
 
 ```sh

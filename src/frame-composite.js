@@ -49,10 +49,10 @@ const FrameComposite = (() => {
           width: width === undefined ? undefined : strokeWidth(width), color: primitives.color(value.color) };
       }
       case 'rect': {
-        record(value, ['type', 'rect', 'color'], 'rectangle command');
+        record(value, ['type', 'rect', 'color', 'falloff'], 'rectangle command');
         const { rect } = value;
         if (!tuple(rect, 4) || rect[2] <= 0 || rect[3] <= 0) throw new RangeError('A rectangle needs finite XY and positive size');
-        return { type: 'rect', rect: rect.slice(), color: primitives.color(value.color) };
+        return { type: 'rect', rect: rect.slice(), color: primitives.color(value.color), falloff: primitives.falloff(value.falloff) };
       }
       default: return primitives.command(value);
     }
@@ -193,15 +193,16 @@ const FrameComposite = (() => {
         }
       }
     }
-    function paint(rgba) {
+    function paint(rgba, falloff) {
       if (!dirty) return;
       const [x0,y0,x1,y1] = dirty;
       spend((x1-x0)*(y1-y0));
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
         const p = y*layer.w+x;
         if (!mask[p]) continue;
-        const opacity = rgba[3]/255*mask[p], q = p*4;
-        const a = hard === 'coverage' ? rgba[3]/255*Number(mask[p] >= .5) :
+        const tone = rgba[3]/255*(falloff ? falloff((x+.5)*sx,(y+.5)*sy) : 1);
+        const opacity = tone*mask[p], q = p*4;
+        const a = hard === 'coverage' ? tone*Number(mask[p] >= .5) :
           hard ? Number(opacity >= .5) : opacity;
         for (let c = 0; c < 4; c++)
           data[q+c] = quantize(data[q+c]*(1-a) + (c === 3 ? 255 : rgba[c])*a);
@@ -221,22 +222,22 @@ const FrameComposite = (() => {
         const [x,y,width,height] = draw.rect, right = x+width, bottom = y+height;
         raster(x,y,right,bottom,(u,v) =>
           (Math.min(u+sx,right)-Math.max(u,x))*(Math.min(v+sy,bottom)-Math.max(v,y))/(sx*sy));
-        paint(draw.color);
+        paint(draw.color,draw.falloff);
       } else for (const batch of primitives.geometry(draw,camera,w,h)) {
         for (const segment of batch.lines) line(...segment);
         for (const rings of batch.fills) polygon(rings);
         for (const label of batch.labels) lettering(label);
-        paint(batch.color);
+        paint(batch.color,batch.falloff);
       }
     }
     return { w: layer.w, h: layer.h, data };
   }
 
-  function paintMap(w, h, strokes) {
+  function paintMap(w, h, strokes, budget) {
     if (strokes.some(stroke => !['path', 'polygon', 'rect'].includes(stroke?.type) ||
         stroke.space !== undefined && stroke.space !== 'screen'))
       throw new TypeError('Paint maps use pixel paths, polygons and rectangles');
-    return drawLayer({ w, h }, w, h, null, null, Array.from(strokes, command), true).data;
+    return drawLayer({ w, h }, w, h, null, null, Array.from(strokes, command), true, budget).data;
   }
 
   function screenDrawing(width, height, strokes, {edges = 'smooth', bitmap} = {}) {
@@ -247,7 +248,7 @@ const FrameComposite = (() => {
       for (const draw of strokes) {
         if (draw?.type === 'text' && typeof bitmap === 'function') yield bitmap(draw);
         else {
-          if (!['rect','polygon','path','arrow','grid'].includes(draw?.type) ||
+          if (!['rect','polygon','path','arrow','grid','rayFan','registrationGrid'].includes(draw?.type) ||
               draw.space !== undefined && draw.space !== 'screen')
             throw new TypeError('Standalone drawing commands use screen-space shapes and bitmap text');
           yield command(draw);

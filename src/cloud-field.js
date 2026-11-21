@@ -70,6 +70,18 @@ const CloudField = (() => {
       throw new RangeError('Cloud lighting direction must be nonzero');
     return { rgb, ambient, strength, rim, sun };
   }
+  function prepareSelfShadow(value) {
+    if (value === undefined || value === false) return null;
+    const settings = value === true ? {} : record(value,'Cloud self-shadows');
+    if (Object.keys(settings).some(key=>!['strength','distance','steps'].includes(key)))
+      throw new TypeError('Cloud self-shadows need strength, distance or steps settings');
+    const { strength=1, distance, steps=6 } = settings;
+    number(strength,0,1,'Cloud self-shadow strength');
+    if (distance !== undefined) number(distance,Number.MIN_VALUE,1e6,'Cloud self-shadow distance');
+    if (!Number.isInteger(steps) || steps<1 || steps>16) throw new RangeError('Cloud self-shadow steps must be 1–16');
+    return { strength, distance:distance ?? Infinity, steps };
+  }
+  const defaultLight = prepareLight({});
   function clip(range, origin, direction, low, high) {
     if (Math.abs(direction)<1e-10) return origin>=low && origin<=high;
     const a=(low-origin)/direction, b=(high-origin)/direction;
@@ -123,8 +135,11 @@ const CloudField = (() => {
     if (typeof repeat !== 'boolean' || typeof visible !== 'boolean') throw new TypeError('Cloud repeat and visible must be boolean');
     const rgb = colorRGB(color,'Cloud color');
     const style = prepareLight(lighting);
+    const authoredSelfShadow = prepareSelfShadow(source.selfShadows);
     const paletteProgram = palettes.compile(source.paletteField, palettes.cloudDomains);
     number(thickness,0,1e5,'Cloud thickness');
+    if (authoredSelfShadow?.strength && (!thickness || repeat))
+      throw new RangeError('Cloud self-shadows need a bounded, nonrepeating field with positive thickness');
     if (!Number.isInteger(steps) || steps<2 || steps>32) throw new RangeError('Cloud steps must be 2–32');
     const low=height-thickness*.5, high=height+thickness*.5;
     const horizon=4*Math.hypot(maxX-minX,maxZ-minZ)+thickness;
@@ -184,9 +199,16 @@ const CloudField = (() => {
       }
       return cache.get(softness);
     }
-    function frame(time, shadows, light = [-.52, .64, .57], displacement, representation, flashAt, cutouts, edge) {
+    function frame(time, shadows, light = [-.52, .64, .57], displacement, representation, flashAt, cutouts, edge, selfShadows) {
       const paletteField = paletteProgram?.frame?.(time) ?? paletteProgram;
-      const mode=representation ?? (lod || (geometry && lod!==false) ? 'auto' : 'off');
+      if (selfShadows !== undefined && typeof selfShadows !== 'boolean')
+        throw new TypeError('Cloud self-shadow render override must be boolean');
+      const selfShadow = selfShadows === false ? null : authoredSelfShadow ?? (selfShadows && prepareSelfShadow(true));
+      const shadowEnabled=!!selfShadow?.strength;
+      if (shadowEnabled && (!thickness || repeat))
+        throw new RangeError('Cloud self-shadows need a bounded, nonrepeating field with positive thickness');
+      const mode=representation ?? (lod || (geometry && lod!==false) ? 'auto' :
+        authoredSelfShadow?.strength || shadowEnabled ? 'volume' : 'off');
       if (!detail.modes.includes(mode)) throw new RangeError('Unknown cloud representation: ' + mode);
       const useDetail=mode!=='off';
       if (useDetail && !asset) asset=createDetail();
@@ -215,29 +237,34 @@ const CloudField = (() => {
           };
         }
       }
-      const sun = style ? style.sun ?? light : [0,0,0];
+      const volumeStyle = style ?? (shadowEnabled && lighting!==false ? defaultLight : null);
+      const sun = volumeStyle ? volumeStyle.sun ?? light : [0,0,0];
       const length = Math.hypot(...sun) || 1;
       const [lx,ly,lz] = sun.map(value=>value/length);
       const daylight = smooth(-.13,.28,ly);
       const probe = 1.7*Math.max(sx,sz);
-      const lit = (x,z,y,density,rim) => {
+      const lit = (settings,x,z,y,density,rim,visibility=1) => {
         const upstream = sample(cells,x+lx*probe,z+lz*probe);
         const relief = clamp(.52 + 1.45*(density-upstream));
-        return clamp(style.ambient + daylight*(style.strength*(.24+.76*relief)*(.48+.52*y) + style.rim*rim));
+        return clamp(settings.ambient + daylight*(settings.strength*(.24+.76*relief)*(.48+.52*y) + settings.rim*rim)*visibility);
       };
       const rendered=visible && opacity>0;
       const shift=[dx,0,dz], tint = [0,0,0];
-      function cloudColor(out, height, density, light, flash) {
+      const shadowVolume=(mode==='auto' || mode==='volume') && rendered && shadowEnabled && volumeStyle &&
+        daylight>0 && (volumeStyle.strength || volumeStyle.rim) && Math.hypot(...sun)
+        ? asset.sunShadow([lx,ly,lz],selfShadow,shift,cutouts) : null;
+      function cloudColor(out, height, density, light, flash, settings=style) {
         const base = paletteField ? paletteField.apply(paletteField.source === 'altitude' ? height :
           paletteField.source === 'density' ? density : light, rgb, out) : rgb;
-        for (let c=0;c<3;c++) out[c] = Math.min(1,(style ? mix(base[c],style.rgb[c],light) : base[c]) + (flash?.[c] ?? 0));
+        for (let c=0;c<3;c++) out[c] = Math.min(1,(settings ? mix(base[c],settings.rgb[c],light) : base[c]) + (flash?.[c] ?? 0));
       }
-      const shade=(origin,ray,depth,optical,out) => {
+      const shade=(origin,ray,depth,optical,out,visibility) => {
         const x=origin[0]+ray[0]*depth, y=origin[1]+ray[1]*depth, z=origin[2]+ray[2]*depth;
-        const rim=style ? Math.max(0,lx*ray[0]+ly*ray[1]+lz*ray[2])**12 : 0;
-        const density = style || paletteField?.source === 'density' ? sample(cells,x,z) : 0;
-        const brightness=style ? lit(x,z,clamp((y-low)/thickness),density,rim)*(.49+.51*Math.exp(-optical*.58)) : 0;
-        cloudColor(out, y, density, brightness, flashAt?.(x,y,z));
+        const settings=visibility === undefined ? style : volumeStyle;
+        const rim=settings ? Math.max(0,lx*ray[0]+ly*ray[1]+lz*ray[2])**12 : 0;
+        const density = settings || paletteField?.source === 'density' ? sample(cells,x,z) : 0;
+        const brightness=settings ? lit(settings,x,z,clamp((y-low)/thickness),density,rim,visibility)*(.49+.51*Math.exp(-optical*.58)) : 0;
+        cloudColor(out, y, density, brightness, flashAt?.(x,y,z),settings);
       };
       function shapedView(source) {
         if (!edge) return source;
@@ -248,13 +275,14 @@ const CloudField = (() => {
         } };
       }
       const view=useDetail && rendered ? (eye,parallel) => {
-        const result = shapedView(asset.view(eye,parallel,mode,shift,shade,opacity,cutouts));
+        const result = shapedView(asset.view(eye,parallel,mode,shift,shade,opacity,cutouts,shadowVolume));
         if (!result.card) return result;
         const lighting = style && { ...style, direction:[lx,ly,lz], daylight, probe, cells, width, rows,
           origin:[minX+dx,minZ+dz], cell:[sx,sz], low, thickness };
         return { ...result, card:{ ...result.card, rgb, lighting, paletteField } };
       } : null;
-      const reflections=(useDetail || geometry) && rendered ? shapedView(asset.view([0,0,0],null,'volume',shift,shade,opacity,cutouts)) : null;
+      const reflections=(useDetail || geometry) && rendered ? shapedView(asset.view([0,0,0],null,'volume',
+        shift,shade,opacity,cutouts,shadowVolume)) : null;
       const reflectionSample=[0,0,0,1];
       function paintVolume(origin, ray, out, flashAt, signal, counters) {
         const range = [0,horizon];
@@ -282,7 +310,7 @@ const CloudField = (() => {
           const near=range[0]+i*step;
           const occupied=cutRay?.distance(near,near+step)??step;
           const weight=through*-Math.expm1(-4.8*density*body*occupied/thickness);
-          const brightness=style ? lit(x,z,h,density,rim) : 0;
+          const brightness=style ? lit(style,x,z,h,density,rim) : 0;
           const flash=flashAt?.(x,y,z);
           cloudColor(tint, y, density, brightness, flash);
           for (let c=0;c<3;c++) lightSum[c] += weight * tint[c];
@@ -315,7 +343,7 @@ const CloudField = (() => {
         if (signal) signal[0] = amount;
         const flash = light?.(x,height,z);
         const rim = style ? Math.max(0,lx*direction[0]+ly*direction[1]+lz*direction[2])**12 : 0;
-        const brightness = style ? lit(x,z,.5,coverage,rim) : 0;
+        const brightness = style ? lit(style,x,z,.5,coverage,rim) : 0;
         cloudColor(tint, height, coverage, brightness, flash);
         for (let i=0;i<3;i++) out[i] = mix(out[i],tint[i],amount);
         return out;

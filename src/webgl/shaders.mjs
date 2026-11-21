@@ -1,8 +1,11 @@
+import {engravingVertexUniforms,engravingVertex,engravingFragment} from './engraving-shaders.mjs';
 // Shared draw and resolve shaders extracted from Inkwell Rebirth's WebGL renderer.
 // Hosts provide the ASCII shader hooks and Ink Studio's shared PixelLook GLSL.
 import { waterGLSL } from './water-optics.mjs';
 import { environmentMediaGLSL,environmentMediaSource } from './environment-shaders.mjs';
 import { coverageSource, policyUniforms, maskUniforms, maskVaryings, maskFragment, maskVertex, ownerMaskWrite } from './contribution-shaders.mjs';
+
+export const scenePaletteSize = 64;
 
 // Reconstruct the sample on its pixel ray from a camera-space axial distance.
 const axialPosition = `
@@ -28,8 +31,9 @@ vec4 relightAt(int row) { return texelFetch(u_relight, ivec2(row & 511, row >> 9
 export function splatShaderSources(ascii, sampleCoverage, {
   water = false, airPockets = false, layered = false, atlas = false, portal = false, instances = false,
   contributions = false, masked = false, textured = false, layeredGlass = false, coverageRules, materialStyles = false,
-  environment = false, emitterFog=false, relighting = false, optical = false, stableDetail, cutaway, airflow
+  environment = false, emitterFog=false, relighting = false, optical = false, stableDetail, cutaway, airflow, footprints = false, footprintGLSL, engraving=false, screenPrintGLSL
 } = {}) {
+  if (footprints && typeof footprintGLSL !== 'string') throw new Error('Footprint shaders need SplatFootprints.glsl');
   const coverageStride = coverageRules?.coverageStride ?? 4;
   const continuousMode = coverageRules?.continuousCoverage ?? 1, softMode = coverageRules?.softCoverage ?? 2;
   const nonSurface = coverageRules?.nonSurface ?? 2559;
@@ -74,6 +78,7 @@ uniform vec4 u_fogp;   // haze start, haze max, depth range near, depth range fa
 layout(location=0) in vec2 a_corner;
 layout(location=1) in int a_index;
 ${instances ? 'layout(location=2) in int a_instance; uniform highp sampler2D u_instances;' : ''}
+${footprints ? 'uniform highp sampler2D u_footprintRows,u_footprintParams; flat out vec4 v_footprintMap; flat out vec2 v_footprintStyle, v_footprintZ; flat out vec4 v_footprintPlane;' : ''}
 out vec2 v_d; out vec3 v_conic; out vec4 v_color; out float v_depth;
 ${portal ? 'flat out vec3 v_portalDepth;' : 'flat out float v_ownerDepth;'}
 ${cutaway ? 'flat out vec4 v_sectionSample;' : ''}
@@ -85,11 +90,12 @@ ${ascii ? ascii.vsDecl : ''}// Inked detail (an option, off unless asked for): a
 uniform highp sampler2D u_fine; uniform float u_fineOn;
 // Carried lights (the game's lantern, things on fire): where each is and how far it reaches, how strong, the palette, and for each palette
 // colour the next lighter one of its own family. What is near a light steps up its own colours; nothing is tinted.
-uniform vec4 u_lamp[8]; uniform float u_lamps[8]; uniform int u_lampN; uniform float u_lampGain; uniform vec3 u_lpal[48]; uniform int u_lup[48];
+uniform vec4 u_lamp[8]; uniform float u_lamps[8]; uniform int u_lampN; uniform float u_lampGain; uniform vec3 u_lpal[${scenePaletteSize}]; uniform int u_lup[${scenePaletteSize}];
 flat out vec4 v_fm; flat out vec4 v_ft; flat out float v_fk; flat out float v_lit; flat out float v_ix;
 ${contributions || masked ? `${policyUniforms}flat out int v_policySlot;` : ''}
 ${masked ? maskUniforms + maskVaryings(textured).replaceAll('LOOK_IO','out') + maskVertex(textured) : ''}
 ${materialStyles ? 'uniform highp sampler2D u_materialStyles; uniform bool u_materialPatterned, u_materialStylesOn; flat out vec4 v_pixelStyle; flat out float v_pixelFog;' : ''}
+${engraving ? engravingVertexUniforms : ''}
 void main(){
   int record = a_index;
   ${instances ? `ivec2 inst = ivec2((a_instance & 15) * 16, a_instance >> 4);
@@ -106,6 +112,17 @@ void main(){
   v_paint = (u_paintMarker != 0.0 && t3.z == u_paintMarker ||
     u_afterimageStart > 0 && a_index >= u_afterimageStart) ? 1 : 0;
   ${materialStyles ? 'v_pixelStyle = texelFetch(u_materialStyles, ivec2(record & 511, row), 0);' : ''}
+  ${footprints ? `
+  vec4 brush0=texelFetch(u_footprintRows,ivec2((record & 511)*2,row),0);
+  vec4 brush1=texelFetch(u_footprintRows,ivec2((record & 511)*2+1,row),0);
+  float footprintId=brush0.x;
+  bool surfaceBrush=brush1.w>0.5;
+  vec2 brushU=vec2(0.0),brushV=vec2(0.0);
+  bool hasFootprint=footprintId>0.0;
+  vec4 footprintMap=hasFootprint?texelFetch(u_footprintParams,ivec2(int(footprintId)-1,0),0):vec4(0.0);
+  vec4 footprintSettings=hasFootprint?texelFetch(u_footprintParams,ivec2(int(footprintId)-1,1),0):vec4(0.0);
+  v_footprintStyle=vec2(footprintId,footprintSettings.x);
+  ` : ''}
   vec3 pos = t0.xyz; float alpha = t0.w;
   if (alpha <= 0.0 || pos.y < -30.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // (what is put away is put far below: it is not drawn from there)
   mat3 cov = mat3(t1.x, t1.y, t1.z,  t1.y, t2.x, t2.y,  t1.z, t2.y, t2.z);
@@ -264,9 +281,9 @@ ${environment ? '  v_envAxial = -cam.z;' : ''}
     for (int i = 0; i < 8; i++) { if (i >= u_lampN) break; vec4 Lq = u_lamp[i]; vec3 dl = Lq.xyz - pos; float d2 = dot(dl, dl);
       if (d2 < Lq.w * Lq.w) { float fa = 1.0 - sqrt(d2) / Lq.w, nd = sqrt(clamp(dot(dl, (cov - mat3(pp)) * dl) / (-0.5747 * pp * max(d2, 1e-4)), 0.0, 1.0)); add += fa * fa * u_lamps[i] * (0.3 + 0.7 * nd); } }
     if (add > 0.0) { float hb = fract(sin(dot(floor(pos.xyz / 0.22), vec3(12.9898, 78.233, 37.719))) * 43758.5453); int steps = int(floor(add * u_lampGain + (hb - 0.5) * 0.5)); v_lit = clamp(add * 1.8, 0.0, 1.0);   // (how lit it is also goes to the last pass, which shows lit things in the colours they have by day)
-      if (steps > 0) { int ci = -1; for (int k = 0; k < 48; k++) { vec3 dc = abs(color - u_lpal[k]); if (max(dc.r, max(dc.g, dc.b)) < 0.004) { ci = k; break; } }
+      if (steps > 0) { int ci = -1; for (int k = 0; k < u_lpal.length(); k++) { vec3 dc = abs(color - u_lpal[k]); if (max(dc.r, max(dc.g, dc.b)) < 0.5 / 255.0) { ci = k; break; } }
         if (ci >= 0) { if (!stat) steps = min(steps, 1);   /* (whoever carries the light is not washed out by it) */
-          for (int k = 0; k < 3; k++) { if (k >= steps) break; ci = u_lup[ci]; } color = u_lpal[ci]; color0 = color; } } } }
+          for (int k = 0; k < 3; k++) { if (k >= steps) break; ci = clamp(u_lup[ci], 0, u_lpal.length() - 1); } color = u_lpal[ci]; color0 = color; } } } }
   bool plain = color == color0 && (kraw & 32768) == 0; float fogk = (flags & 2) == 0 && u_fogp.y > 0.0 && u_fogp.x < 1.0 ? smoothstep(u_fogp.x, 1.0, dn) * u_fogp.y : 0.0;   // (smoothstep from 1 to 1 is undefined: some cards give NaN, a black pixel)
   ${optical ? `
   ivec2 opticalUV = ivec2((a_index & 511) * 3, a_index >> 9);
@@ -285,7 +302,7 @@ ${environment ? '  v_envAxial = -cam.z;' : ''}
   v_pixelStyle.x = mod(v_pixelStyle.x, ${coverageStride}.0);
   if (!u_materialStylesOn) v_pixelStyle.xy = vec2(0.0);` : ''}
   bool continuous = coverage == ${continuousMode} && alpha >= 1.0 && (kraw & ${nonSurface}) == 0 && v_paint == 0
-    ${optical ? '&& v_optical.w < 0.5' : ''};
+    ${optical ? '&& v_optical.w < 0.5' : ''}${footprints ? ' && !hasFootprint' : ''};
   v_coverage = continuous ? ${continuousMode} : (coverage == ${softMode} ? ${softMode} : 0);
   v_depth = coverage == ${softMode} || (flags & 1) != 0 ${optical ? '|| v_optical.w > 0.5' : ''} ? -1.0 : dn;
   float iz = -1.0 / cam.z;
@@ -295,6 +312,7 @@ ${environment ? '  v_envAxial = -cam.z;' : ''}
   mat3 J = u_ortho > 0.5 ? mat3(u_focal, 0.0, 0.0,   0.0, u_focal, 0.0,   0.0, 0.0, 0.0)   // (orthographic: u_focal is pixels to a unit)
     : mat3(u_focal * iz, 0.0, 0.0,   0.0, u_focal * iz, 0.0,   u_focal * tx * iz * iz, u_focal * ty * iz * iz, 0.0);
   mat3 T = J * mat3(u_view);
+  ${engraving ? engravingVertex : ''}
   mat3 c2 = T * cov * transpose(T);
   float variance = continuous ? ${variance} * u_materialGridScale * u_materialGridScale : u_dilate;
   float A = c2[0][0] + variance, B = c2[0][1], C = c2[1][1] + variance;
@@ -309,6 +327,29 @@ ${environment ? '  v_envAxial = -cam.z;' : ''}
   float det = A * C - B * B;
   if (det <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   v_conic = vec3(C, -B, A) / det;
+  ${footprints ? `
+  v_footprintZ=vec2(cam.z,0.0);v_footprintPlane=vec4(0.0);
+  if(hasFootprint){
+    if(surfaceBrush){
+      if(footprintSettings.z>0.5){
+        vec3 frameU=mat3(u_view)*FM*brush0.yzw*sc,frameV=mat3(u_view)*FM*brush1.xyz*sc;
+        vec3 normal=normalize(cross(frameU,frameV));
+        v_footprintPlane=vec4(normal,dot(normal,cam.xyz));v_footprintZ.y=1.0;
+      }
+      brushU=(T*FM*brush0.yzw*sc).xy;brushV=(T*FM*brush1.xyz*sc).xy;
+      float area=brushU.x*brushV.y-brushU.y*brushV.x;
+      if(abs(area)<1e-10){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}
+      vec4 inv=vec4(brushV.y,-brushV.x,-brushU.y,brushU.x)/area;
+      v_footprintMap=vec4(footprintMap.x*inv.x+footprintMap.y*inv.z,footprintMap.x*inv.y+footprintMap.y*inv.w,
+        footprintMap.z*inv.x+footprintMap.w*inv.z,footprintMap.z*inv.y+footprintMap.w*inv.w);
+    }else{
+      float root=sqrt(det),den=1.1774100225154747*root*sqrt(A+C+2.0*root);
+      vec3 inv=vec3(C+root,-B,A+root)/den;
+      v_footprintMap=vec4(footprintMap.x*inv.x+footprintMap.y*inv.y,footprintMap.x*inv.y+footprintMap.y*inv.z,
+        footprintMap.z*inv.x+footprintMap.w*inv.y,footprintMap.z*inv.y+footprintMap.w*inv.z);
+    }
+  }else v_footprintMap=vec4(0.0);
+  ` : ''}
   ${portal || cutaway ? `
   // Condition axial depth on pixel offset using projected Gaussian covariance.
   vec3 back = vec3(u_view[0].z, u_view[1].z, u_view[2].z);
@@ -323,7 +364,19 @@ ${environment ? '  v_envAxial = -cam.z;' : ''}
   vec2 sectionSlope = mat2(sectionConic.x, sectionConic.y, sectionConic.y, sectionConic.z) * depthCov;
   v_sectionSample = vec4(-cam.z, sectionSlope, 3.0 * sqrt(max(0.0, dot(back, crossDepth))));
   ` : ''}
-  vec2 ext = min(3.0 * sqrt(vec2(A, C)), vec2(2048.0));
+  vec2 ext = min(${footprints ? '(hasFootprint?footprintSettings.y:3.0)' : '3.0'} * sqrt(vec2(A, C)), vec2(2048.0));
+  ${footprints ? `if(hasFootprint&&surfaceBrush)ext=min(vec2(2048.0),max(ext,(abs(brushU)+abs(brushV))*footprintSettings.y/1.1774100225154747));` : ''}
+  ${footprints ? `if(hasFootprint&&surfaceBrush&&footprintSettings.z>0.5&&u_ortho<0.5){
+    // Bound the perspective-projected physical chart, not its center Jacobian.
+    vec2 middle=clip.xy/clip.w*u_viewport*0.5;
+    float reach=footprintSettings.y/1.1774100225154747;
+    for(int k=0;k<4;k++){
+      float a=(k==0||k==3)?-1.0:1.0,b=k<2?-1.0:1.0;
+      vec3 corner=cam.xyz+mat3(u_view)*FM*(brush0.yzw*a+brush1.xyz*b)*sc*reach;
+      vec4 projected=u_proj*vec4(corner,1.0);
+      ext=max(ext,corner.z>=-0.0001?vec2(2048.0):min(vec2(2048.0),abs(projected.xy/projected.w*u_viewport*0.5-middle)));
+    }
+  }` : ''}
   vec2 ndc = clip.xy / clip.w;
   if (snap) { vec2 px = floor((ndc * 0.5 + 0.5) * u_viewport) + 0.5; ndc = px / u_viewport * 2.0 - 1.0; }
   vec2 extN = ext * 2.0 / u_viewport;
@@ -353,10 +406,12 @@ ${ascii ? ascii.vsMain : ''}  gl_Position = vec4(ndc + a_corner * extN, u_geomet
 }`;
   const SPLAT_FS = `#version 300 es
 precision highp float; precision highp int;
+${footprints ? 'uniform highp sampler2D u_footprintAtlas; uniform float u_footprintColumns; flat in vec4 v_footprintMap; flat in vec2 v_footprintStyle, v_footprintZ; flat in vec4 v_footprintPlane;' : ''}
 in vec2 v_d; in vec3 v_conic; in vec4 v_color; in float v_depth; flat in int v_coverage;
 ${stableDetail ? 'flat in float v_detailGeometry, v_detailTexture;' : ''}
 ${portal ? 'flat in vec3 v_portalDepth; uniform vec4 u_splatPlane;' : 'flat in float v_ownerDepth;'}
-${portal || cutaway ? 'uniform mat4 u_proj; uniform float u_ortho;' : ''}
+${portal || cutaway || footprints ? 'uniform mat4 u_proj; uniform float u_ortho;' : ''}
+${footprints ? 'uniform float u_focal;' + (!cutaway ? 'uniform bool u_geometryDepth;' : '') : ''}
 ${cutaway ? cutaway + `
 flat in vec4 v_sectionSample;
 uniform mat4 u_view;
@@ -365,7 +420,7 @@ uniform float u_near;
 uniform bool u_geometryDepth;` : ''}
 in float v_gl; in float v_as; in float v_ast;
 ${ascii ? ascii.fsDecl : 'uniform float u_gly;\n'}uniform float u_crisp, u_hard;
-flat in vec4 v_fm; flat in vec4 v_ft; flat in float v_fk; flat in float v_lit; flat in float v_ix; uniform vec3 u_fpal[64]; uniform vec3 u_fog;
+flat in vec4 v_fm; flat in vec4 v_ft; flat in float v_fk; flat in float v_lit; flat in float v_ix; uniform vec3 u_fpal[${scenePaletteSize}]; uniform vec3 u_fog;
 ${materialStyles ? `flat in vec4 v_pixelStyle; flat in float v_pixelFog; uniform float u_materialGridScale;
 ${materialStyleThreshold}` : ''}
 uniform float u_idx;
@@ -382,12 +437,14 @@ flat in float v_glassNearDepth;
 float glassDepth(vec4 sampleDepth) {
   return dot(floor(sampleDepth.rgb*255.0+0.5),vec3(1.0,256.0,65536.0)) / 16777215.0;
 }` : ''}
-${water || portal || environment || cutaway ? 'uniform vec2 u_viewport;' : ''}
+${water || portal || environment || cutaway || footprints ? 'uniform vec2 u_viewport;' : ''}
 ${environment ? environmentMediaSource(emitterFog) + 'flat in float v_envAxial;' : ''}
 ${portal || cutaway ? axialPosition : ''}
+${footprints ? footprintGLSL : ''}
+${engraving ? engravingFragment.replace('/*SCREEN_PRINT*/', screenPrintGLSL??'vec3 screenPrintShade(int start,vec2 uv,vec3 rgb,float footprint,float light){return rgb;}') : ''}
 ${coverageSource(coverageRules)}
 ${contributions || masked ? `${policyUniforms}flat in int v_policySlot;` : ''}
-${contributions ? `uniform vec3 u_pal[64], u_out[64]; uniform int u_n;
+${contributions ? `uniform vec3 u_pal[${scenePaletteSize}], u_out[${scenePaletteSize}]; uniform int u_n;
 uniform float u_toneOn, u_grade;
 uniform vec2 u_lookGrid, u_lookViewportScale;
 ${paletteRowGlsl}` : ''}
@@ -395,13 +452,40 @@ ${masked ? maskUniforms + maskVaryings(textured).replaceAll('LOOK_IO','in') + ma
 ${water ? waterGLSL(airPockets, layered, atlas) + (portal ? '' : 'flat in float v_waterAxial;') : ''}
 void main(){
 ${ascii ? ascii.fsMain : ''}  float power = -0.5 * (v_conic.x * v_d.x * v_d.x + v_conic.z * v_d.y * v_d.y) - v_conic.y * v_d.x * v_d.y;
-  if (power > 0.0 || power < -4.5) discard;
-  float g = v_color.a * exp(power);
+  ${footprints ? `
+  bool shaped=v_footprintStyle.x>0.0;
+  bool footprintPlane=v_footprintZ.y>0.5;
+  float footprintAxial=0.0,footprintDepth=gl_FragCoord.z;
+  gl_FragDepth=gl_FragCoord.z;
+  if(footprintPlane){
+    vec2 pixel=(gl_FragCoord.xy-u_viewport*0.5)/u_focal;
+    vec3 rayOrigin=u_ortho>0.5?vec3(pixel,0.0):vec3(0.0);
+    vec3 rayDirection=u_ortho>0.5?vec3(0.0,0.0,-1.0):vec3(pixel,-1.0);
+    float denominator=dot(v_footprintPlane.xyz,rayDirection);
+    if(abs(denominator)<1e-10)discard;
+    float distance=(v_footprintPlane.w-dot(v_footprintPlane.xyz,rayOrigin))/denominator;
+    footprintAxial=distance;
+    if(distance<=0.0)discard;
+    vec4 projected=u_proj*vec4(0.0,0.0,-distance,1.0);
+    footprintDepth=projected.z/projected.w*0.5+0.5;
+    if(footprintDepth<0.0||footprintDepth>1.0)discard;
+    if(u_geometryDepth)gl_FragDepth=footprintDepth;
+  }
+  float profile;
+  if(shaped){
+    vec2 point=vec2(dot(v_footprintMap.xy,v_d),dot(v_footprintMap.zw,v_d));
+    if(footprintPlane&&u_ortho<0.5)point*=footprintAxial/-v_footprintZ.x;
+    float distance=footprintDistance(u_footprintAtlas,v_footprintStyle.x,u_footprintColumns,point);
+    profile=footprintCoverage(distance,v_footprintStyle.y);
+  }else {if(power>0.0||power < -4.5)discard;profile=exp(power);}
+  float g=v_color.a*profile;
+  ` : `if (power > 0.0 || power < -4.5) discard;
+  float g = v_color.a * exp(power);`}
   bool continuous = v_coverage == ${continuousMode};
   float surfaceAlpha = continuous ? smoothstep(${continuousLow}, ${continuousHigh.toFixed(2)}, g) : 0.0;
   ${optical ? 'bool hasOptical = v_optical.w > 0.5; if (hasOptical && v_optical.x == 0.0) discard;' : ''}
   ${cutaway ? `
-  float sectionAxial = v_sectionSample.x + clamp(dot(v_sectionSample.yz, v_d), -v_sectionSample.w, v_sectionSample.w);
+  float sectionAxial = ${footprints ? 'footprintPlane?footprintAxial:' : ''}v_sectionSample.x + clamp(dot(v_sectionSample.yz, v_d), -v_sectionSample.w, v_sectionSample.w);
   if (sectionAxial < u_near) discard;
   vec3 inView = axialPosition(gl_FragCoord.xy, sectionAxial, u_viewport);
   vec3 inWorld = transpose(mat3(u_view)) * (inView - u_view[3].xyz);
@@ -413,11 +497,15 @@ ${ascii ? ascii.fsMain : ''}  float power = -0.5 * (v_conic.x * v_d.x * v_d.x + 
   gl_FragDepth = u_geometryDepth ? clamp(sectionZ,0.0,1.0) : gl_FragCoord.z;
   float sectionDepth = clamp((sectionAxial - u_fogp.z) / (u_fogp.w - u_fogp.z), 0.0, 1.0);
   ` : ''}
+  ${footprints ? `if(u_idx>3.5){
+    if(!footprintPlane||v_coverage==${softMode}||v_color.a<1.0||g<0.5${optical?'||hasOptical':''})discard;
+    o=vec4(0.0);od=vec4(0.0);oa=vec4(0.0);return;
+  }` : ''}
   ${layeredGlass ? `
-  ${cutaway ? '' : 'gl_FragDepth = gl_FragCoord.z;'}
+  ${cutaway || footprints ? '' : 'gl_FragDepth = gl_FragCoord.z;'}
   if (u_idx > 2.5) {
     if (v_gl < 0.5 || g ${optical ? '* (hasOptical ? v_optical.x : 1.0)' : ''} < 0.004) discard;
-    float depth = ${cutaway ? 'sectionZ' : 'v_ownerDepth'};
+    float depth = ${cutaway ? 'sectionZ' : footprints ? '(footprintPlane?footprintDepth:v_ownerDepth)' : 'v_ownerDepth'};
     float z = round(clamp(depth,0.0,1.0)*16777215.0);
     gl_FragDepth = clamp(depth,0.000001,1.0);
     o = vec4(mod(z,256.0),mod(floor(z/256.0),256.0),floor(z/65536.0),255.0)/255.0;
@@ -437,14 +525,15 @@ ${ascii ? ascii.fsMain : ''}  float power = -0.5 * (v_conic.x * v_d.x * v_d.x + 
   ` : `
   if (u_idx > 1.5) {
     if (v_coverage == ${softMode} || v_color.a < 0.5 || (continuous ? surfaceAlpha <= 0.5 : g < 0.38)${optical ? ' || hasOptical' : ''}) discard;
-    float k = v_ix + 1.0, z = round(clamp(${cutaway ? 'sectionZ' : 'v_ownerDepth'}, 0.0, 1.0) * 16777215.0);
+    float k = v_ix + 1.0, z = round(clamp(${cutaway ? 'sectionZ' : footprints ? '(footprintPlane?footprintDepth:v_ownerDepth)' : 'v_ownerDepth'}, 0.0, 1.0) * 16777215.0);
     o = vec4(mod(k, 256.0), mod(floor(k / 256.0), 256.0), floor(k / 65536.0), 255.0) / 255.0;
     od = vec4(mod(z, 256.0), mod(floor(z / 256.0), 256.0), floor(z / 65536.0), 255.0) / 255.0;
     oa = vec4(0);
     return;
   }
   `}
-  if (u_idx > 0.5) {   // the index pass (colour per pixel): which solid dab is in front here, its number in three bytes
+  if (u_idx > 0.5) {
+    ${engraving ? 'if(v_engravingSlot>0)discard;' : ''}   // the index pass (colour per pixel): which solid dab is in front here, its number in three bytes
     if (v_color.a < 1.0 || (continuous ? surfaceAlpha <= 0.5 : g < 0.5) || v_depth < 0.0) discard;
     ${cutaway ? 'if (cutInk > 0.0) { o = vec4(0.0); od = vec4(0.0); oa = vec4(0.0); return; }' : ''}
     float k = v_ix + 1.0;
@@ -460,6 +549,7 @@ ${ascii ? ascii.fsMain : ''}  float power = -0.5 * (v_conic.x * v_d.x * v_d.x + 
     float width = 0.36 * (2.0 - v_pixelStyle.x);
     a = 0.99 * (width > 0.0 ? smoothstep(0.5 - width, 0.5 + width, g) : step(0.5, g));
   }` : ''}
+  ${footprints ? 'if(shaped) a=min(.99,g);' : ''}
   ${stableDetail ? 'a *= v_detailGeometry;' : ''}
   if (a < 0.004) discard;
   vec3 rgb = v_color.rgb;
@@ -474,7 +564,7 @@ ${materialStyles ? `
     ivec2 ij = clamp(ivec2(floor(vec2(dot(v_fm.xy, v_d), dot(v_fm.zw, v_d)) * 2.0 + 2.0)), ivec2(0), ivec2(3));
     float f = ij.y == 0 ? v_ft.x : ij.y == 1 ? v_ft.y : ij.y == 2 ? v_ft.z : v_ft.w;
     int ci = int(mod(floor(f / (ij.x == 0 ? 1.0 : ij.x == 1 ? 64.0 : ij.x == 2 ? 4096.0 : 262144.0)), 64.0));
-    vec3 tile = mix(u_fpal[min(ci, 63)], u_fog, v_fk);
+    vec3 tile = mix(u_fpal[ci], u_fog, v_fk);
     rgb = ${stableDetail ? 'mix(rgb, tile, v_detailTexture)' : 'tile'}; }
 ${relighting ? 'if (v_relight.w > 0.0) rgb = mix(min(vec3(1.0), rgb * v_relight.xyz), u_fog, v_relight.w - 1.0);' : ''}
 ${optical ? `
@@ -484,6 +574,7 @@ ${optical ? `
     a *= v_optical.x;
     if (a < 0.004) discard;
   }` : ''}
+${engraving ? 'rgb=engravingShade(rgb,v_d);' : ''}
 ${contributions ? `  if (v_policySlot > 0) {
     ivec2 p = ivec2(floor(gl_FragCoord.xy * u_lookViewportScale));
     p.y = int(u_lookGrid.y) - 1 - p.y;
@@ -511,7 +602,7 @@ ${water ? `  vec3 mark; rgb = waterPaint(rgb, gl_FragCoord.xy, u_viewport,
   o = vec4(rgb * a, a);
   ${layeredGlass ? `vec4 pane = texelFetch(u_glassBoundary,ivec2(gl_FragCoord.xy),0);
   // Keep near-coplanar transparent contributions together through crossings.
-  float splitDepth = v_depth < 0.0 || v_color.a < 1.0 ? v_glassNearDepth : ${cutaway ? 'sectionZ' : 'v_ownerDepth'};
+  float splitDepth = v_depth < 0.0 || v_color.a < 1.0 ? v_glassNearDepth : ${cutaway ? 'sectionZ' : footprints ? '(footprintPlane?footprintDepth:v_ownerDepth)' : 'v_ownerDepth'};
   bool behind = pane.a > 0.0 && splitDepth > glassDepth(pane)+0.0000001;
   o_back = behind ? o : vec4(0.0);
   o_through = pane.a > 0.0 && !behind ? vec4(0.0,0.0,0.0,a) : vec4(0.0);` : ''}
@@ -561,7 +652,7 @@ vec3 paletteRow(int slot, vec3 inputColor, ivec2 p) {
   float mapping = texelFetch(u_constraintRows, ivec2(3, row), 0).a;
   if (mapping > 0.5 || (u_toneOn < 0.5 && u_grade > 0.5 && texelFetch(u_constraintRows, ivec2(2, row), 0).a > 0.5)) {
     int index = 0; float nearestDistance = 1e9;
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < u_pal.length(); i++) {
       if (i >= u_n) break;
       vec3 d = inputColor - u_pal[i];
       float distance = dot(weight, d * d);
@@ -656,7 +747,7 @@ vec3 defaultMaskColor(vec3 rgb, ivec2 p) {
   float th = (BAYER[(p.x & 3) + ((p.y & 3) << 2)] + 0.5) / 16.0 - 0.5;
   rgb = clamp(rgb + th * u_dither, 0.0, 1.0);
   int best = 0; float bd = 1e9;
-  for (int i = 0; i < 64; i++) {
+  for (int i = 0; i < u_pal.length(); i++) {
     if (i >= u_n) break;
     vec3 d = rgb - u_pal[i];
     float dd = dot(d*d, vec3(0.30, 0.55, 0.15));
@@ -715,7 +806,7 @@ uniform float u_edge;
 // in a fixed pattern (Bayer or blue noise) on the screen's art grid
 uniform float u_toneOn, u_toneCut, u_toneAmt; uniform int u_toneN; uniform highp sampler2D u_toneStops;
 ${packedTone ? 'uniform ivec2 u_toneThSize;' : 'uniform highp sampler2D u_toneTh;'}
-uniform vec3 u_pal[64], u_out[64], u_outl[64];   // (u_outl: what each colour is shown as where a carried light falls on it)
+uniform vec3 u_pal[${scenePaletteSize}], u_out[${scenePaletteSize}], u_outl[${scenePaletteSize}];   // (u_outl: what each colour is shown as where a carried light falls on it)
 uniform int u_n;
 uniform float u_grade; uniform float u_bars; uniform int u_remapLine;
 uniform float u_dither, u_luma, u_bypass, u_colored, u_refract, u_ao, u_aor;
@@ -1025,7 +1116,7 @@ ${environment ? '  baked = envMedia(baked, vec2(p) + 0.5, size, axial);' : ''}
       int kk2 = bb * 2 >= rlen(r) ? (sky ? 1 : 0) : u_olK;
       if (bb >= 0) ci = rampAt(r, edge ? max(0, bb - kk2) : bb + ck); } }
   g_pixed = true;
-  vec3 surfaceColor = u_pal[clamp(ci,0,63)];
+  vec3 surfaceColor = u_pal[clamp(ci, 0, u_n - 1)];
   ${relighting ? 'if (gain.w > 0.0) surfaceColor = mix(min(vec3(1.0), surfaceColor * gain.rgb), u_relightFog, fogAmount);' : ''}
   ${water ? 'surfaceColor = waterPaint(surfaceColor,vec2(p)+0.5,size,axial,mark);' : ''}
   ${environment ? 'surfaceColor = envMedia(surfaceColor,vec2(p)+0.5,size,axial);' : ''}
@@ -1139,15 +1230,24 @@ ivec2 holeFill(ivec2 p) { ivec2 ms = textureSize(u_depth, 0) - 1; float d0 = tex
     float da = texelFetch(u_depth, qa, 0).r, db = texelFetch(u_depth, qb, 0).r, gap = d0 - max(da, db);
     if (min(d0, min(da, db)) > -0.5 && gap > 0.004 && abs(da - db) < 0.6 * gap) return da < db ? qa : qb; }
   return p; }
+vec3 toneAt(vec3 c, ivec2 p) {
+    float lu = dot(c, vec3(0.30, 0.55, 0.15)); if (lu <= u_toneCut) return vec3(0.0);
+    float v = (lu - u_toneCut) / (1.0 - u_toneCut); int lo = 0; for (int i = 0; i < 46; i++) { if (lo >= u_toneN - 2 || v <= texelFetch(u_toneStops, ivec2(lo + 1, 0), 0).a) break; lo++; }
+    vec4 s0 = texelFetch(u_toneStops, ivec2(lo, 0), 0), s1 = texelFetch(u_toneStops, ivec2(lo + 1, 0), 0); ivec2 th = ${packedTone ? 'u_toneThSize' : 'textureSize(u_toneTh, 0)'}, sz = textureSize(u_depth, 0);
+    ivec2 rankAt = ivec2(p.x % th.x, (sz.y - 1 - p.y) % th.y);
+    float share = (v - s0.a) / max(1e-5, s1.a - s0.a),
+      rank = ${packedTone ? 'texelFetch(u_toneStops, rankAt + ivec2(0, 1), 0).r' : 'texelFetch(u_toneTh, rankAt, 0).r'};
+    return share >= 0.5 + (rank - 0.5) * u_toneAmt ? s1.rgb : s0.rgb; }
 // the finished colour of one pixel of the picture, in whichever look is on
 vec3 plainAt(ivec2 p) {
+  ivec2 artPixel = p;
   p = holeFill(p);
   vec3 c = texelFetch(u_scene, p, 0).rgb;
   ${layeredGlass ? 'c = refractContributions(p,c);' : ''}
   g_pixed = false;
   if (u_pixOn > 0.5) { if (u_sprOn > 0.5) {
-${water || environment || relighting ? '      vec4 sl = texelFetch(u_sprLayer, p, 0); if (sl.a > 0.5) { g_spr = true; g_pixed = true; return sl.rgb; }' :
-      '      vec4 sl = texelFetch(u_sprLayer, p, 0) * 255.0; if (sl.a > 127.0) { int v = int(sl.r + 0.5), ci = v >= 100 ? v - 100 : rampAt(int(sl.g + 0.5), int(sl.b + 0.5) + v - 8); g_spr = true; g_pixed = true; return u_pal[clamp(ci, 0, 63)]; }'} }
+${water || environment || relighting ? '      vec4 sl = texelFetch(u_sprLayer, p, 0); if (sl.a > 0.5) { g_spr = true; g_pixed = true; return u_toneOn > 0.5 ? toneAt(sl.rgb, artPixel) : sl.rgb; }' :
+      '      vec4 sl = texelFetch(u_sprLayer, p, 0) * 255.0; if (sl.a > 127.0) { int v = int(sl.r + 0.5), ci = v >= 100 ? v - 100 : rampAt(int(sl.g + 0.5), int(sl.b + 0.5) + v - 8); g_spr = true; g_pixed = true; vec3 color = u_pal[clamp(ci, 0, u_n - 1)]; return u_toneOn > 0.5 ? toneAt(color, artPixel) : color; }'} }
     if (u_paintOn) {
       vec3 paint = texelFetch(u_crispScene, p, 0).rgb;
       float through = 1.0 - texelFetch(u_crispDepth, p, 0).r;
@@ -1184,22 +1284,17 @@ ${water || environment || relighting ? '      vec4 sl = texelFetch(u_sprLayer, p
   if (u_edge > 0.0 && dc > -0.5 && dc - dm > u_edge) {
     if (u_remapLine > 0) return glassAir(u_out[u_remapLine - 1], p, dc, vec2(textureSize(u_depth, 0)));
     c = u_line;
+    if (u_toneOn > 0.5) return toneAt(c, artPixel);
   }
   ${contributions ? 'return glassAir(c, p, dc, vec2(textureSize(u_depth, 0)));' : ''}
   ${contributions ? '' : 'else {'}
 ${paletteConstraints ? '    vec3 constrained; if (constrainPalette(p, c, constrained)) { g_constrained = true; return constrained; }' : ''}
+    if (u_toneOn > 0.5) return toneAt(c, artPixel);
     float th = (BAYER[(p.x & 3) + ((p.y & 3) << 2)] + 0.5) / 16.0 - 0.5;
     c = clamp(c + th * u_dither, 0.0, 1.0);
   ${contributions ? '' : '}'}
-  if (u_toneOn > 0.5) { float lu = dot(c, vec3(0.30, 0.55, 0.15)); if (lu <= u_toneCut) return vec3(0.0);
-    float v = (lu - u_toneCut) / (1.0 - u_toneCut); int lo = 0; for (int i = 0; i < 46; i++) { if (lo >= u_toneN - 2 || v <= texelFetch(u_toneStops, ivec2(lo + 1, 0), 0).a) break; lo++; }
-    vec4 s0 = texelFetch(u_toneStops, ivec2(lo, 0), 0), s1 = texelFetch(u_toneStops, ivec2(lo + 1, 0), 0); ivec2 th = ${packedTone ? 'u_toneThSize' : 'textureSize(u_toneTh, 0)'}, sz = textureSize(u_depth, 0);
-    ivec2 rankAt = ivec2(p.x % th.x, (sz.y - 1 - p.y) % th.y);
-    float share = (v - s0.a) / max(1e-5, s1.a - s0.a),
-      rank = ${packedTone ? 'texelFetch(u_toneStops, rankAt + ivec2(0, 1), 0).r' : 'texelFetch(u_toneTh, rankAt, 0).r'};
-    return share >= 0.5 + (rank - 0.5) * u_toneAmt ? s1.rgb : s0.rgb; }
   vec3 best = u_pal[0]; float bd = 1e9; int bi = 0;
-  for (int i = 0; i < 64; i++) {
+  for (int i = 0; i < u_pal.length(); i++) {
     if (i >= u_n) break;
     vec3 df = c - u_pal[i];
     float d = u_luma > 0.5 ? abs(dot(df, vec3(0.299, 0.587, 0.114))) : dot(df * df, vec3(0.30, 0.55, 0.15));
@@ -1213,7 +1308,7 @@ vec3 lookAt(ivec2 p) {
   if (u_colored > 0.5) {
 ${paletteConstraints ? '    vec3 constrained; if (constrainPalette(p, pixelNative(p), constrained)) { g_constrained = true; return constrained; }' : ''}
     vec3 c = pixelResolve(p); vec4 dq = texelFetch(u_crispDepth, p, 0);
-    if (u_grade > 0.5 && dq.b > 0.3 + ((BAYER[(p.x & 3) + ((p.y & 3) << 2)] + 0.5) / 16.0 - 0.5) * 0.3) { for (int j = 0; j < 64; j++) { if (j >= u_n) break; if (like(c, u_out[j])) { c = u_outl[j]; break; } } }   // under a carried light
+    if (u_grade > 0.5 && dq.b > 0.3 + ((BAYER[(p.x & 3) + ((p.y & 3) << 2)] + 0.5) / 16.0 - 0.5) * 0.3) { for (int j = 0; j < u_out.length(); j++) { if (j >= u_n) break; if (like(c, u_out[j])) { c = u_outl[j]; break; } } }   // under a carried light
     return glassAir(c, p, dq.r, vec2(textureSize(u_crispScene, 0))); }
   return plainAt(p);
 }
@@ -1295,10 +1390,10 @@ void main(){
 }`;
   const DAMP_FS = `#version 300 es
 precision highp float;
-uniform sampler2D u_cur, u_hist, u_dep; uniform vec3 u_pal[64]; uniform int u_n; uniform float u_have;
+uniform sampler2D u_cur, u_hist, u_dep; uniform vec3 u_pal[${scenePaletteSize}]; uniform int u_n; uniform float u_have;
 uniform mat4 u_iview, u_pvp; uniform vec4 u_cam; uniform vec2 u_rng;
 out vec4 o;
-int idxOf(vec3 c) { for (int i = 0; i < 64; i++) { if (i >= u_n) break; vec3 d = abs(c - u_pal[i]); if (max(d.r, max(d.g, d.b)) < 0.006) return i; } return -1; }
+int idxOf(vec3 c) { for (int i = 0; i < u_pal.length(); i++) { if (i >= u_n) break; vec3 d = abs(c - u_pal[i]); if (max(d.r, max(d.g, d.b)) < 0.5 / 255.0 + 0.00001) return i; } return -1; }
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy), sz = textureSize(u_cur, 0); vec3 c = texelFetch(u_cur, p, 0).rgb; int ci = idxOf(c);
   o = vec4(c, float(ci + 1) / 255.0);
@@ -1357,14 +1452,14 @@ ${cutaway ?? ''}
 ${water ? waterGLSL(airPockets, layered, atlas) : ''}
 ${environment ? environmentMediaSource(emitterFog) : ''}
 ${water || environment || relighting ? `
-uniform vec3 u_waterSpritePalette[64];
+uniform vec3 u_waterSpritePalette[${scenePaletteSize}];
 uniform vec4 u_rmp4[128], u_rmpN4[16];
 int spriteColor(int v) {
-  if (v >= 100) return clamp(v - 100, 0, 63);
+  if (v >= 100) return clamp(v - 100, 0, u_waterSpritePalette.length() - 1);
   int index = v_i.z;
   int count = int(u_rmpN4[index >> 2][index & 3] + 0.5) & 15;
   int offset = index * 8 + clamp(v_i.w + v - 8, 0, max(0, count - 1));
-  return clamp(int(u_rmp4[offset >> 2][offset & 3] + 0.5), 0, 63);
+  return clamp(int(u_rmp4[offset >> 2][offset & 3] + 0.5), 0, u_waterSpritePalette.length() - 1);
 }
 ` : ''}
 const ivec2 EOD[4] = ivec2[4](ivec2(0, 1), ivec2(1, 0), ivec2(-1, 0), ivec2(0, -1)), ETD[4] = ivec2[4](ivec2(1, 0), ivec2(0, -1), ivec2(0, 1), ivec2(1, 0));

@@ -4,6 +4,8 @@ const RenderContract = (() => {
   const lenses = typeof CameraLens === 'undefined' ? require('./camera-lens.js') : CameraLens;
   const impulses = typeof CameraImpulses === 'undefined' ? require('./camera-impulses.js') : CameraImpulses;
   const staging = typeof CameraStaging === 'undefined' ? require('./camera-staging.js') : CameraStaging;
+  const footprints = typeof SplatFootprints === 'undefined' ? require('./splat-footprints.js') : SplatFootprints;
+  const grids = typeof RenderGrid === 'undefined' ? require('./render-grid.js') : RenderGrid;
   const pixels = typeof PixelLook === 'undefined' ? require('./pixel-look.js') : PixelLook;
   const stages = typeof RenderStages === 'undefined' ? require('./render-stages.js') : RenderStages;
   const inputs = typeof LookInputs === 'undefined' ? require('./look-inputs.js') : LookInputs;
@@ -11,9 +13,9 @@ const RenderContract = (() => {
   function options(world, frame = {}, bindClocks) {
     let out = { ...frame, time: frame.time ?? frame.t };
     const clocks = out.timeDomains ?? world.timeDomains;
-    if (clocks) {
+    if (clocks || out.take !== undefined) {
       if (bindClocks) out = bindClocks(world, out);
-      else if (typeof clocks.frame === 'function') out = clocks.frame(out);
+      else if (typeof clocks?.frame === 'function') out = clocks.frame(out);
       else throw new TypeError('Expected a live render clock set');
     }
     const time = out.time ?? world.lookSnapshot?.time;
@@ -54,6 +56,8 @@ const RenderContract = (() => {
     const look = world.look ?? {};
     const rules = stageRules(world, frame);
     const issues = [];
+    if (frame.deepComposite ?? look.deepComposite) issues.push('deep-compositing');
+    if (frame.shutter ?? look.shutter) issues.push('programmable-exposure');
     if (!frame.raw && world.pal?.length > 64) issues.push('palette-limit');
     if (!rules.length && !hasSurfacePaint(world, frame)) return issues;
     if (rules.some(rule => rule.stage === 'frame' || rule.stage === 'palette')) issues.push('post-stage');
@@ -109,7 +113,12 @@ const RenderContract = (() => {
     const stageNames = new Set(stageRules(world, frame).map(rule => rule.stage));
     if (hasSurfacePaint(world, frame)) stageNames.add('material');
     const paletteMode = frame.raw ? 'raw' : stageNames.size ? 'stages' : toneDefinition ? 'tone' : 'palette';
-    return { version: 1, width, height, clocks, camera: { pose, time, ortho, tangent, clipNear, clipFar, setback },
+    const markPlan=(frame.splatFootprints??world.look?.splatFootprints)!==false&&footprints.plan(world);
+    const grid = grids.prepare(frame.renderGrid ?? world.look?.renderGrid);
+    return { version: 1, width, height, clocks,
+      ...(markPlan&&{footprints:{styles:markPlan.styles.map(p=>p.shape),atlas:[markPlan.width,markPlan.height],atlasBytes:markPlan.atlas.byteLength,rowBytes:markPlan.indices.byteLength,textureReadsPerShapedFragment:4}}),
+      ...(grid && { representation: { type: 'grid', mode: grid.mode, size: grid.size, angle: grid.angle,
+        origin: grid.origin, aspect: grid.aspect, gap: grid.gap, resources: grids.dimensions(grid, width, height) } }), camera: { pose, time, ortho, tangent, clipNear, clipFar, setback },
       paletteMode, palette: !frame.raw && grade ? pixels.gradePalette(grade) : world.pal?.slice(),
       stages: [...stageNames], issues: compatibility(world, frame) };
   }

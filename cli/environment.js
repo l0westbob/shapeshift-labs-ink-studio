@@ -28,6 +28,7 @@ function resolveLighting(world,o,climate,air,direction,inspect = false) {
   const celestial = CelestialTracks.settings(world.celestialTracks,o.celestialTracks)?.frame(skyTime,inspect);
   const sun = LiveSun.prepare(world.liveSun,o.liveSun,time,celestial?.sun);
   const cloudSource = o.cloudField ?? world.cloudField;
+  if (o.cloudSelfShadows === true && !cloudSource) throw new TypeError('Cloud self-shadows need a cloud field');
   const cloudSettings = cloudSource === false ? null :
     CloudField.shadowSettings(world.cloudShadows,o.cloudShadows,environment?.parameters);
   if (cloudSettings && !cloudSource) throw new TypeError('Cloud shadows need a cloud field');
@@ -36,7 +37,7 @@ function resolveLighting(world,o,climate,air,direction,inspect = false) {
   const flash = Lightning.settings(world.lightning,o.lightning)?.frame(time);
   const clouds = cloudSource ? CloudField.compile(cloudSource).frame(skyTime,cloudSettings,
     sun?.direction ?? celestial?.sun?.direction ?? environment?.sky?.sun ?? (o.volumeLighting ?? world.volumeLighting)?.sun?.direction,
-    cloudDisplacement,o.cloudRepresentation ?? world.cloudRepresentation,flash?.light,cutouts?.cloud,direction?.cloudEdge) : null;
+    cloudDisplacement,o.cloudRepresentation ?? world.cloudRepresentation,flash?.light,cutouts?.cloud,direction?.cloudEdge,o.cloudSelfShadows) : null;
   return { celestial,sun,flash,clouds,cloudSettings };
 }
 

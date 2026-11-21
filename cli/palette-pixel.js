@@ -42,8 +42,16 @@ function create(at, w, h) {
       if (winner === 'material') {
         policyChoice(steps,local.policy,input,trace.slot,trace,weight,
           {stage:'effect',effect:kind,colors:local.policy?.packed ?? local.swatches.map(pack)});
-      } else choice(steps,{domain:'effect',stage:'effect',effect:kind,colors:ramp.packed},
+      } else choice(steps,{domain:'effect',stage:'effect',effect:kind,colors:ramp.packed,
+        ...(ramp.select && {select:ramp.select})},
         input,index,trace,weight);
+    },
+    cluster(before, after) {
+      if (colorAt(before, pixel) === colorAt(after, pixel)) return;
+      const input = before.subarray(pixel * 3, pixel * 3 + 3);
+      const color = parseInt(colorAt(after, pixel).slice(1), 16);
+      choice(steps,{domain:'cluster',stage:'color-clusters',colors:[color]},
+        Array.from(input, n => n / 255),0,{method:'connected-merge'});
     },
     finish(frame, passes) {
       const objectId = passes.objectId?.[pixel] ?? 0, materialId = passes.materialId?.[pixel] ?? 0;

@@ -291,9 +291,12 @@
     return K.weather.tracks.compile(config.skyEnvironment,config.weatherTracks);
   }
   function timelineCommands(world, timeline) {
-    return (timeline?.events ?? []).map(({ id, time, kind, detail, path }) => {
+    const clock = world.takeClock === undefined ? null : K.timeDomains.take(world.takeClock);
+    if (clock) check(clock.dt === world.dt, 'Take simulation rate must match the world timestep');
+    return (timeline?.events ?? []).map(row => {
+      const { id, time, kind, detail, path } = row;
       const floor = Math.floor(time / world.dt);
-      const tick = Math.max(1, floor + Number(time > floor * world.dt));
+      const tick = clock ? timeline.locate(row, clock).cueTick : Math.max(1, floor + Number(time > floor * world.dt));
       return { tick, action: 'world/event', args: { ...detail, kind, timeline: { id, path, time } } };
     });
   }

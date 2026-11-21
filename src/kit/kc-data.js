@@ -429,6 +429,11 @@
     } catch (error) {
       bad('finish.areaLights', error.message);
     }
+    try {
+      ShotLighting.prepare(st.finish.shotLighting);
+    } catch (error) {
+      bad('finish.shotLighting', error.message);
+    }
     if (st.finish.volumeLighting) {
       try {
         SceneOptics.lighting(st.finish.volumeLighting, st.palette);
@@ -530,10 +535,16 @@
       }
     }
     try {
+      bakedShadowMarch(st.finish.shadowMarch);
+    } catch (error) {
+      bad('finish.shadowMarch', error.message);
+    }
+    try {
       SculptSampling.prepare(st.finish.adaptiveSampling);
     } catch (error) {
       bad('finish.adaptiveSampling', error.message);
     }
+    try{Stippling.prepare(st.finish.stipple);}catch(error){bad('finish.stipple',error.message);}
     let look = st.finish.look;
     try {
       look = K.authoring.looks.scene(look, catalog);
@@ -595,9 +606,19 @@
       bad('finish.look.stableDetail', error.message);
     }
     try {
+      Engraving.prepare(look?.engraving);
+    } catch (error) {
+      bad('finish.look.engraving', error.message);
+    }
+    try {
       EdgeFilter.prepare(look?.edgeFilter);
     } catch (error) {
       bad('finish.look.edgeFilter', error.message);
+    }
+    try {
+      TranslucentSilhouettes.prepare(look?.translucentSilhouettes);
+    } catch (error) {
+      bad('finish.look.translucentSilhouettes', error.message);
     }
     try {
       ContributionRules.coverageMode(look?.splatCoverage);
@@ -645,6 +666,11 @@
     } catch (error) {
       bad('finish.look.ink', error.message);
     }
+    if (st.finish.pixelStamps !== undefined) try {
+      PixelStamps.placements(st.finish.pixelStamps, { scenePalette: st.palette, paletteRoles: st.roles });
+    } catch (error) {
+      bad('finish.pixelStamps', error.message);
+    }
     try {
       ArtEffects.prepare(look?.effects, st.palette);
     } catch (error) {
@@ -654,6 +680,11 @@
       ArtStability.prepare(look?.stable);
     } catch (error) {
       bad('finish.look.stable', error.message);
+    }
+    try {
+      ColorClusters.prepare(look?.colorClusters);
+    } catch (error) {
+      bad('finish.look.colorClusters', error.message);
     }
     try {
       SplatOrder.transparency(look?.stableTransparency);
@@ -748,7 +779,9 @@
       if (m === undefined) return;
       const role = typeof m === 'string' ? m : m && m.role;
       if (m && typeof m === 'object') {
-        keys(m, path, { role: 1, ramp: 1, noise: 1, scale: 1, glow: 1, over: 1, surface: 1, model: 1, lookAsset: 1, albedo: 1, materialId: 1, surfaceId: 1, pixelStyle: 1, glass: 1, optical: 1, controls: 1 });
+        keys(m, path, { role: 1, ramp: 1, noise: 1, scale: 1, glow: 1, over: 1, surface: 1, model: 1, lookAsset: 1, albedo: 1, materialId: 1, surfaceId: 1, pixelStyle: 1, glass: 1, optical: 1, controls: 1, engraving: 1 });
+        try { Engraving.prepare(m.engraving); }
+        catch (error) { bad(path + '.engraving', error.message); }
         if (m.controls !== undefined) {
           try { MaterialControls.describe(m.controls); }
           catch (error) { bad(path + '.controls', error.message); }
@@ -1430,9 +1463,11 @@
     const { detailBudgets, shadowArt } = st0.finish.look ?? {};
     const B = (env.makeBuilder || makeBuilder)(seed, pal, detailBudgets === undefined && shadowArt === undefined ?
       undefined : { detailBudgets, shadowArt });
-    const keepLightCasters = AreaLights.prepare(st0.finish.areaLights).some(light => light.shadows && light.intensity) ||
+    const keepLightCasters = ShotLighting.needsCasters(st0.finish.shotLighting) ||
+      AreaLights.prepare(st0.finish.areaLights).some(light => light.shadows && light.intensity) ||
       EmissiveFinishes.prepare(st0.finish.emissiveFinishes, pal).some(({spill}) => spill?.shadows && spill.intensity) ||
       st0.finish.volumeLighting?.spots?.some(light => light.surfaceIntensity && light.castsShadow !== false);
+    const shadowMarch = st0.finish.shadowMarch === undefined ? null : bakedShadowMarch(st0.finish.shadowMarch);
     let S, grp;
     function startSculpt() {
       S = K.sculpt((env.makeSculpt || makeSculpt)(B));
@@ -1443,7 +1478,13 @@
         Array.isArray(st0.finish.look?.renderStages) && st0.finish.look.renderStages.some(rule => rule.stage === 'material');
       if (st0.amb !== undefined) S.amb = st0.amb;
       if (st0.sky !== undefined) S.sky = st0.sky;
+      if (shadowMarch) {
+        S.shSteps = shadowMarch.steps;
+        S.shLen = shadowMarch.distance;
+      }
       if (st0.finish.res) S.res = st0.finish.res;
+      if(st0.finish.stipple!==undefined)S.stipple=st0.finish.stipple;
+      if (Engraving.prepare(st0.finish.look?.engraving)?.brushwork) S.engraving = st0.finish.look.engraving;
       if (st0.finish.adaptiveSampling !== undefined) S.adaptiveSampling = st0.finish.adaptiveSampling;
       grp = {};
       for (const [g, v] of Object.entries(spec.groups || {})) grp[g] = S.grp(v.blend);
@@ -1467,6 +1508,7 @@
           if (m.glass !== undefined) out.glass = m.glass;
           if (m.optical !== undefined) out.optical = m.controls === undefined ? OpticalMaterials.material(m.optical) : m.optical;
           if (m.pixelStyle !== undefined) out.pixelStyle = m.pixelStyle;
+          if (m.engraving !== undefined) out.engraving = m.engraving;
           if (m.over) {
             const r2 = ramp(m.over.role),
               above = m.over.above === undefined ? 0.55 : m.over.above,

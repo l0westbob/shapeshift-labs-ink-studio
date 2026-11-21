@@ -443,7 +443,10 @@
         ];
       };
       rig.free = new Uint8Array(N); // splats that have left their part (broken off): the rig no longer moves them
+      const restBrushFrames=st.W.splatFootprints?.frames?.slice();
       rig.apply = () => {
+        let brushFrames;
+        if(restBrushFrames&&dirty.some(Boolean))brushFrames=st.W.splatFootprints.frames.slice();
         const D = st.D,
           R = st.base,
           rows = st.rows,
@@ -478,6 +481,7 @@
               c11 = R[o + 8],
               c12 = R[o + 9],
               c22 = R[o + 10];
+            if(brushFrames&&i*6+6<=brushFrames.length)SplatFootprints.carryFrame(brushFrames,i*6,restBrushFrames,i*6,Mx.subarray(k,k+9));
             D[o] = a * x + bb * y + c * z + tx;
             D[o + 1] = d * x + e * y + f * z + ty;
             D[o + 2] = g * x + h * y + ii * z + tz;
@@ -499,6 +503,7 @@
             rows[i >> 9] = 1;
           }
         }
+        if(brushFrames)SplatFootprints.setFrames(st.W,brushFrames);
       };
       // where a part's splats sit at rest: middle and extent
       rig.box = b => {

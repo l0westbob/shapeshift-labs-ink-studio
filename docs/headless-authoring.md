@@ -4,6 +4,14 @@ These APIs are available through `KIT.procedural` in Node and the browser bundle
 
 For image review and export, pass the finished world to Node's CPU `render()`. For interactive review, pass the world and authoring toolkit to the [WebGL canvas renderer](browser-renderer.md).
 
+## Start from an editable recipe
+
+The [starter recipes](../examples/starter-recipes/README.md) ship five small
+projects for a relightable sprite, an audio-driven sign, a weathered tile
+set, a looping spell, and a layered 3D vista. Copy a recipe folder, run
+its graph, and edit its named inputs or nodes. Each recipe includes a
+take clock and can be archived with the existing project bundler.
+
 ## Edit generated parts from the CLI
 
 From the checkout, inspect the [editable passage](../examples/editable-passage.js)
@@ -135,10 +143,8 @@ typed ports and pass overrides as a JSON object with `--inputs values.json`.
 Optional project `time` and `seed` default to zero. Set `--at` for seconds and
 `--seed` for a specific integer seed.
 
-The `groups` map registers each named group as an operation. A group value is
-an inline graph or a file path relative to the project. Group files use
-`"format": "ink-studio/graph-group"` and `"version": 1` with the graph fields.
-Groups can use other groups registered in the same project. Each instance
+The `groups` map registers each named group as an operation. A group can be
+inline or use a [shared group file](#reference-a-shared-group). Each instance
 owns its own evaluator and cache. Validation checks typed links, missing
 ports, asset references with literal names, and dependency and group cycles
 without running nodes. Planning reports the evaluation order, source links
@@ -158,6 +164,157 @@ declares a PNG asset called `sprite`. Assets are loaded relative to the
 project and held as a snapshot for the life of the session. The plan and runs
 share a hash of the project, resolved group definitions, and asset bytes.
 Host operation implementations are supplied separately.
+
+Use `{"format":"indexed-png","file":"sprite.png"}` with
+`indexedPngAsset` to keep the PNG's original palette slot numbers,
+including duplicate swatches. The node returns the one-channel slot
+raster as `value`, the ordered swatches as `palette`, and per-pixel
+opacity bytes as `alpha`.
+
+### Reference a shared group
+
+Put a reusable graph in its own file. Its `inputs` declare named sockets and
+their types and defaults. Its `outputs` declare the named result sockets.
+`version` identifies the file format. `revision` identifies the authored
+group revision and defaults to 1 when omitted.
+
+```json
+{
+  "format": "ink-studio/graph-group",
+  "version": 1,
+  "revision": 3,
+  "inputs": { "level": { "type": "number", "default": 2 } },
+  "nodes": {
+    "scaled": { "op": "multiply", "inputs": { "a": { "input": "level" }, "b": 5 } }
+  },
+  "outputs": { "brightness": { "node": "scaled" } }
+}
+```
+
+Register the file under a local operation name in the graph project.
+
+```json
+{
+  "format": "ink-studio/graph-project",
+  "version": 1,
+  "groups": { "Gain": { "file": "../shared/gain.json", "revision": 3 } },
+  "nodes": { "lamp": { "op": "Gain", "inputs": { "level": 3 } } },
+  "outputs": { "brightness": { "node": "lamp", "port": "brightness" } }
+}
+```
+
+Use a path string or `{ "file": "../shared/gain.json" }` to follow the file
+on each project load. Set `revision` to require that exact authored revision.
+Add `sha256` to require the exact file bytes. A mismatch identifies the
+group and the expected and actual values. Existing projects and sessions
+keep their loaded snapshot until reopened.
+
+A group can declare its own `groups` map to use private dependencies and
+travel between projects. Resolve each path relative to the file that declares
+it. A group that omits the map can call siblings in its registering scope,
+including existing project-level siblings. A group with its own map looks up
+group names there. Pin nested references individually when you need to fix
+their revisions or bytes.
+
+```sh
+ink-studio graph dependencies shots/market.json
+ink-studio graph impact shared/gain.json --root .
+```
+
+`graph dependencies` lists direct and nested aliases, files, revisions,
+SHA-256 hashes and pins. `graph plan` includes the same list and the named
+group sockets. `graph impact` scans graph project JSON files under the chosen
+directory and reports which projects use the group directly or through a
+dependency. For a new revision, `updates` follows the live file and
+`requires-reference-update` has a revision or byte pin to update.
+`declared-only` identifies an unused reference. The report also includes
+existing pin mismatches and projects whose references could not be read.
+The scan skips hidden directories, `node_modules`, and embedded groups inside
+packed takes. Use the report's hash to set a byte pin.
+
+In Node, use `readGraphProject(file).dependencies()` and
+`findGraphGroupUsers(file, { root })`. [Packing a take](project-bundles.md#bundle-a-whole-take)
+keeps the exact group files, including nested references.
+
+### Explain changes between graphs
+
+```sh
+ink-studio graph diff previous/project.json next/project.json
+```
+
+The report compares nodes by ID and follows changes to their input bindings,
+output ports, named parameters, and keyframes. It includes asset hashes,
+nested group edits, and changes to named outputs. Each affected output lists
+JSON Pointer paths back to the changes that can reach it. A change inside
+a group follows the affected group output, so an unrelated port can remain
+outside the report.
+
+To compare an in-place edit, save the old graph's bindings and asset hashes
+before changing its files. A snapshot can also capture input overrides and
+a specific seed or sample time.
+
+```sh
+ink-studio graph snapshot project.json --seed 11 > before.json
+# Edit the project, source image, or a referenced group, then compare.
+ink-studio graph snapshot project.json --seed 12 --inputs new-look.json > after.json
+ink-studio graph diff before.json after.json --json
+```
+
+Both sides of `graph diff` can be graph projects, packed takes with graphs,
+or saved snapshots. In Node, use `diffGraphs(before, after)` with projects
+from `readGraphProject` or snapshots from `project.snapshot({ inputs, seed, time })`.
+
+The report traces potential changes through the compiled graph without
+rendering. A seed change follows operations that consume the graph seed.
+Camera and palette edits follow the ports that use them. An asset reader
+whose filename is chosen at runtime can depend on any changed asset.
+For a built-in or host operation, its inputs can affect each of its outputs.
+A host operation can declare `seed: false` when it ignores the seed.
+
+### Discover registered nodes
+
+```sh
+ink-studio graph nodes
+ink-studio graph nodes --json
+ink-studio graph describe raster.resize
+ink-studio graph describe array.map --json
+ink-studio graph describe raster.resize --example > resize.json
+ink-studio graph run resize.json
+```
+
+The catalog lists the same toolkit, headless, and configured host
+operations that the runner resolves. `graph describe` reports named
+inputs and outputs, required inputs, defaults, units, constraints, and
+a runnable example. Its versioned JSON records also include the clock
+dependency and operation origin. A null unit means the port has no named
+unit in the registry or catalog. Structured properties document common
+settings inside the `options` records, and each operation enforces its
+full settings rules when evaluated.
+
+Dynamic nodes show a representative signature resolved by the compiler.
+For example, an `array.map` group supplies the item type, result type,
+and any extra inputs. The description identifies which field controls
+specialization. Catalog discovery plans the example as needed and leaves
+operation execution and instantiation to the runner.
+
+`--example` prints the versioned project by itself. Asset examples point
+to the small fixtures shipped with Ink. Operations that require JavaScript
+handles, such as `materialSample`, print a runnable Node script instead.
+
+```sh
+ink-studio graph describe materialSample --example > sample-material.cjs
+node sample-material.cjs
+```
+
+Use `ink.listGraphNodes({ operations })` and
+`ink.describeGraphNode(op, { operations })` for the same JSON structures
+in Node. A custom operation in `graphOperations` can attach a
+`description`, `constraints` (an array of strings), and an `example` with
+`{ kind: 'graph', project }` or `{ kind: 'node', source }`. A socket
+definition can also include a `unit`, a `description`, a `constraints`
+object, or named `properties`. These fields document the host operation's
+own validation. A host operation without an example still shows its
+declared ports.
 
 ### Outputs and CI
 
@@ -198,6 +355,116 @@ Exit status is 0 on success, 2 when any assertion fails, and 1 for invalid
 input or execution errors. Assertion failures still write the declared
 artifacts and report.
 
+### Resume a batch and stream progress
+
+```sh
+ink-studio graph batch project.json cases.json --out review --resume --progress ndjson
+```
+
+Use the same command to start a resumable batch or continue it. Each case
+evaluates independently. After publishing its artifacts and report, the
+runner saves a receipt under `cases/<id>/receipt.json` with the case key
+and report SHA-256. Resume verifies the report and each artifact's size and
+SHA-256 before reusing a successful case. It retries unfinished cases,
+assertion failures, and execution errors. Damaged or missing artifacts are
+rebuilt or restored from a matching artifact cache entry.
+
+Case keys cover the compiled graph, assets, operation and runner versions,
+and the case's resolved inputs, time, and seed. Changing a case reruns that
+case. A new graph, asset, or runner revision can invalidate earlier
+receipts. Give a host operation a new `cacheVersion` when its external
+dependencies change. A resumable batch can also use `--cache` for completed
+case artifacts. Failed cases still evaluate again on resume.
+
+`--progress ndjson` writes `batch-started`, `case-started`,
+`case-finished`, and `batch-finished` records to standard output. Each
+record carries an attempt ID and a sequence number. Case results report
+`completed`, `reused`, `failed`, or `error`, with artifact hashes when
+available. The final record includes the aggregate report and exit code.
+With `--out`, the same records are appended to `progress.ndjson`, even
+when standard output carries only the final report.
+
+You can start with `--progress ndjson --out review` and add `--resume`
+on the next invocation. A resumable batch allows one live writer per
+output directory. Its aggregate `report.json` is published when that
+attempt finishes. Case-level execution errors leave other cases runnable
+and return exit code 1. Assertion-only failures return exit code 2.
+
+Use [graph clips](graph-clips.md) to export a named raster or scene output at
+an exact frame rate with warm-up and cuts.
+
+See [connecting procedural rasters](render-graph.md#connect-procedural-rasters)
+for binding graph outputs to the renderer and reading image, mask, and native
+scene passes back into procedural nodes.
+
+### Reuse artifacts across CLI processes
+
+```sh
+ink-studio graph run project.json --cache .ink-cache --out review-a
+ink-studio graph run project.json --cache .ink-cache --out review-b
+```
+
+Pass the same `--cache` directory to reuse a completed `run`, `inspect`,
+`batch`, or `clip` invocation. Each entry holds its report and encoded
+artifacts. A hit publishes those artifacts into the requested output
+directory and preserves assertion results and exit status. A cached clip
+replays the whole sequence, including its warm-up and cuts.
+
+The SHA-256 request key covers the graph and group definitions, source
+asset hashes, input overrides, seed, time, command settings, and operation
+implementations. Built-in operations and encoders use the loaded toolkit
+and runner build fingerprints. Custom operations opt in with a
+`cacheVersion` string or positive integer on their registration. Use it
+for deterministic operations whose inputs account for everything they read,
+and bump it when their implementation or dependencies change. Projects
+using unversioned custom operations, hosted codecs, or a custom toolkit
+build execute normally and report a cache bypass.
+
+The directory owns an `ink-graph-artifacts-v1` subdirectory, with a default
+budget of 256 MiB and 128 entries. Override the limits with
+`--cache-bytes N` and `--cache-entries N`. The cache evicts least recently
+used entries, publishes complete entries atomically, and verifies checksums
+before replay. Results larger than the configured byte budget or the
+256 MiB per-entry limit are still exported normally.
+
+The report adds `artifactCache.status` (`hit`, `miss`, or `bypass`).
+On a hit, the `cache` counters describe the original graph evaluation.
+Persistent sessions continue to serve their own in-process evaluator cache.
+
+### Schedule independent raster branches
+
+```sh
+ink-studio graph run project.json --workers 2 --out review
+ink-studio graph run project.json --workers 1 --out serial-review
+```
+
+`--workers` is available for `run`, `inspect`, `batch`, `clip`, and
+`session`. Choose 1–8. A count of 1 measures the serial baseline. Workers
+start when a ready set contains at least two eligible uncached blur jobs.
+The current kernels are `fx.pathBlur` and `fx.kernelBlur`. Their work
+threshold is 12 million estimated sample taps on a cold pool and 5 million
+on a warm pool. Jobs with inputs above the 16 MiB payload budget run locally.
+
+The coordinator keeps the graph's inputs and cached values. Workers receive
+copies of their inputs and transfer back the buffers they produce. Named
+outputs, artifacts, and batch cases retain their declared order. Host
+operations and stateful nodes run in the coordinator in dependency order.
+An unavailable worker falls back to serial execution of the affected pure
+block. Reusable groups can use the same pool.
+
+The report's `workers` record counts jobs, peak concurrency, estimated
+input payload bytes, transferred output buffer bytes, and fallbacks.
+`postMs` measures the coordinator's message submission time.
+`waitMs` measures time blocked while collecting results.
+`computeMs` sums kernel time across workers. A clip reports totals across
+its frames. Node callers can pass `createGraphWorkers(2)` as the project's
+`workerPool` and close the pool when finished.
+
+Run `node scripts/benchmark-graph-workers.js` after building to compare
+cold and warm wall times on two independent branches. The benchmark checks
+serial and parallel output hashes and measures raster round trips from
+256 KiB through 16 MiB with both output-copy and output-transfer paths.
+
 ### Persistent sessions
 
 Send one JSON request per line. The response echoes the optional request
@@ -226,6 +493,52 @@ evaluator caches them.
 ## Typed data and arrays
 
 Declare these types on project inputs, group ports, or library operations.
+
+### Convert coordinates, time and colour explicitly
+
+`graph validate` and `graph plan` identify incompatible typed links by
+source and destination port and suggest a conversion when one is available.
+The named types describe ordinary arrays, numbers and raster records.
+Legacy `vec2`, `vec3`, `number`, and `raster` sockets can still carry these
+values. Declare semantic types on graph inputs and group ports to keep the
+unit checks across the graph. Raw literals use the destination's type.
+
+| From and to | Graph operations |
+| --- | --- |
+| `pixels` and `uv` | `coord.pixelToUV`, `coord.uvToPixel` |
+| `worldPosition` and projected `pixels` | `coord.project`, `coord.unproject` |
+| `seconds` and `frames` | `time.toFrames`, `time.toSeconds` |
+| Display RGB(A) byte levels and normalized sRGB | `color.fromRGB8`, `color.toRGB8` |
+| Normalized display sRGB and linear sRGB | `color.toLinear`, `color.toDisplay` |
+| RGB or RGBA rasters | `color.rasterToLinear`, `color.rasterToDisplay` |
+
+Pixel and UV coordinates start at the top-left edge. The first pixel
+center is `[0.5, 0.5]`. Divide by the viewport's full width and height
+to obtain UV. Values can extend beyond the viewport for offscreen work.
+`coord.project` returns the pixel point, UV, axial camera depth, and a
+`visible` flag for viewport and clip-plane coverage. Unprojection
+requires axial camera depth, measured along the forward axis.
+
+Use `coord.renderGrid` on the `report` output of `scene.render` or
+`sdf.render` to use the actual camera and native art grid. This includes
+orthographic setback and any view offset captured by the renderer.
+Use `coord.cameraGrid` for a standalone authored camera and viewport.
+
+Give the time nodes an explicit frame rate. They accept a number or an
+integer ratio such as `{"numerator":30000,"denominator":1001}`. Frames
+are signed integer indices. Seconds-to-frames uses `floor` by default
+and accepts `ceil`, `nearest` with ties toward +∞, and `exact` to reject
+times between frames.
+
+The colour nodes preserve straight alpha. For a linear raster, RGB
+uses floating-point linear sRGB and alpha uses `[0,1]`. Convert it to
+display RGB before PNG or clip export. Encoding clamps out-of-range RGB
+by default and supports `outOfRange: "error"` to diagnose clipping.
+
+Use `ink-studio graph describe coord.project` for a runnable example or
+`KIT.procedural.conversions` for the same operations in the library.
+
+### Legacy and shared port shapes
 
 | Port type | Value |
 | --- | --- |
@@ -410,7 +723,50 @@ its width, height, line count and scale. It uses Ink's 6×8 glyphs,
 with integer `scale`, `tracking`, and `leading`, optional `columns`
 for character wrapping, and `align: "left" | "center" | "right"`.
 Supply `customGlyphs` as a map from characters to rows of `#` and
-spaces to draw symbols in the same grid.
+spaces to draw symbols in the same grid. Use `kerning` to add an integer
+pixel adjustment after a specific pair, such as `{ AV: -2 }`. The
+`anchors` output gives the zero-based line and glyph origins on their
+source baselines, using names such as `line:0` and `glyph:0:1`.
+
+### Tracked drawing anchors
+
+Connect `fx.regionObservations` to `draw.trackedAnchors.observations`
+to attach screen-space drawing commands to persistent region IDs.
+`fx.regionObservations` takes the same raster frames and segmentation
+settings as [region tracking](#track-regions-across-frames), with
+`options.fps` set to the source rate. Custom trackers can supply
+`{time, regions: [{id, center: [x,y], bounds, confidence}]}` records at
+increasing times in seconds. Bounds and confidence are optional. Omitted
+confidence is treated as 1.
+
+Each entry in `bindings` has its own `id`, a `track` ID, and local
+`commands` and/or `masks` arrays. Draw around the local origin. The
+anchor uses the tracked center, or a normalized `boundsAnchor: [u,v]`
+within the region's pixel bounds. Add an `offset: [x,y]` in pixels as needed.
+
+| Setting | Effect |
+| --- | --- |
+| `smoothing` | Position smoothing half-life in seconds. Set to zero for unsmoothed positions. |
+| `lag` | Delay the anchor in seconds. |
+| `hold` | Keep the last position for this many seconds after the first missed observation. |
+| `minConfidence` | Treat observations below this threshold as missing. |
+
+All four settings default to zero. Adjacent visible positions interpolate
+between observations. During a gap the position holds still until expiry.
+A track returning after expiry starts at its measured position.
+
+Feed the node's `value` to `draw.render.commands`. Render `masks`
+separately and pass the resulting raster as a layer's alpha mask in
+`raster.stack`. The `anchors` output reports each binding's position,
+last observation time and confidence, and its `tracked`, `held`, or
+`hidden` status. Sampling uses the graph clock or `options.time`.
+For direct use, call `drawing2d.trackedAnchors(observations, bindings).sample(time)`.
+
+[Browser demo](../examples/tracked-drawing-anchors.cjs)
+
+```sh
+node examples/tracked-drawing-anchors.cjs tracked-drawing-anchors.html
+```
 
 ### Relative boxes
 
@@ -536,9 +892,11 @@ ink-studio graph run raster-palette-review/raster-palette.json --out raster-pale
 
 ## Pixel effects and raster analysis
 
-These graph nodes take a typed `source` raster. The library exposes the
+Most of these graph nodes take a typed `source` raster. The library exposes the
 same operations under `ink.load().KIT.procedural.pixelEffects`. Colour
-effects return straight-alpha RGBA8 at the source dimensions. Add
+effects return straight-alpha RGBA8 at the source dimensions. Tile remaps,
+scanline remaps, and block substitution preserve the source channel count
+and sample values. Bitplane effects also expose the edited palette indices. Add
 transparent canvas margin before an effect when its coverage needs room
 outside the original image.
 
@@ -552,10 +910,49 @@ outside the original image.
 | `fx.erode` | Recede from exposed edges by a Euclidean `radius` in pixels. Returns the edited raster and its surviving byte `mask`. |
 | `fx.repair` | Use `method: "close"` and a Euclidean `radius` for holes and narrow gaps, or `"bridge"` and `maxGap` for breaks along rows, columns or diagonals. New pixels take the nearest selected source colour or an explicit `color`. Inspect them in the separate `added` mask. |
 | `fx.pixelSort` | Sort contiguous eligible pixels along a horizontal, vertical, diagonal, or antidiagonal `axis`. Choose a `key`, optional inclusive `range`, `order`, and `minLength`. An aligned raster `mask` can limit sorting further. |
+| `fx.tvStatic` | Blend [seekable TV static](#broadcast-patterns-and-tv-static) into the source RGB. Keeps the source's dimensions, pivot, and alpha. |
+| `fx.tileScramble` | Copy, omit, or swap whole tiles on a fixed grid. Set `tileSize`, `mode`, `amount`, `seed`, `rate`, and an optional `mask`. The `addresses` output shows where each destination tile reads from. |
+| `fx.tileBleed` | Replace selected whole tiles with tiles from a separate `bank` raster. Set `tileSize`, `amount`, `seed`, `rate`, and optional `mask` and `bankMask`. The `addresses` output identifies donor tiles. |
+| `fx.tileStrideSlip` | Read successive tile rows using an authored `stride`, `offset`, and `wrapAt`. The `addresses` output shows where each whole tile reads from. |
+| `fx.scanlineRemap` | Repeat, skip, or blank whole rows with `options.edits`. The `addresses` output shows the source row for each destination row. |
+| `fx.rasterSchedule` | [Write indexed palette slots, source offsets, and pixel sizes](#schedule-raster-register-writes) on authored output rows. |
+| `fx.signalRecovery` | [Hold the last usable raster after a fault and relock](#recover-from-signal-loss). Outputs the raster, receiver status, and stage transition events. |
+| `fx.blockSubstitute` | Replace rectangles with samples from the original `source` or the named rasters in `banks`. The `mask` output marks copied pixels. |
+| `fx.bitplane` | Flip a bit, clear a bit, or borrow a bit from an aligned `bank` of palette indices. Connect a one-channel `source` and its ordered `palette`. Outputs RGBA `value` and edited `indices`. |
+| `fx.paletteCycle` | [Rotate named palette ranges](#cycle-an-indexed-palette) independently. Outputs the display image, unchanged indices, and rotated palette. |
+| `fx.paletteFault` | Swap pairs of palette slots, or force selected slots to a fixed one. Use `options.mask` to localize edits. Outputs RGBA `value` and edited `indices`. |
+| `fx.trackRegions` | Track connected regions across a sequence of `frames`. Outputs persistent region records, ID `labels`, lineage `events`, source `frame`, and source `time`. |
 
 Both blurs filter premultiplied colour and alpha with `edge` set to
 `clamp`, `transparent`, or `wrap`. Kernel blur defaults to clamped edges.
 Path blur defaults to transparent edges.
+
+For kernel and path blur, set `options.tileSize` to a tile width or
+`[width, height]` from 1 to 1024 pixels per axis. Rasters above 1,048,576
+pixels use 256 × 256 tiles by default. Use `false` for a whole-raster
+comparison within the original blur limits. Each tile reads the overlap
+needed by the filter, using the same image-wide edge rules. Very wide,
+sparse paths read only their sampled pixels. Atlas packing copies each
+sprite and registered map into its destination plane without creating
+full-size RGBA copies of the sources.
+
+```sh
+ink-studio graph plan project.json --memory
+```
+
+The memory report estimates raster backing buffers for one cold serial
+evaluation, including source rasters, retained results, and filter scratch.
+Each blur lists its tile count, four overlap widths, and working bytes.
+PNG inputs are inspected without inflating their pixels. For an atlas with
+`trim: true`, the report uses the configured atlas limits and marks the result
+as an upper bound. When a node's memory or dimensions cannot be modeled,
+`peakBytes` is null and `unresolved` identifies the node. `knownPeakBytes`
+reports the modeled allocations. The estimate excludes JavaScript object
+overhead, worker transfers, and export encoding. Native scene rendering
+reports its known image allocations and marks its other costs unresolved.
+Library callers can request `project.plan(inputs, {memory: true})` or use
+`pixelEffects.planKernelBlur`, `pixelEffects.planPathBlur`, and `raster.planPack`
+to size individual operations.
 
 Outline, bevel, erosion, repair, and analysis take an optional
 `channel`, `threshold` (default 128) and `invert`. They select visible
@@ -570,6 +967,334 @@ the source channel's units. Transparent or excluded pixels break runs.
 Equal keys retain input order, and each pixel carries its colour and alpha.
 Mask eligibility uses `maskChannel` (default luma) and `maskThreshold`
 (default 128).
+
+### Scramble tile addresses
+
+`tileScramble(source, options)` supports either color rasters or numeric
+planes, such as a rasterized tile grid or palette indices. It reads the
+original tile at integer coordinates and copies all channels, including
+alpha, without resampling. The grid starts at the source's top-left pixel.
+Incomplete tiles at the right and bottom keep their original pixels.
+
+```js
+const { value, addresses } = KIT.procedural.pixelEffects.tileScramble(sprite, {
+  tileSize: [8, 8], mode: 'repeat', amount: .4, seed: 12, rate: 6, time
+});
+```
+
+- `tileSize` defaults to `[8, 8]` native pixels. Set `amount` between zero
+  and one (default `.25`). The operator rounds to a whole number of tiles.
+- `mode: "swap"` (default) exchanges pairs and rounds the affected count
+  down to an even number. `"repeat"` copies from unchanged eligible
+  tiles with replacement, leaving at least one tile to read from.
+  `"omit"` fills selected tiles with zeros, including alpha when present.
+- An aligned `mask` restricts both source and destination tiles. Every
+  pixel within a tile must meet or exceed `maskThreshold` (default 128)
+  on `maskChannel` (default `"luma"`). In graphs, use `data.record` to
+  link a raster mask into `options`.
+- `rate` is the number of address updates per second. The default zero
+  holds one mapping. At a positive rate the same `seed` and
+  `floor(time * rate)` produce the same map, including on direct seeks.
+  Direct calls default to seed 1 and time 0. The `fx.tileScramble` node
+  inherits the graph clock and node seed unless overridden in `options`.
+- `value` keeps the source dimensions and pivot. `addresses` is a
+  one-channel raster with one sample per grid cell. A sample is the
+  zero-based, row-major source tile index, or `-1` for an omitted tile.
+
+For a [camera atlas](camera-atlas.md), convert `atlas.read(id)` from
+`{ w, h, rgba }` to `{ width: w, height: h, channels: 4, data: rgba }`,
+then send `value` to a raster layer or sprite surface. The
+[tile address study](../examples/tile-address-scrambling.cjs) renders the
+same effect on original sprite art and a moving camera feed.
+
+### Bleed tiles from a separate bank
+
+```js
+const { value, addresses } = KIT.procedural.pixelEffects.tileBleed(sign, glyphSheet, {
+  tileSize: [8, 8], amount: .35, mask: signArea, seed: 12, rate: 4, time
+});
+```
+
+Use any raster as the separate bank, including a sprite sheet, a font
+render, or a camera capture. Both inputs use the same tile size and
+channel count. The source and bank can have different dimensions. Each
+grid starts at its own top-left pixel. Incomplete source cells stay
+intact and incomplete donor cells are excluded. Use `raster.rgba` to
+normalize inputs with different color channel counts.
+
+`amount`, `mask`, `maskChannel`, `maskThreshold`, `seed`, and `rate`
+have the same meaning as in tile scrambling. An optional `bankMask`
+restricts donor tiles independently with `bankMaskChannel` (default
+`"luma"`) and `bankMaskThreshold` (default 128). If there are no eligible
+donor tiles, the source is kept. Each affected tile reads from a seeded
+donor address, which can repeat. The current bank pixels are copied
+with all channels, including alpha. A changing camera feed can move
+inside a tile even while the mapping holds.
+
+`addresses` is a one-channel raster in the destination grid. Each sample
+gives the zero-based, row-major tile index in the bank grid, whose column
+count is rounded up. A value of `-1` marks an unchanged destination cell.
+In a graph, connect the `source` and `bank` raster sockets. The node uses
+the graph time and seed unless overridden in `options`.
+
+The [cross-bank tile study](../examples/cross-bank-tile-bleed.cjs) shows
+independent banks made from sprite art and an animated camera atlas.
+
+### Slip tile row addresses
+
+```js
+const { value, addresses } = KIT.procedural.pixelEffects.tileStrideSlip(art, {
+  tileSize: [8, 8], stride: 19, wrapAt: 96
+});
+```
+
+The effect lays the source's complete tiles into a row-major read buffer.
+A destination tile at column `x`, row `y` reads from
+`offset + y * stride + x`, with all controls measured in whole tiles.
+
+- The default `stride` is the number of full tiles in one source row.
+  Add one to shift each successive row's read by one more tile. A stride
+  of zero repeats one row and a negative stride reads rows in reverse.
+- The default `offset` is zero. `wrapAt` defaults to the number of full
+  source tiles and can be lowered to repeat the buffer early.
+- At negative addresses or addresses at or beyond `wrapAt`,
+  `boundary: "wrap"` (default) takes the positive remainder,
+  `"keep"` keeps the destination, and `"omit"` fills it with zeros.
+- An optional `mask` restricts writes using `maskChannel` (default
+  `"luma"`) and `maskThreshold` (default 128). Reads can reach any complete
+  source tile. Partial edge tiles stay intact and are excluded from reads.
+- `value` preserves source dimensions, pivot, channels and copied samples.
+  As with tile scrambling, `addresses` reports source indices on the
+  destination grid, including any partial edge cells. A sample of
+  `-1` means the tile was cleared.
+
+For `fx.tileStrideSlip`, connect controls through `data.record`. Set
+`ease: "step"` on integer control keyframes so a stride or wrap point
+changes on a chosen frame. The
+[tile stride study](../examples/tile-stride-slip.cjs) compares both controls
+and shows the actual source address of each sampled row start.
+
+### Repeat, skip, and blank scanlines
+
+```js
+const { value, addresses } = KIT.procedural.pixelEffects.scanlineRemap(feed, {
+  edits: [
+    { mode: 'skip', start: 10, count: 2 },
+    { mode: 'repeat', start: 24, count: 4, source: 23 },
+    { mode: 'blank', start: 40 }
+  ]
+});
+```
+
+Each edit uses zero-based rows from the top of the raster. The default
+`count` is one. Skip ranges remove source rows and compact what remains
+upward. Any unfilled rows at the bottom are blank. Repeat and blank
+then override destination rows in the listed order. Repeat reads a
+single original source row, defaulting to the row above `start` or the
+first row when starting at zero. Blank rows are all zeros. Ranges clip
+at the frame edge, and a repeat from beyond the source produces a blank.
+
+`value` preserves dimensions, pivot, channels, and copied pixel
+samples. `addresses` is a one-channel raster, one sample wide, with
+`-1` for a blank row. In graphs, pass edits through the
+`fx.scanlineRemap` node's `options` input. Use
+[render graph row edits](render-graph.md#repeat-skip-and-blank-rows)
+to apply the same operations to a live scene.
+The [scanline study](../examples/scanline-repeat-dropout.cjs) compares
+each mode side by side.
+
+### Cycle an indexed palette
+
+Use `fx.paletteCycle` with a one-channel index raster and a `palette`.
+Give each named cycle an inclusive `range: [first, last]` or an ordered
+`slots` list. A palette record with `roles` also supports selecting
+a named `role`. Groups must use distinct slots.
+
+```js
+const { value, indices, palette: activePalette } = KIT.procedural.pixelEffects.paletteCycle(indexedArt, palette, {
+  alpha: coverage,
+  time,
+  cycles: {
+    water: { range: [3, 7], period: 2.5 },
+    lights: { slots: [9, 11, 10], period: 4, direction: 'reverse', phase: .25 }
+  }
+});
+```
+
+`period` is the number of seconds in a full turn. `direction` is
+`forward` by default. `phase` is a fraction of a turn. The graph uses its
+clock unless `options.time` overrides it. Samples are deterministic when
+seeking or rendering out of order.
+
+The node returns straight RGBA `value`, an `indices` raster with
+the original slot values, and a `palette` with the current swatches.
+Index `-1` is transparent. An aligned one-channel `alpha` input supplies
+coverage in byte levels. Slots outside the cycle keep their colors, even
+when they share a base swatch with a cycled slot.
+
+Use the same cycle definitions on an [indexed surface](projected-effects.md#indexed-rasters-and-palette-cycling)
+or the [Copper render pass](render-graph.md#copper-style-raster-schedules).
+Run `node examples/palette-cycling.cjs chromatic-current.html` to see two
+cycles advance at different speeds over one fixed index grid.
+
+### Schedule raster register writes
+
+Use `fx.rasterSchedule` or `KIT.procedural.pixelEffects.rasterSchedule(source, options)`
+to run the same [Copper-style schedules](render-graph.md#copper-style-raster-schedules)
+on a standalone raster. Pass `options.schedule` with increasing output
+rows. The input is a display raster unless `options.palette` supplies
+RGB or RGBA swatches for an indexed raster. An optional second index
+channel carries byte alpha. `options.width` and `options.height` set the
+output grid and default to the input dimensions.
+
+The graph supplies the clock unless `options.time` overrides it. In
+JavaScript, a schedule callback can use that time and the output
+dimensions to place register writes. The result is straight RGBA.
+
+### Recover from signal loss
+
+Use `fx.signalRecovery` to make a feed's response to dropout observable
+and reusable. Connect a display raster to `source`, and report a missing
+carrier with `available: false` or a null source. Feed a signal measure
+from zero to one through `quality` when the carrier is present but
+unreliable. An input below `loseBelow` counts toward loss. After a full
+dropout, the stronger `lockAbove` threshold governs reacquisition.
+
+| Stage | Receiver output |
+| --- | --- |
+| `locked` | The current usable raster. It replaces the saved image. |
+| `losing` | The last usable image during the grace period before `lossFrames` misses. A usable observation can restore the lock immediately. |
+| `holding` | The saved image while the carrier is absent, weak, or a relock attempt has failed. |
+| `relocking` | The same saved image during `lockFrames` consecutive qualifying observations. After confirmation the output blends to the current feed over `blendSeconds`. Set that duration to zero for a hard switch. |
+
+Set `options.trackId` and connect `fx.trackRegions.value` to `tracks`
+to use a specific region as the lock target. Its confidence caps the
+input quality. A missing ID makes the feed unavailable to the receiver,
+even while other regions remain visible. Set the tracker's `maxMissed`
+for the expected gap so the same ID can come back. The tracking and
+recovery state remain independent.
+
+```js
+const receiver = KIT.procedural.signalRecovery.create({
+  loseBelow: .4, lockAbove: .65, lossFrames: 2, lockFrames: 3, blendSeconds: .2
+});
+const { value, status, events } = receiver.sample(sourceOrNull, time, { available, quality, fallback });
+```
+
+A strong first observation starts locked. Without a saved image, the
+receiver uses `fallback` if provided, transparent pixels on a known
+grid, or null when it has no grid. A fallback must match the source
+dimensions. An interrupted relock discards its progress and returns to
+the saved image.
+
+`status` reports the stage and when it began, consecutive miss and
+confirmation counts, effective quality and availability, the retained
+frame's `lastUsableTime`, and the live image's `mix` from zero to one.
+On a stage change `events` contains the new stage as `type`, the
+previous stage in `from`, and `time`. Use these to drive effects such
+as scanline slips on loss or an authored cue on lock.
+
+Repeated timestamps return the same observation without increasing
+counts. A rewind, grid change, explicit `reset`, or `receiver.clear()`
+starts fresh. Graph cuts also restart recovery. For a clip that begins
+mid-outage, use graph clip warm-up to capture the last usable image.
+
+Run `node examples/signal-recovery.cjs carrier-return.html` for a browser
+demo of a hard dropout and a moving track that disappears and returns.
+
+### Substitute blocks from a frame or feed
+
+```js
+const { value, mask } = KIT.procedural.pixelEffects.blockSubstitute(current, {
+  banks: { replay: earlierFrame, alternate: otherFeed },
+  blocks: [
+    { rect: [24, 8, 20, 12], from: [4, 8] },
+    { rect: [50, 30, 32, 16], bank: 'replay' },
+    { rect: [84, 13, 15, 22], from: [0, 4], bank: 'alternate' }
+  ]
+});
+```
+
+Each `rect: [x, y, width, height]` is in destination pixels from the top
+left. `from: [x, y]` is the source rectangle's top-left corner and defaults
+to the destination origin. The source rectangle uses the same size.
+Omit `bank` to read from the original input raster. Banks can have
+different dimensions and must share the input's channel count.
+The operation copies whole samples, including alpha, at integer coordinates.
+
+Source and destination rectangles clip together at their image bounds.
+Overlapping blocks apply in order and read from the original inputs.
+An optional aligned `options.mask` restricts writes, using
+`maskChannel` (default `"luma"`) and `maskThreshold` (default 128).
+`value` preserves the input dimensions and pivot. The output `mask`
+is 255 wherever a pixel was copied and zero elsewhere.
+
+In a graph, link a `data.record` of named rasters to `banks` and put
+rectangles in `options.blocks`. To get earlier frames, read the same
+sequence with two `anim.frame` nodes and give the bank node a positive
+`delay`. This makes the result seekable and keeps playback and export in
+sync. In a live host, pass captured rasters such as camera atlas reads to
+the same function, then send its result to a
+[mixed-resolution layer](mixed-resolution.md#rasters-and-screen-effects).
+The [block substitution study](../examples/block-substitution.cjs) shows
+a neighboring rectangle, a delayed frame, and an alternate feed.
+
+### Corrupt a palette bitplane
+
+```js
+const { value, indices } = KIT.procedural.pixelEffects.bitplane(spriteIndices, palette, {
+  mode: 'borrow', bit: 1, bank: donorIndices, bankBit: 0, mask: damagedArea
+});
+```
+
+- Slots use the supplied palette order, from zero through the last
+  swatch. A `-1` sentinel stays transparent. Both `bit` and `bankBit`
+  range from 0 (least significant) to 7. The default mode is `"flip"` on
+  bit zero. `"clear"` forces the selected bit to zero. `"borrow"` copies
+  `bankBit` (default `bit`) from the matching pixel in the aligned,
+  one-channel bank. A donor sample of `-1` keeps the source bit.
+- The optional aligned `mask` uses `maskChannel` (default `"luma"`) and
+  `maskThreshold` (default 128) for a binary selection. A bit change that
+  references a slot outside the supplied palette keeps the original slot.
+- Supply an aligned, one-channel `alpha` raster of bytes to carry source
+  opacity through the effect. Fully transparent samples are excluded
+  from corruption. The RGBA output uses exact swatches and the original
+  pixel grid.
+- In a graph, link `palette.resolve.indices` and `palette.resolve.palette`
+  into `fx.bitplane` to start from RGB art, or use `indexedPngAsset` for
+  existing indexed art. Link its `alpha` output into `options` through
+  `data.record` to preserve partial transparency. Use the node's `bank`
+  socket for borrowing.
+
+The [bitplane study](../examples/bitplane-corruption.cjs) compares all three
+modes on the same four-color sprite.
+
+### Apply a local palette fault
+
+```js
+const { value, indices } = KIT.procedural.pixelEffects.paletteFault(spriteIndices, palette, {
+  swaps: [[0, 3]],
+  stuck: { from: [1, 2], to: 0 },
+  mask: damagedArea
+});
+```
+
+Each pair in `swaps` exchanges the two original slot numbers. A `stuck`
+rule maps every listed `from` slot to `to`. Omit `from` to pin every
+slot under the mask to the same color. Source slots can appear in only
+one rule. Rules read the original index, so a stuck rule can land on a
+swapped slot without triggering the swap.
+
+Use the same one-channel indices, palette order, aligned `mask`,
+`maskChannel`, `maskThreshold`, and optional byte `alpha` raster as for a
+bitplane. Without a mask, the rules apply across the whole raster.
+Unlisted slots and transparent pixels keep their indices. Duplicate
+swatch colors retain their separate slot identities.
+
+In a graph, connect `source` and `palette` from `indexedPngAsset` or
+`palette.resolve`, and use `data.record` to pass the mask and alpha into
+`options`. The [palette fault study](../examples/local-palette-fault.cjs)
+compares a regional shade inversion with selected shades stuck on one slot.
 
 ### Trace paths and points
 
@@ -597,6 +1322,77 @@ node examples/pixel-effects.cjs pixel-effects-review
 ink-studio graph run pixel-effects-review/pixel-effects.json --out pixel-effects-review/graph
 ```
 
+### Track regions across frames
+
+`pixelEffects.createRegionTracker(options)` creates a tracker for a stream of
+same-size rasters. Call `tracker.update(source, timestamp)` with increasing
+timestamps in seconds, at least one microsecond apart. Call `tracker.reset()`
+when starting a new stream.
+
+The result's `value` array contains visible regions ordered by persistent ID.
+Each record contains `id`, `area`, pixel `bounds`, `center` in pixel
+coordinates, `velocity` in pixels per second, closed `contours` including
+holes, and a `confidence` score from zero to one. The numeric `labels`
+raster stores persistent IDs, with zero for the background. A new track
+starts with zero velocity and confidence of 0.5. Later scores reflect motion
+prediction, area similarity, and bounding-box overlap. Reacquired regions
+carry a score penalty for missed observations.
+
+Use the same `channel`, `threshold`, `connectivity`, `minArea`, and
+`invert` settings as `raster.components`. Set `maxDistance` (24 pixels by
+default) to bound the distance from the predicted center per frame.
+`minAreaRatio` (0.3) gates changes in region area. `maxMissed` (2) retains
+unseen tracks for that many frames so brief occlusions can preserve identity.
+`maxRegions` (32) caps the live pool, giving visible and most recently
+observed tracks priority. Each frame has a 500,000-pixel budget and a
+500,000-cell budget across the contour searches.
+
+For seekable clips, feed the frame array into `fx.trackRegions` and set
+`options.fps` to the source rate. It samples the graph clock, or
+`options.time` if supplied, with `hold` playback by default. Backward seeks
+replay associations from the start of the sequence, so the same source
+frame has the same labels after seeking or looping. The sequence has a
+64-million-pixel budget across its frames.
+
+The [browser example](../examples/persistent-region-tracking.cjs) overlays
+outlines, motion histories, and velocity arrows on three moving regions.
+Scrub across the missing frames to inspect a reacquired region.
+
+```sh
+node examples/persistent-region-tracking.cjs region-tracking.html
+```
+
+#### Region events
+
+The tracker and graph node return an `events` array for each source frame.
+Each event has a `type`, source `time` in seconds, stable IDs in `from` and
+`to`, and an area-weighted `center` in pixel coordinates. A disappearance
+uses the last observed center. A reappearance also reports `missedFrames`.
+
+| Type | `from` | `to` |
+| --- | --- | --- |
+| `split` | Parent ID | Descendant IDs |
+| `merge` | Parent IDs | Joined region ID |
+| `disappear` | ID lost on this frame | Empty |
+| `reappear` | Previously missed ID | Reacquired ID |
+
+Split and merge candidates use shared labeled pixels between adjacent
+frames, with the option to align the earlier footprint using its measured
+velocity. `eventOverlap` is the minimum fraction of the smaller region
+that must overlap, from .01 to 1, with a default of .6. A strong branch can
+preserve an eligible ID even when the ordinary matching area gate is
+exceeded. Topology events take precedence over visibility events for
+the regions they describe. `disappear` occurs once, on the first missed
+frame. `reappear` requires an ID retained under `maxMissed`. Graph seeks
+return the selected frame's events, including when replaying the clip.
+
+The [lineage demo](../examples/region-lineage-events.cjs) draws directly from
+the event records. Select an event to inspect its frame and ID changes.
+
+```sh
+node examples/region-lineage-events.cjs region-lineage.html
+```
+
 ## Raster warps and 3D projection
 
 The graph operations are also available under
@@ -617,9 +1413,14 @@ either axis with `edgeU` or `edgeV`.
 | Node | Authoring |
 | --- | --- |
 | `warp.mesh` | Set `control.from` and `control.to` to corresponding normalized 2D landmarks. Supply `triangles` as triples of indices or a flat index buffer. Each destination triangle pulls pixels from its source triangle. Later triangles win overlaps. Uncovered pixels are transparent. |
+| `warp.scanlines` | Deform a registered raster in asset space with [source-row offsets and scales](#deform-registered-scanlines). Returns the result, UV field, relocated anchors, and remapped image planes. |
 | `warp.grid` | Set `control.columns`, `rows`, and row-major `points` for the destination lattice. The source is a regular grid. |
 | `warp.polar` | Set `mode: "fromPolar"` to wrap a strip into a disc or annulus. Set `"toPolar"` to unwrap one. Strip X is angle and strip Y is radius. Set `center`, `radii` as fractions of the shorter disc dimension, `angle` in turns, and `clockwise`. |
 | `warp.displace` | Supply a numeric `map` of one channel or an X/Y pair. Subtract `center` and multiply by the two `scale` values in `pixels` or `normalized` units. A positive displacement moves the image toward positive coordinates. |
+| `warp.opticalFlow` | Estimate [dense motion](#dense-optical-flow) between aligned `before` and `after` rasters. Returns signed XY displacement and a separate `confidence` raster. |
+| `warp.cameraMotion` | Separate [camera and subject motion](#camera-motion-compensation) from a forward `motion` field, with optional `confidence` and a background `mask`. |
+| `warp.flow` | Pull a `source` raster through a backward `motion` field, with optional `confidence`. Returns the result and its inverse UV `field`. |
+| `warp.flowPoints` | Advance an `array<vec2>` of `points` through a forward `motion` field, with optional `confidence`. |
 | `warp.refract` | Supply a height raster in `map`. Choose its `channel`, `heightScale`, refractive `index`, and ray `depth` in pixels. Local height gradients bend the sampling ray. |
 | `warp.morph` | Supply rasters `a` and `b` and a mesh `control` with landmarks for both. `amount` moves the landmarks and blends the aligned images. Use a named parameter or keyframed value to animate it. |
 
@@ -628,6 +1429,170 @@ Mesh, grid, polar, displacement, and refraction nodes expose their
 raster, or export it as JSON. For mesh, grid, polar, and morph set
 `options.width` and `height` to change output dimensions. Displacement
 and refraction use the map's dimensions.
+
+### Program texture addresses
+
+Build a UV field with `warp.address` or
+`KIT.procedural.rasterWarp.addressField({ width, height, transforms, time })`.
+Each output pixel starts at its center. The transforms run in list order,
+moving from the output coordinate toward the final source coordinate.
+Send the result to `warp.sample` to sample the texture once.
+
+```js
+const warp = KIT.procedural.rasterWarp;
+const field = warp.addressField({ width: 320, height: 180, time, transforms: [
+  { type: 'rows', schedule: [{ row: 45, offset: [12, 0] }, { row: 98, offset: [0, 0], pixelScale: [2, 2] }] },
+  { type: 'rotate', turns: .04, rate: .1 },
+  { type: 'zoom', scale: 1.3 },
+  { type: 'tunnel', depth: .22, inner: .035, travelRate: .4, spinRate: -.03 }
+] });
+const image = warp.sample(texture, field, { filter: 'nearest', edge: 'wrap' });
+```
+
+| Transform | Controls |
+| --- | --- |
+| `rotate` | Clockwise `turns` and `rate` in turns per second. The normalized `pivot` defaults to the center. Rotation accounts for the output aspect ratio. |
+| `zoom` | A positive `scale` or XY pair. A factor above one magnifies the texture around `pivot`, which defaults to the center. |
+| `tunnel` | U is angle and V is `depth / radius`. The `center` is normalized and `inner` and optional `outer` radii clip coverage in units of the shorter output side. Use `turns` and `spinRate` for rotation, and `scroll` and `travelRate` in texture repeats for travel. Set `clockwise: false` to reverse the angle. Use wrap edges at the final sampler for repeating tunnel walls. |
+| `rows` | Use [Copper-style offset and pixel-size writes](render-graph.md#copper-style-raster-schedules). Lookup uses the Y coordinate at this point in the chain, on the program's output grid. Only axes enlarged by a pixel-size write snap to blocks. |
+
+To combine existing UV rasters, connect them to `warp.compose.fields` in
+the same pull order, or call `warp.composeFields(fields, options)`. It can
+chain a procedural field with a mesh, flow, or custom map. Composition
+multiplies coverage. With `filter: 'linear'`, covered samples contribute
+their weighted coordinates. The default `nearest` keeps hard seams.
+Intermediate map edges default to transparent and accept the same policies
+as `warp.sample`. The final image sampler controls its own edges.
+
+The graph supplies time to `warp.address` unless `options.time` overrides
+it. To drive a live scene image, feed the map to the
+[`textureAddress` render pass](render-graph.md#bind-a-programmable-texture-address-field).
+Run `node examples/texture-addressing.cjs helix-signal.html` to compare the
+transforms and change their order.
+
+### Deform registered scanlines
+
+Use `warp.scanlines` or `rasterWarp.scanlines(source, options)` to bend
+bitmap text or sprites before placing them. Each key in `rows` has an integer
+source `row` from 0 through the source height, an optional XY `offset`
+in pixels, and an optional horizontal `scale` around the pivot. Keys need
+increasing source rows and strictly increasing destination rows. Vertical
+offsets interpolate between keys. Set `horizontal: 'step'` for abrupt
+offset and scale changes, or keep the default `'linear'`.
+
+```js
+const { drawing2d, rasterWarp } = KIT.procedural;
+const text = drawing2d.text('AV', { scale: 4, tracking: 3, kerning: { AV: -2 } });
+const warped = rasterWarp.scanlines(text.value, {
+  anchors: text.anchors,
+  pivot: text.anchors['line:0'],
+  pin: true,
+  padding: [16, 0, 16, 0],
+  wave: { amplitude: 7, period: 22, rate: .5 },
+  time
+});
+```
+
+Wave amplitude and period are in pixels. Rate is in turns per second,
+and `phase` is in turns. The graph supplies time unless `options.time`
+overrides it. Connect `draw.text.anchors` to the warp's `anchors` input
+to reuse the bitmap layout. A sprite takes its pivot from the source
+raster unless an explicit `pivot` is provided. The pivot follows the
+deformation by default. Set `pin: true` to maintain its authored position
+within the padded canvas. Named anchor positions follow the same deformation
+as the image. Padding is ordered left, top, right, bottom.
+
+Connect aligned auxiliary rasters through `maps` to carry emission,
+IDs, depth, or other buffers through the same lookup. These planes use
+nearest sampling with their original channel count and numeric values.
+The color sampler defaults to `nearest` and also supports
+premultiplied-alpha `linear`. Reuse `field` with `warp.sample`, or pass the
+deformed color and supported maps to `raster.pack` to retain the new
+pivot in atlas metadata.
+
+Run `node examples/scanline-deformation.cjs registration-drift.html` to
+compare animated text and sprites with reference pivots.
+
+### Dense optical flow
+
+`rasterWarp.opticalFlow(before, after, options)` estimates motion for
+each pixel from image intensity. It uses coarse-to-fine matching and
+subpixel refinement based on the [Lucas–Kanade method](https://www.cs.princeton.edu/courses/archive/spring03/cs496/papers/lucas_kanade.pdf)
+and [Bouguet's pyramid formulation](https://web.stanford.edu/class/cs231m/references/pyr-lucas-kanade-feature-tracker-bouget.pdf).
+The `value` raster has two signed channels in pixels per frame pair.
+Positive X points right and positive Y points down. `confidence` is a
+0–1 heuristic based on local contrast in both axes and the remaining
+intensity difference. Flat patches and motion outside the frame have
+low confidence.
+
+The default `direction: "forward"` maps points on the earlier image to
+the later one. Use `direction: "backward"` to estimate the reverse field
+on the later image. The default `channel: "luma"` weights color by alpha
+for alpha-bearing rasters. Use `channel: "alpha"` for silhouette motion.
+`sampleRange` defaults to `[0, 255]`. The solver also accepts `levels`,
+`radius`, `iterations`, `search` for the coarse correspondence search,
+`maxMotion` in pixels, and `regularization`. Frames use matching dimensions
+and a 500,000-pixel budget.
+
+Use forward flow with `rasterWarp.flowPoints(points, motion, options)`
+or query it at continuous pixel coordinates with
+`rasterWarp.flowSampler(motion, options)(x, y)`. Pixel centers are at
+`x + 0.5, y + 0.5`. Use backward flow with
+`rasterWarp.flow(source, motion, options)` to advect ink or texture
+using the same filtering and edge settings as `warp.sample`. Both
+accept `scale` and optionally gate movement with `confidence` and
+`minConfidence` (0.15 by default). A gated pixel or point holds its
+original coordinate.
+
+Pass an array of backward fields to the `anim.feedback` node's `flow`
+input to advect retained ink. Entry zero maps feedback tick 1 into tick
+0. Supply one field per subsequent simulation tick. At ticks beyond the
+array the feedback uses its authored warp alone. `options.flowScale`
+scales the displacement. Use the same `flow` and `flowScale` settings
+in a standalone raster feedback recipe.
+
+The [browser study](../examples/dense-optical-flow.cjs) shows opposing motion,
+ink and particles driven by the measured field, and a comparison of
+fixed and flow-driven feedback.
+
+```sh
+node examples/dense-optical-flow.cjs optical-flow.html
+```
+
+### Camera motion compensation
+
+`rasterWarp.cameraMotion(motion, options)` fits the dominant camera
+transform to a forward displacement raster. The default `similarity`
+model estimates pan, uniform zoom, and roll. Use `model: "translation"`
+for pan alone. The fit uses spatially distributed correspondences and
+[random sample consensus](https://www.cs.cmu.edu/~motionplanning/papers/sbp_papers/f/p381-fischler.pdf)
+to reject independently moving regions. Pass the optical-flow
+`confidence` plane and optionally a single-channel background `mask`
+to restrict the fit to pixels you choose.
+
+| Output | Meaning |
+| --- | --- |
+| `value` | Signed XY motion in pixels per frame pair, expressed in the earlier frame's stabilized axes. Use it with `warp.flowPoints` to move subject-attached effects. |
+| `camera` | The signed XY motion attributed to the camera at each earlier-frame pixel. |
+| `field` | Normalized UV coordinates for `warp.sample`. Pass the later frame as `source` to stabilize it against the earlier frame. Use `edge: "transparent"` to show uncovered edges. |
+| `inliers` | Byte mask of eligible pixels that agree with the camera transform. |
+| `transform` | Forward and inverse two-row pixel matrices, center-relative `pan`, uniform `scale`, `rotation` in radians, and fit diagnostics. Apply the forward matrix to a stabilized anchor to draw it in the later frame. |
+
+`threshold` is the pixel error allowed for camera inliers (1.35 by
+default). `minConfidence` defaults to .2, and `maskThreshold` defaults
+to .5 for masks with samples in 0–255. `minInliers` (6) and
+`minInlierRatio` (.55) control fit acceptance. `maxSamples`,
+`iterations`, and `seed` tune the bounded, deterministic fit.
+When the fit lacks support, `transform.valid` is false, both
+transforms are identity, and `value` preserves the input motion.
+
+The [browser example](../examples/camera-motion-compensation.cjs)
+compares a panning, zooming raster with its stabilized result and
+draws a subject anchor in both coordinate spaces.
+
+```sh
+node examples/camera-motion-compensation.cjs camera-motion.html
+```
 
 ### Per-pixel time
 
@@ -644,6 +1609,32 @@ Choose `interpolation: "step" | "nearest" | "linear"` and
 `playback: "hold" | "loop" | "pingpong"`. Looping can use an explicit
 `duration` after the last frame, with a final interval back to the
 first frame.
+
+For live input, enable `options.history` on [`anim.frameBank`](#selectively-refresh-a-frame-bank)
+and connect its `history` output to `warp.timeRemap.history` in place
+of the frame array. The oldest retained observation defines zero for
+absolute maps. Offset maps still follow the graph clock. With the default
+`hold` playback, times beyond the retained window use the nearest endpoint.
+
+Use an aligned one-channel `mask` in byte coverage units. Zero keeps the
+clock's time, 255 uses the mapped time, and intermediate values interpolate
+between those times before reading the image. A zero in the optional
+`valid` plane also keeps the clock's time. Both planes align with the map's
+grid, which defines the output size.
+
+- A mask can be the map itself. Set `scale` to the desired delay in seconds
+  divided by 255. Use a negative delay for earlier frames.
+- Connect native `scene.pass` `depth` through its raw `data` port and connect
+  `valid` so empty depth reads the clock's time. Use `scale` and `bias` to convert
+  scene depth to seconds.
+- Connect a numeric field or use `channel: "magnitude"` to convert a
+  two-channel motion field into a delay proportional to its length.
+  Choose channel 0 or 1 for signed X or Y. Mask the field with a tracked
+  region by comparing the region’s label raster to its ID and multiplying
+  the result by 255.
+
+Run `node examples/masked-time-maps.cjs tidal-delay.html` for a browser
+demo with mask, depth, field, and tracked motion controls.
 
 ### Project on 3D surfaces
 
@@ -670,7 +1661,7 @@ ink-studio graph run raster-warps-review/raster-warps.json --out raster-warps-re
 
 ## Procedural generation and recipes
 
-The stock graph runner includes 15 `proc.*` operations. The same generators
+The stock graph runner includes `proc.*` operations. The same generators
 are available in the library as `KIT.procedural.generator`. Build reusable
 graph groups around these nodes to expose the settings a scene or shot needs.
 The graph seed is mixed with each node ID. Set `options.seed` on a seeded node
@@ -681,6 +1672,9 @@ the graph clock in seconds. Set `options.time` to hold a specific sample.
 | --- | --- |
 | `proc.noise` | Compile a native [field expression](procedural.md#composable-procedural-fields) in `definition`. The `value` field works with simplex, periodic and time-loop noise, fractal stacks, masks and domain warps. |
 | `proc.pattern` | Produce a 0–1 field. Set `kind` to `checker`, `stripes`, `dots`, `rings`, `brick` or `chevrons`. Set `size` in world units, `axes` to `xy`, `xz` or `yz`, `angle` in radians, `offset` and `velocity` as pairs, and `fill` as a fraction. |
+| `proc.smpteColorBars` | Generate [SMPTE SD or HD color bars](#broadcast-patterns-and-tv-static) as an RGBA8 raster. |
+| `proc.tvStatic` | Generate [TV static](#broadcast-patterns-and-tv-static) as a seekable RGBA8 raster. |
+| `proc.plasma` | [Combine oscillating fields into indexed art](#generate-indexed-plasma). Outputs a display raster, slot indices, palette and signed field. |
 | `proc.sample` | Rasterize a scalar `source` field at pixel centers across `origin` plus the plane vectors `u` and `v`. The one-channel raster retains signed and fractional values. Feed it to `color.gradient` with `channel: 0` and an explicit `range` to make artwork. |
 | `proc.repeat` | Repeat a raster at an explicit output size with pixel `offset` and two-axis `scale`. Channel counts and numeric values are retained. |
 | `proc.tiles` | Lay out weighted `definitions` with north, east, south and west sockets. `mode: "solve"` accepts `pins`, `ports`, `boundary` and `wrap`. `mode: "wang"` uses `labels` and a world-cell `origin` for independently generated chunks. Returns a layout with a status and, on success, row-major IDs. |
@@ -711,6 +1705,89 @@ node examples/procedural-generation.cjs procedural-review
 ink-studio graph run procedural-review/storm-relay.json --at 1.22 --out procedural-review/graph
 ```
 
+Use a [take clock](take-clock.md) to sample a graph, world, timeline, and
+recorded media against one rational picture frame.
+
+### Generate indexed plasma
+
+Use `proc.plasma` or `KIT.procedural.generator.plasma()` to combine
+1–16 oscillators. Pass their shapes in `geometry` and their clocks in
+`motion`, keyed by field name.
+
+```js
+const { value, indices, palette, field } = KIT.procedural.generator.plasma({
+  width: 240, height: 144, time,
+  geometry: [
+    { id: 'ripple', type: 'radial', center: [.4, .5], frequency: 3 },
+    { id: 'curl', type: 'spiral', arms: 2, frequency: 1.4, weight: .7 },
+    { id: 'cross', type: 'plane', angle: .125, frequency: 2, weight: .45 }
+  ],
+  motion: { ripple: { rate: .25 }, curl: { phase: .125, rate: -.4, velocity: [.06, 0] } },
+  palette: ['#161c35', '#554978', '#aa6587', '#f7b588', '#fff2c2']
+});
+```
+
+- `center` is normalized XY. `frequency` counts cycles per shorter-side
+  length. Plane waves use `angle` in turns. Spiral waves add a signed
+  integer number of angular `arms`. `wave` is `sine` by default or
+  `triangle` for a linear rise and fall.
+- `phase` is in turns and signed `rate` is in turns per second. `velocity`
+  shifts the center in shorter-side lengths per second. Unlisted fields
+  hold their phase and position. Graph clips use their clock unless
+  `options.time` overrides it.
+- Signed `weight` values sum the contributions. The result is divided by
+  the sum of absolute weights and returned in `field`. `range` maps a
+  field interval onto the index ramp, clamping outside it.
+- The palette length sets the number of bands. Swapping the colors at the
+  same length keeps `field` and `indices` intact. Feed those indices and the
+  returned palette into [palette cycling](#cycle-an-indexed-palette) or
+  [Copper row schedules](render-graph.md#copper-style-raster-schedules).
+
+Run `node examples/indexed-plasma.cjs phase-garden.html` to compare the
+same index grid across palettes and inspect changes in the underlying field.
+
+### Broadcast patterns and TV static
+
+`generator.smpteColorBars({ pattern, width, height, levels, blueOnly })`
+creates an RGB rendition of `eg1` (the default) or `rp219`. EG 1 has a
+reverse-blue strip and near-black PLUGE steps. RP 219 uses the default
+reference patches, a luminance ramp, gray side panels, and five PLUGE
+steps. Width defaults to 128 pixels. Height follows the pattern's 4:3 or
+16:9 aspect ratio unless supplied. Use `blueOnly: true` to isolate the
+blue channel. The default `levels: "full"` clips below-black values at
+zero for display. `levels: "limited"` maps reference black and white
+to RGB bytes 16 and 235 and preserves the below-black patch. Both modes
+return RGB artwork with alpha. The source standards describe video
+signal encoding and timing. [SMPTE EG 1](https://pub.smpte.org/pub/eg1/eg0001-1990_stable2004.pdf) · [SMPTE RP 219-1](https://pub.smpte.org/latest/rp219-1/rp0219-1-2014.pdf)
+
+`generator.tvStatic(options)` creates a standalone layer. Use
+`pixelEffects.tvStatic(source, options)` to blend it into an existing
+raster. Both accept the same appearance controls. The standalone layer
+defaults to 128 × 96. The effect takes its dimensions from the source.
+
+| Option | Behavior |
+| --- | --- |
+| `preset` | `snow` for fine monochrome grain, `chroma` for color noise, `weak-signal` for horizontal streaks, or `tracking` for a rolling band. |
+| `time`, `seed`, `rate` | Time in seconds, integer seed, and noise frames per second from 0.01 to 240. Use zero rate to hold a frame. The graph nodes inherit the graph clock and node seed unless overridden. |
+| `grain` | Integer noise cell size `[width, height]` in pixels. |
+| `contrast`, `chroma`, `rowNoise`, `scanlines` | Grain contrast from 0 to 2, color separation, independent row brightness, and alternating-row dimming. The last three range from 0 to 1. |
+| `band` | Override `height` as a fraction of the image, `speed` in screen heights per second, and `strength` from 0 to 1. Negative speed reverses direction. |
+| `opacity`, `density` | Set the alpha of active noise cells and the fraction of cells that are active, both from 0 to 1. |
+
+Run the [broadcast patterns demo](../examples/broadcast-patterns.cjs) to
+compare the test patterns, play or scrub the static presets, and see
+tracking interference applied to a pixel-art feed.
+
+```sh
+node examples/broadcast-patterns.cjs broadcast-demo.html
+```
+
+## Audio and automation
+
+See [Audio, recorded inputs and host adapters](graph-media.md) for native
+WAV assets, frame-aligned analysis, FFT channels, input recordings,
+capture, codecs and the Pixel Composer preview bridge.
+
 ## Animation and raster simulation
 
 `KIT.procedural.animationGraph` provides the same time mapping as the
@@ -721,11 +1798,243 @@ port to hide a layer during that hold.
 | Operation | Inputs and outputs |
 | --- | --- |
 | `anim.keyframes` | Sample named `channels` from `keys`. A key has `time`, a named `value` for each channel, and optional `ease`. Uses Ink’s scalar, vector, angle, positive, quaternion and orientation interpolation. Returns the channel record and track duration. |
-| `anim.clock` | Map the project clock to `options.range`, with `delay`, `rate`, `reverse` and `mode` of `hold`, `loop` or `pingpong`. Returns mapped time, progress, playback direction and activity. |
+| `anim.clock` | Map the project clock to `options.range`, with `delay`, `rate`, `reverse`, and a `mode` of `hold`, `loop` or `pingpong`. Add `phase` and `cues` for authored layer clocks. Returns mapped time, progress, playback direction and activity. |
 | `anim.stagger` | Sample several clocks with `count`, `options.interval` and `offset`. `reverseOrder` switches which item starts first. Returns mapped times and per-item clock records. |
 | `anim.frame` | Select from raster `frames` with `fps` and a half-open interval from `first` to `end` in frame indices. Accepts the same delay, rate, reverse and looping controls. |
+| `anim.visualSample` | Replay a [captured visual span](graph-clips.md#capture-a-reusable-visual-span) with independent timing, alpha, raw data, depth and motion. |
+| `anim.frameBank` | Retain and selectively refresh raster pixels. Outputs the banked image, refresh mask, capture tick, and optional history for [per-pixel time](#per-pixel-time). |
+| `anim.datamosh` | Pull the previous image through signed motion and blend it with the current image. Outputs the image and retained weight. |
+| `anim.subjectFeedback` | Retain marks in a [subject’s UV or rest-space chart](motion-afterimages.md#subject-attached-feedback). Outputs the retained texture and deposit mask. |
+| `anim.spriteDesync` | Composite a layered raster `source` with independent frame holds or offsets on named parts and pixel rectangles. Returns RGBA `value` and the sampled `frames`. |
+| `anim.captureTransforms` | Snapshot the pose channels of a `source` array of instance records with stable IDs. |
+| `anim.staleTransforms` | Patch independent pose channels on a `source` array using `edits` and optional named `snapshots`. Returns the edited array and an applied/skipped count. |
 | `anim.retime` | Sample a reusable graph named by `group` at the time mapped by its `timing` input. The group retains its inputs and outputs and owns its independent simulation caches. Pass `timing.time` to feed an explicit time, such as an item from `anim.stagger`. |
-| `anim.feedback` | Evolve an input array of raster `frames` at a fixed simulation `dt`. Set source `fps` and playback `mode`, signal `halfLife`, `gain`, optional `threshold`, `warp`, `filter`, and timed reset `cuts`. Returns an isolated RGBA signal to composite using existing raster nodes. |
+| `anim.feedback` | Evolve raster `frames` at a fixed simulation `dt`. Set source `fps` and `mode`, signal `halfLife` and `gain`, and optional `threshold`, `warp`, `filter`, and `cuts`. Feed [backward motion](#dense-optical-flow) into `flow` to advect the retained signal. |
+
+### Transport image history with signed motion
+
+Use `anim.datamosh` on a display raster and a two-channel `motion`
+raster on the current image grid. The first sample initializes the
+history from `source`. Each later sample looks up the displaced pixel
+in the previous result and retains its contribution according to the
+elapsed time and `options.halfLife`. Output `carry` reports that
+contribution as a 0–1 raster.
+
+Connect [captured motion](graph-clips.md#capture-a-reusable-visual-span)
+through `anim.visualSample.motion` and `motionValid`, or connect
+[backward optical flow](#dense-optical-flow) and its confidence.
+Use `options.direction: "backward"` for the latter. Native captured
+motion uses `"current-minus-previous"`, the default direction. Both
+use pixels per observed frame unless units are explicitly set to
+`"pixels/second"`.
+
+The optional aligned `refresh` raster has byte coverage from 0 to 255.
+Connect a frame bank's `refreshed` output or a separately authored
+mask. Full refresh copies the current pixel, including alpha. Optional
+`confidence` (0–1) weights history and `valid` (0–255) excludes
+unreliable motion at zero. Use `options.blockSize` to share vectors
+across blocks and `filter: "linear"` for interpolated donors.
+
+Advance in observation order, with warm-up for exported clips that
+start midway through a shot. A repeated timestamp reuses the stored
+result. A backward seek, size change, cut, or explicit `reset`
+starts clean. A `null` motion sample also copies the current image.
+
+```js
+const datamosh = KIT.procedural.datamosh.create({ halfLife: 0.8 });
+const { value, carry } = datamosh.sample(image, motion, time, { valid, refresh });
+```
+
+Use the same settings with a [screen pass](render-graph.md#feed-signed-motion)
+for CPU or WebGL scene rendering.
+
+### Selectively refresh a frame bank
+
+Use `anim.frameBank` with a live or replayed raster and a record of named,
+aligned one-channel `masks` in byte coverage units from 0 to 255.
+`options` accepts `fps`, `tiles`, `regions`, and `refresh` with the
+[same timing as the render pass](render-graph.md#frame-banks-with-selective-refresh).
+Its `refreshed` output records the pixels that refreshed at this
+timestamp, including fractional coverage. An explicit `reset` boolean,
+a cut, a backward seek, or a source size change reinitializes the bank
+from the current image. Advance in source order or use `graph clip` with
+warm-up to build history before the first output frame. Each group
+instance keeps its own bank.
+
+In JavaScript, retain a session and call `sample` with the source raster
+and time in seconds. Pass `{ masks, reset }` as the optional third
+argument, or call `clear()` to start a new history.
+
+```js
+const bank = KIT.procedural.frameBanks.create({
+  fps: 12,
+  tiles: { size: [24, 16], every: 8 },
+  regions: [{ mask: 'subject', every: 3 }]
+});
+const { value, refreshed, tick } = bank.sample(source, time, { masks: { subject } });
+```
+
+Set `options.history` to a capacity from 1 to 512 to retain observations
+of the banked image, including sub-tick mask refreshes. Skipped ticks
+leave gaps in the sample times. The capacity multiplied by the number
+of pixels per frame may be at most 16 million. Omit `history` or set it
+to zero to keep just the current image. History shares the bank’s reset
+rules. In JavaScript, pass the returned history and the current clock
+time to the remapper.
+
+```js
+const bank = KIT.procedural.frameBanks.create({ fps: 12, regions: [{}], history: 24 });
+const { history } = bank.sample(source, time);
+const image = KIT.procedural.rasterWarp.timeRemap(history, delayMap, {
+  time, mask, valid, interpolation: 'linear'
+});
+```
+
+For an exact tracked ID, compare the labels with `raster.math` and
+`op: "equal"`, then multiply the result by 255 to make the coverage mask.
+The renderer's `raster.match` mask binding performs both operations in
+one pass.
+
+### Author layer clocks
+
+Add timing to an `anim.retime` group instance to drive a distinct render layer,
+or use the same settings with `anim.clock`, `anim.frame` or `anim.stagger`.
+Each instance reads its own source time. Composite the results in the usual
+layer order. Use [motion layer clocks](motion-layers.md#clock-a-layer) to
+drive individual pose layers.
+
+```json
+{
+  "range": [0, 8],
+  "mode": "loop",
+  "rate": 0.65,
+  "phase": 1.3,
+  "cues": [
+    { "time": 1.6, "rate": 0 },
+    { "time": 3.5, "seek": 0, "rate": 1.4 },
+    { "time": 5.5, "seek": "parent", "rate": 1 }
+  ]
+}
+```
+
+This clock starts 1.3 source seconds into its range. It holds from 1.6
+parent seconds, restarts at 3.5, and follows the parent clock at 5.5.
+
+- `phase` and numeric `seek` are signed seconds measured from the start
+  of the source range, before applying loop, clamp, pingpong or reverse.
+- Cue `time` is in parent seconds. Times must be unique. A cue applies
+  at its timestamp and can set `rate`, `seek`, or both. Rate zero holds
+  the current phase. A later rate change resumes from that same phase.
+  Before `delay`, cues can change rate or phase while the clock is inactive.
+- Set `seek: 0` to restart according to the current direction.
+  `seek: "parent"` copies the parent seconds into the phase at the cue.
+  Set `rate: 1` with it to keep following the parent. To align multiple
+  layers at a specific source offset, give them identical numeric seeks
+  and rates at the same parent time. Layers with the same range,
+  direction and playback mode then sample the same source time.
+- Cue times, phase offsets and numeric seeks accept decimal seconds or
+  exact `{ "numerator": n, "denominator": d }` records. A graph layer
+  driven directly by a [take frame](take-clock.md) respects exact cue
+  comparisons. A nested group receives the mapped local seconds.
+- During sequential graph clip export, an authored seek starts a new
+  feedback segment for that group. Holds keep sampling the same local
+  frame. Checkpoint-backed simulations seek through their usual sampler.
+
+Use `KIT.procedural.animationGraph.compileClock(settings)` in JavaScript.
+Call `sample(parentSeconds)` or `forTake(frame)` on the compiled clock.
+The phase at any requested time is independent of the order of sampling.
+For interactive stage clocks and fixed ticks, see
+[shared time domains](shared-time-domains.md).
+
+Run `node examples/layer-clocks.cjs layer-clocks.html` for the
+[interactive sprite study](../examples/layer-clocks.cjs).
+
+### Desynchronize sprite fragments
+
+Provide a layered raster with each named part registered on the same pixel
+canvas. The graph accepts either the layered raster definition or a compiled
+`graph.raster` asset. For a flattened animation, put the frame sequence in one
+layer and use rectangular strips.
+
+```js
+const { value, frames } = animationGraph.spriteDesync(sprite, {
+  time: 0.5,
+  tag: 'walk',
+  parts: { head: { hold: 2 }, arm: { offset: 4 }, boot: { offset: -3 } },
+  strips: [{ rect: [20, 14, 44, 6], offset: -2 }]
+})
+```
+
+`hold` is a zero-based frame slot within the selected tag. `offset` is a
+signed integer in frames and can lead or lag the current clock. Use one per
+fragment. Offsets wrap in looping tags and clamp in non-looping tags.
+A part or strip can use a `clock` record in place of either field. A
+fragment clock accepts `rate`, `phase`, `cues`, `delay`, `reverse`, and
+`mode`, and uses the selected tag's frame rate and source range. Its
+default mode follows the tag's looping setting.
+
+The node uses the graph clock unless you supply `options.time`. Direct
+sampling defaults to time zero, and the default tag is `all`.
+
+Named parts replace their own layer's cel before compositing. Use `layers`
+to choose which layers draw and in what order. Strips then copy RGBA,
+including transparency, from the synchronized stack at their own sampled
+frames. Rectangles use upper-left pixel coordinates `[x, y, width, height]`
+and clip to the sprite. Later strips take precedence in overlaps.
+
+`frames.base` and `frames.strips` report absolute clip frame indices.
+`frames.parts` reports the cel index drawn for each selected layer. A short
+layer holds its last cel. Sampling depends only on the requested time, so a
+direct seek and sequential playback produce the same frame.
+
+Run `node examples/sprite-fragment-desync.cjs fragment-review` to render
+[the side-by-side sprite study](../examples/sprite-fragment-desync.cjs).
+
+### Hold or duplicate instance transforms
+
+`KIT.procedural.animationGraph.staleTransforms` reads instance records
+with unique string `id` values. Each edit selects `position`, `rotation`,
+`scale`, or any combination. Use `snapshot` to hold a recorded pose
+and `from` to read a different instance. Both can appear in one edit.
+Each edit reads the original input or snapshot, so a pair of live copies
+can exchange channels.
+
+```js
+const A = KIT.procedural.animationGraph;
+const held = A.captureTransforms(sampleAt(0.75));
+const { value: poses } = A.staleTransforms(sampleAt(time), [
+  { id: 'courier', snapshot: 'held', channels: ['position'] },
+  { id: 'scanner', from: 'guide', channels: ['rotation', 'scale'] }
+], { snapshots: { held } });
+```
+
+- A pose uses XYZ `position`, a right-handed row-major 3×3 `rotation`,
+  and positive uniform or XYZ `scale`. The defaults are the origin, identity
+  rotation and unit scale. Omit `channels` to copy all three.
+- Assign each target channel at most once. The default missing-ID policy is
+  `"error"`. Use `{ missing: "skip" }` with changing populations to skip
+  edits whose target or donor is absent.
+- `captureTransforms` copies pose channels into a serializable snapshot.
+  For deterministic seeking, capture from an authored time sample or use
+  `anim.retime` to sample a fixed time before `anim.captureTransforms`.
+  Pass the snapshot through `data.record` to the `snapshots` input.
+- Pass the result to `copies.updateTransforms(poses)` for shared baked
+  splat instances. This adapter uses uniform scale. Use
+  `A.instanceMatrix(pose)` to get the rotation-and-scale matrix for
+  `K.frameSplats` or for `sceneGraph.setLocal(pose.id, { position, matrix })`
+  when driving repeated geometry.
+- For native particles, supply `renderTransforms({ time, instances })`
+  in `K.particles` options. Return the same live IDs with uniform scales.
+  The hook runs on display poses after simulation. A newly emitted particle
+  gets a fresh ID even when it takes over a pool slot.
+
+[Phase Register](../examples/stale-instance-transforms.js) compares live
+flight markers with a position hold, a rotation hold and a copied scale.
+
+```sh
+node cli/ink-studio.js clip examples/stale-instance-transforms.js --w 464 --h 230 \
+  --to 5.333333333333333 --fps 12 --out phase-register.png
+```
 
 ### Planar simulation recipes
 
@@ -806,6 +2115,7 @@ in a low-level `KIT.procedural.graph.create` graph, pass
 | `geo.triangulate` | Triangulate planar `rings` at `options.z`. The first ring is the outline and subsequent rings are holes. |
 | `geo.transform`, `geo.merge` | Apply XYZ `position`, radians `rotation`, and scalar or XYZ `scale`, or combine an array of indexed meshes. Mirroring reverses winding. |
 | `geo.clip` | Crop a mesh with face materials to `dot(normal, point) <= offset` for each plane. Set `options.cap` to close a convex shell. UVs and normals remain available on the clipped triangles. |
+| `geo.scrambleIndices` | Redirect one corner per selected triangle to an existing vertex within a mesh-space distance limit. Returns an indexed mesh, the individual redirects, and a report. |
 | `geo.extrudeImage` | Expand an XY raster mask along Z. Set `pixelSize`, `depth`, `center`, `channel`, `alphaThreshold` and optional `edgeColor`. Holes pass through the part. The main mesh retains per-cell colors on the caps. The `front` port is a UV-mapped front cap for `warp.surface`. |
 | `geo.sliceStack` | Build the exterior of a stack of aligned raster `slices` in list order. Set world `axis`, `spacing`, `center`, `pixelSize` and mask controls. Neighboring occupied cells share their boundary and omit their internal faces. |
 
@@ -815,6 +2125,53 @@ XY maps to world XY for a Z stack, to −ZY for an X stack, and to X−Z for a Y
 stack. The extrusion and slice operations return bounds and triangle counts
 as separate ports. Feed mesh results to other graph operators such as
 `meshPaths`, export them as JSON, or add them to a scene.
+
+#### Bounded mesh index scrambling
+
+Use `geo.scrambleIndices` or `KIT.procedural.sceneGraph.scrambleIndices`
+on an indexed triangle mesh. In the default seeded mode, set the share
+of eligible faces with `amount` (default .12). Ink rounds the attempted
+count up and caps it at `maxFaces` (default 128). A face stays as authored
+when the bounded search finds no suitable replacement.
+
+```js
+const { value, changes, report } = KIT.procedural.sceneGraph.scrambleIndices(mesh, {
+  seed: 29,
+  faces: [12, 13, 14, 15],
+  donors: [24, 27, 31],
+  bounds: { min: [-1, -.5, -.2], max: [1, .8, 1] },
+  amount: .5,
+  maxFaces: 2,
+  minDisplacement: .16,
+  maxDisplacement: .8
+})
+```
+
+- `maxDisplacement` is required and measures the distance from the original
+  corner to its replacement in mesh units. Use `minDisplacement` to make
+  small redirects ineligible. All three original vertices and the donor
+  must lie inside `bounds` when supplied.
+- `faces` and `donors` are optional lists of zero-based triangle and vertex
+  IDs. The graph uses its seed unless `options.seed` overrides it.
+  To author exact redirects, pass `edits: [{ face, corner, vertex }]`.
+  `corner` is 0–2 in the triangle's stored order. Authored edits use the
+  same face cap, region and displacement limits. Each face accepts one
+  edit. A redirect that would collapse its triangle is rejected.
+- `value` retains the source positions and face materials. Each new corner
+  reads the donor vertex's UV, normal and color where those channels exist.
+  `changes` lists `face`, `corner`, `from`, `to` and `displacement`.
+  The `report` counts eligible, attempted and changed faces and gives the
+  largest applied displacement.
+
+Connect the mesh output to `warp.surface` for depth-tested textured
+geometry. [Lacuna Relay](../examples/mesh-index-scramble.js) uses seeded
+redirects across a segmented shell and authored redirects to nearby
+contact points.
+
+```sh
+node cli/ink-studio.js clip examples/mesh-index-scramble.js --w 432 --h 224 \
+  --to 5.333333333333333 --fps 12 --out lacuna-relay.png
+```
 
 ### Signed fields and render passes
 
@@ -837,6 +2194,52 @@ marks those pixels with zero. Use the renderer’s `frame.passes` in Node to
 read the original buffers. To request motion, use a prior
 `scene.render` with `captureMotion: true` in its options and connect its
 `motionReference` to the next render’s `options.motionFrom`.
+
+### Motion-driven deformation
+
+Feed `fx.regionObservations` into `motion.landmarks` to turn tracked
+features into paired `{from, to}` XY landmarks. Host tracking can supply
+the same timestamped point records described in [tracked drawing anchors](#tracked-drawing-anchors).
+
+A binding has a unique `id`, a `rest: [x,y]` point, and the stable
+`track` ID to follow. It can use the region's center, `boundsAnchor`,
+or `silhouetteDirection: [dx,dy]`. A silhouette direction finds the
+outermost intersection of a ray from the region center with its contour.
+Set `options.contours: true` on `fx.regionObservations` when using silhouette
+directions. Rays are expressed in image axes, with positive Y down.
+
+Bindings support the same `offset`, `smoothing`, `lag`, `hold`, and
+`minConfidence` settings as drawing anchors. A missing landmark holds for
+its configured duration and then uses its rest point. Omit `track` from
+a binding to pin its rest point throughout the shot. The graph clock or
+`options.time` samples the clip. The `landmarks` port reports each
+position and its `tracked`, `held`, `hidden`, or `pinned` status.
+
+| Consumer | Connect the landmark output to |
+| --- | --- |
+| `geo.motionMesh` | `control`. Mesh positions deform in a planar chart. UVs, vertex colors, material slots and indices stay bound to the same vertices and faces, and authored normals follow the local deformation. |
+| `rig.skinSprite` | `motion`. The bound sprite vertices and joints are first posed by their bones, then deformed in output pixels. The source artwork is sampled through the resulting mesh in one pass. |
+| `scene.motionSplats` | `control`. Select baked rows with `ids`. The node returns a new world and carries each selected row's covariance and authored brush axes along with its center. |
+
+The mesh and splat nodes use XY by default. Set
+`options.chart: {origin, u, v}` to place the landmarks on a different plane.
+The XYZ vectors `u` and `v` are one tracking pixel wide and tall. Depth out
+of the chart plane is retained. Interpolation reaches the authored controls
+and blends their displacement in between. Large offsets between nearby
+handles can fold a surface.
+
+For live hosts that already own a rig or splat world, sample
+`KIT.procedural.motionDeformation.track(observations, bindings)` and pass
+the sampled control to `KIT.deform.motion(control, {chart})`. Use the
+resulting map with the native `deform.rest` and `deform.apply` APIs or
+the stage's deformation skin. Keep one rest snapshot per selected group
+so repeated samples start from the authored shape.
+
+[Browser demo](../examples/motion-driven-deformation.cjs)
+
+```sh
+node examples/motion-driven-deformation.cjs motion-deformation.html
+```
 
 ### 2D skeletal sprites
 

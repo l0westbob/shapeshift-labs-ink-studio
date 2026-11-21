@@ -10,13 +10,210 @@ The graph contains an ordered `passes` list of up to 32 entries and an optional 
 | `grade` | Applies an RGB `stack` to the input. CPU and WebGL use the same sampled color cube. `cubeSize` defaults to 33 and accepts 2–65. |
 | `reflection` | Mirrors the current image or a named `source` along `axis` (`x` or `y`). `line` sets the reflection line in output pixels and defaults to the midpoint. |
 | `distortion` | Samples the input or a named `source` using an XY `offset`, wave `amplitude`, or [scanline controls](#scanline-distortion). `period` is in pixels, and `phase` and `rate` are in cycles and cycles per second. |
+| `textureAddress` | [Sample an image through a signed UV field](#bind-a-programmable-texture-address-field) with independent edge and filter policies. |
+| `rasterSchedule` | Applies [discrete register writes](#copper-style-raster-schedules) for indexed palette entries, source offsets, and pixel size. |
 | `composite` | Blends a named `source` image using `over` or `add`, or draws a single [mixed-resolution layer](mixed-resolution.md) from `layer` using its own resolution, filtering and blend settings. Use `isolated: true` to start this pass on transparent pixels. |
 | `history` | Captures the visible pixels of a required target selector. Choose `hold` or `persistence`. An optional mask controls capture coverage. The current depth owner scopes the history overlay. |
 | `feedback` | Warps and decays the previous signal and composites new emission into it. Accepts an earlier image or a mixed-resolution emission layer. |
+| `frameAge` | Replaces regions of an image from a shared frame history. Each region can delay, hold, or replay captured frames. |
+| `frameBank` | Retains one assembled frame and independently refreshes tiles, masked regions, or explicit refresh pulses. |
+| `motionSmear` | Moves pixels from the retained frame through a motion field and blends in the clean input. A refresh mask can restore specific regions. |
 
 Screen coordinates are in final output pixels from the top left. Reflected and distorted samples outside the image leave the input pixel unchanged. Graph reflection and distortion work on screen images. Scene-space planar capture, glass refraction and depth-dependent media use the scene renderer.
 
 Passes can set `select` to a named object, entity, material, surface, prefab or tag selector. The selection follows the visible depth-writing splat at each pixel of the world grid. A `mask` reference can narrow the selection further. `opacity` scales the effect from zero to one. A pass with `enabled: false` keeps its image input or supplies zero mask coverage. Requested diagnostic buffers remain on the native world grid.
+
+## Connect procedural rasters
+
+Bind a named raster to a composite or feedback layer with
+`layer.source: { slot: "ink" }`. Bind a raster to a mask pass with
+`raster: { slot: "puddle" }`. The CPU and WebGL renderer accept the same
+`renderGraphInputs` record.
+
+```js
+const renderGraph = { passes: [
+  { id: 'wet', type: 'mask', raster: {
+    slot: 'puddle', channel: 0, range: [0, 1], rect: [48, 92, 120, 24], filter: 'linear'
+  } },
+  { id: 'ink', type: 'composite', mask: 'wet', layer: {
+    source: { slot: 'ink' }, rect: [48, 92, 120, 24]
+  } }
+] };
+const renderGraphInputs = { ink: preparedImage, puddle: proceduralMask };
+```
+
+Each slot takes a procedural raster with `width`, `height`, `data`, and
+an optional `channels` count. An image uses its own dimensions and straight
+alpha. Use the layer's `rect` and `filter` for destination placement and
+resampling. A mask defaults to alpha for two- or four-channel rasters and
+to luma for RGB or the sole channel of a scalar raster. Select a numerical
+channel index or `alpha`, `luma`, `r`, `g`, or `b` explicitly. The default
+range is `[0, 255]`. Samples are normalized and clamped to the specified
+range, then multiplied by any rectangle, earlier mask, or depth selection
+on the pass. Inversion applies to the combined coverage. Layers stretch to
+the frame when no destination rectangle is set. Disabled or unused passes
+do not read their slots.
+
+In an ordinary procedural graph, connect raster outputs to a `data.record`
+node with one key per slot and connect the record to
+`scene.render.renderGraphInputs`. Set `scene.render.options.renderGraph`
+to the graph definition. The two graphs sample the scene at the same take
+time. Screen-space layers composite after scene optics. Use
+`warp.surface` to place a procedural texture on a depth-tested world
+surface when glass or rain should cover it.
+
+## Bind a programmable texture address field
+
+A `textureAddress` pass reads an earlier image through a named slot of raw
+UV values. Use a raster aligned with the final output grid, with two finite
+channels for U and V or a third channel for coverage in [0, 1]. UVs use the
+top-left origin and can extend outside [0, 1]. Supply the field in
+`renderGraphInputs` or link a procedural graph output through a slot record.
+
+```js
+const renderGraph = { passes: [{
+  id: 'mapped',
+  type: 'textureAddress',
+  source: 'scene',
+  field: { slot: 'uv' },
+  filter: 'nearest',
+  edgeU: 'wrap',
+  edgeV: 'mirror',
+  blend: 'replace'
+}] };
+const renderGraphInputs = { uv: field };
+```
+
+Choose `nearest` or `linear` and `clamp`, `transparent`, `wrap`, or
+`mirror` for each axis. The defaults are nearest and clamp. The pass
+samples premultiplied color in both renderers. Coverage changes the
+sample's opacity. Use `blend: 'over'` to keep the input visible through
+holes. Masks, opacity, depth, and selection apply to the destination.
+The field has a 1,048,576-pixel budget and UVs in [−16384, 16384].
+Build fields with [programmable texture addresses](headless-authoring.md#program-texture-addresses).
+
+## Read screen and scene passes
+
+In the headless renderer, pass a list of IDs in `renderGraphCapture` to
+keep the selected passes on `frame.renderGraphPasses`. This also works
+with the `scene.render.renderGraphCapture` input. Read a captured pass
+with `scene.pass` and a channel such as `graph:wet`. Its `data` port returns
+one byte channel for a mask or straight RGBA for an image, both at the
+render graph grid. The `value` port is an RGBA preview. You can capture
+the original `scene` image or a branch outside the final image. The chosen
+final output remains the same.
+
+For WebGL, pass the same `renderGraphCapture` list to
+`renderer.render(world, settings)`. The call returns a record keyed by
+the requested pass IDs with top-down straight RGBA or single-channel
+mask bytes. Only the requested passes are read back. A regular render
+returns as usual. Use [visual span capture](graph-clips.md#capture-a-reusable-visual-span)
+to retain multiple frames for independent playback.
+
+Native scene channels such as `depth` and `precipitation` use the existing
+`scene.render.channels` and `scene.pass` ports. They retain their native
+art grid and units. A procedural node can consume either kind of pass.
+
+```sh
+node examples/render-graph-bridge.cjs graph-bridge-review
+```
+
+The example places a procedural ferry sign behind a blue glass pane and
+world-space rain. The sign also supplies an image slot for its reflection
+on wet paving. A second procedural raster supplies the puddle mask. The
+example exports the final scene, the native rain pass, and the puddle mask
+captured from the render graph and resized by an ordinary raster node.
+
+## Programmable exposure
+
+The headless renderer integrates subframes with `shutter`. Set it in
+render options, in `world.look.shutter`, or in a procedural
+`scene.render.options` record. Use `--shutter shutter.json` with the CLI
+render and clip commands. `--shutter on` uses the defaults and
+`--shutter off` disables a scene's authored shutter.
+
+```js
+const shutter = {
+  duration: .12,
+  samples: 12,
+  curve: [[0, 0], [.22, 1], [.64, .8], [1, 0]],
+  targets: [
+    { select: { material: 'brass' }, shutter: { steps: 4 } },
+    { select: { object: 'courier' }, shutter: false }
+  ],
+  rolling: { duration: .06, bands: 8, direction: 'down' },
+  passes: {
+    'screen-trace': { duration: .18, curve: 'triangle', scan: false }
+  }
+};
+const frame = ink.render(world, { shutter, renderGraph, t: 3 });
+```
+
+| Control | Behavior |
+| --- | --- |
+| `duration`, `offset` | Seconds around the requested frame time, with a signed offset. The default duration is 1/30 second. Earlier-than-zero samples use time zero. |
+| `curve` | Use `box`, `triangle`, `hold`, or two to 32 increasing `[phase, weight]` knots from zero through one. Weights are nonnegative. Sampling distributes the subframes by integrated curve weight. |
+| `samples`, `steps` | Use 1–32 integration samples. Default is eight. Optional `steps` snaps exposure times to 1–32 discrete poses across the curve window. |
+| `rolling` | Offset 1–16 bands across the frame by the given duration. Directions are `down`, `up`, `right`, or `left`. Set `scan: false` on a profile to lock its scan time while other layers roll. |
+| `targets` | Assign profiles to named objects, materials, or other scene selectors. Later matches take precedence. A profile inherits unspecified camera shutter settings. `shutter: false` pins the target to the requested frame time. |
+| `passes` | Give a named render-graph pass its own exposure. The pass and its inputs are sampled on its clock, then the accumulated raster feeds later passes. Downstream shutter passes can read the already integrated output of upstream shutter passes. |
+| `space` | Accumulate premultiplied linear light by default. Use `display` to average the display RGB values directly. |
+
+Selected splats and atlas placements share the scene depth buffer at every
+subframe. A pinned opaque subject can hold a sharp silhouette and hide
+motion behind it. Depth, motion references, deep fragments, and other
+diagnostic captures are read at the nominal frame time. The screen graph
+runs on the exposed scene at the nominal time. Named pass shutters can
+sample stateless branches, and retained graph history can consume their
+outputs downstream. Fixed artwork in a mixed-resolution interface is
+composited at its authored resolution on the nominal frame.
+
+Dioramas with seekable animations are sampled through their ordinary pose
+function. For fixed-step worlds, supply an independent
+`shutterWorld(time)` function that returns a world sampled from a take or
+checkpoint. The renderer leaves the caller's simulation at its original
+time. Selected pose sampling requires stable splat slots. Camera-level
+exposure can sample a changing scene through the same function.
+
+Each frame has a shared budget of 128 sampled subframes and 64 million
+sampled art pixels. Coincident times within a scan band use one sample.
+Browser hosts can use `KIT.programmableExposure.prepare`, `schedule`,
+and `accumulate` with their own captured rasters. Native scene shutter
+rendering is available through the headless backend.
+
+Run `node examples/programmable-exposure.cjs shutter-relay.html` to compare
+weighted, stepped, rolling, and graph-pass exposures.
+
+## Bind deep layers to a pass
+
+In the headless renderer, use `deepComposite.slots` to read
+[depth-ordered fragments](art-passes.md#deep-compositing) from the frame
+being rendered. Each slot takes the same selectors as `scene.deepLayer`
+plus the output `channel`, which defaults to `value`.
+
+```js
+const deepComposite = {
+  layers: 8,
+  reflections: ['basin'],
+  slots: {
+    underGlass: { view: 'transmitted', object: 'lettering', channel: 'mask' },
+    buoyInWater: { view: 'reflected', plane: 'basin', object: 'buoy', channel: 'mask' }
+  }
+};
+const renderGraph = { passes: [
+  { id: 'lettering-matte', type: 'mask', raster: { slot: 'underGlass', range: [0, 1] } },
+  { id: 'buoy-matte', type: 'mask', raster: { slot: 'buoyInWater', range: [0, 1] } }
+] };
+const frame = ink.render(world, {
+  w: 256, h: 144, px: 1, deepComposite, renderGraph,
+  renderGraphCapture: ['lettering-matte', 'buoy-matte']
+});
+```
+
+Use the matte IDs as masks on later screen passes, or read `value` or
+`surface` into an isolated composite. The numeric `mask` output uses the
+[0, 1] range. Ordinary `renderGraphInputs` can supply other slots in the
+same frame.
 
 ## Scanline distortion
 
@@ -24,6 +221,9 @@ Give a distortion pass `rows` to change its source sampling one output row
 at a time. JSON accepts keys with increasing `at` values from 0 at the top
 to 1 at the bottom. Ink interpolates the keys and holds the nearest value
 outside their span.
+
+The [registered scanline warp](headless-authoring.md#deform-registered-scanlines)
+also supports deforming text and sprite assets ahead of scene compositing.
 
 ```json
 {
@@ -74,6 +274,95 @@ ink-studio clip examples/raster-millrace.js --from 0 --to 6 --fps 12 \
 ink-studio clip examples/raster-tidal-flats.js --from 0 --to 6 --fps 12 \
   --w 240 --h 144 --px 1 --out tidal-flats.png
 ```
+
+### Repeat, skip, and blank rows
+
+Use `rowEdits` on a distortion pass to apply whole-row edits before its
+continuous `rows`, offset, or wave transforms. Row numbers count from
+zero at the top of the final output image.
+
+```json
+{
+  "id": "signal-fault",
+  "type": "distortion",
+  "rowEdits": [
+    {"mode": "skip", "start": 8, "count": 3},
+    {"mode": "repeat", "start": 24, "count": 5, "source": 23},
+    {"mode": "blank", "start": 40, "count": 2}
+  ]
+}
+```
+
+The pass shares the [standalone scanline rules](headless-authoring.md#repeat-skip-and-blank-scanlines).
+The visible selection, mask, and opacity still control where it writes.
+In the default `"replace"` blend a blank clears the covered pixel.
+In `"over"`, blank rows leave the current image visible. A JavaScript
+`rowEdits({ width, height, time })` callback can return a new array each
+frame or return `undefined` to leave the rows alone.
+
+For a held image and stage changes across a fault, use
+[signal recovery](headless-authoring.md#recover-from-signal-loss) in the raster
+graph and bind its output to an image slot. Use the stage to drive row edits
+or other fault effects.
+
+## Copper-style raster schedules
+
+A `rasterSchedule` pass writes registers at authored output rows. The new
+values take effect on that row and persist until the next write to that
+register. Each row is a zero-based integer measured from the top of the
+final output, independent of art resolution or source size.
+
+```js
+const renderGraph = { passes: [{
+  id: 'raster',
+  type: 'rasterSchedule',
+  indices: { slot: 'indexedArt' },
+  palette: ['#152137', '#6aa6a1', '#f4bb82'],
+  schedule: [
+    { row: 34, palette: [[1, '#e89e83']] },
+    { row: 60, offset: [-12, 0], pixelScale: [3, 2] },
+    { row: 92, offset: [0, 0], pixelScale: [1, 1], palette: [[1, '#6aa6a1']] }
+  ],
+  blend: 'replace',
+  wrap: true
+}] };
+const renderGraphInputs = { indexedArt };
+```
+
+- `schedule` contains up to 1,024 entries at strictly increasing rows.
+  Include all writes for a given row in one entry. Rows beyond the frame
+  have no visible effect. In JavaScript, a callback can return this list
+  per frame using `{ width, height, time }`.
+- `offset: [x, y]` reads from a different source address in whole output
+  pixels. Positive values read right and down. The default is `[0, 0]`.
+- `pixelScale: [w, h]` repeats one sample across a block of output pixels.
+  Each block samples its top left. The horizontal grid starts at the left
+  edge. The vertical grid restarts only on a pixel-size write. The default
+  is `[1, 1]`.
+- `palette` writes replace individual slots with hex RGB or RGBA colors.
+  Use a base palette of up to 256 entries and an `indices` slot containing
+  a one-channel index raster or a two-channel raster with index and byte
+  alpha. Index `-1` always produces transparency. Slots with the same base
+  color retain separate identities. Palette writes use the output row even
+  when the source address has shifted.
+- For a full-color scene or an earlier image pass, omit `indices` and the
+  palette. `source` then names the earlier image and defaults to `input`.
+  Offsets and pixel-size writes operate on the same output grid.
+- `wrap: true` repeats the source at both edges. Outside samples are
+  transparent by default. Use `blend: 'over'` to show the underlying image
+  through them. The ordinary mask, selection, depth, and opacity controls
+  also apply.
+
+An indexed pass can also set `cycles` to [rotate palette slots](headless-authoring.md#cycle-an-indexed-palette)
+using the frame clock. Use an inclusive range or explicit list for each
+cycle. The pass rotates its starting palette once per frame, then applies
+the authored row writes. A row write replaces its slot for subsequent
+rows until another write changes it.
+
+The CPU and WebGL use the same row registers. In a procedural graph or
+JavaScript raster pipeline, use [`fx.rasterSchedule`](headless-authoring.md#schedule-raster-register-writes).
+Run `node examples/raster-schedule.cjs raster-relay.html` to compare the
+three register types in the browser.
 
 ## Moving world reveals
 
@@ -176,14 +465,229 @@ Pass `resetRenderHistory: true` on a cut. Use `cameraMotion: "keep"` when
 camera movement should carry the screen-space trails through the shot.
 Live graph edits and presentation tracks can animate warp, gain and decay.
 
-### Fixed-step playback and exports
+Use [subject-attached feedback](motion-afterimages.md#subject-attached-feedback)
+to retain and resample marks in the receiver’s surface coordinates.
 
-The CLI runs `clip` and `sheet` exports containing feedback at 24 feedback
-steps per second by default. `--feedback-fps` sets that rate independently
-of output `--fps`. Feedback is replayed from scene time zero before a
-trimmed export; an output between feedback ticks holds the latest completed
-frame. Use `--feedback-cuts 2.5,4` to clear history at the first feedback
-tick at or after each scene time.
+## Frame-age masks
+
+Each `frameAge` pass captures its image input at up to `fps` (default 12).
+Give it one to eight regions and connect each region's `mask` to an
+earlier mask pass. A region without a mask uses the whole pass coverage.
+The pass-level `mask`, `select`, `depth`, and `opacity` apply to all regions.
+Where the regions overlap, Ink applies them in declaration order.
+
+```js
+const graph = { passes: [
+  { id: 'camera', type: 'composite', isolated: true,
+    layer: atlas.layer('drone', { rect: [24, 24, 144, 96] }) },
+  { id: 'upper', type: 'mask', rect: [24, 24, 144, 32] },
+  { id: 'middle', type: 'mask', rect: [24, 56, 144, 32] },
+  { id: 'lower', type: 'mask', rect: [24, 88, 144, 32] },
+  { id: 'corrupt', type: 'frameAge', input: 'camera', fps: 12,
+    cameraMotion: 'keep', regions: [
+      { mask: 'upper', mode: 'delay', frames: 6 },
+      { mask: 'middle', mode: 'hold', start: 8 },
+      { mask: 'lower', mode: 'replay', start: 9, frames: 9 }
+    ] },
+  { id: 'screen', type: 'composite', input: 'scene', source: 'corrupt' }
+] };
+```
+
+Tick zero is the first rendered frame after a reset. `delay` reads
+`frames` ticks back. `hold` pins the frame at `start`. `replay` captures
+`frames` consecutive ticks starting at `start`, then loops forward through
+that interval. The region stays live while it waits for its samples.
+`start` defaults to zero and `frames` to one. Lengths are whole ticks
+from 1 to 64. If the host skips ticks, the last observed image fills the
+gap. Rendering twice at the same tick preserves its original capture.
+
+Use a named image as `source` to capture it separately from the destination
+`input`. Isolate a sprite, screen layer, or camera-atlas feed to retain its
+transparency through the effect. For scene objects, set `select` on the
+pass. The current selected surface gates the display, and empty historical
+samples leave it live. A nearer occluder stays visible.
+
+Frame age shares the screen-history resets and uses the same CPU
+`renderHistory` session. WebGL retains the frames on the GPU. The default
+`cameraMotion: "reset"` starts a fresh history on a camera move. Choose
+`"keep"` for a monitor or a deliberate screen-space glitch. The history
+budget includes the delay buffer, pinned ticks and a reusable capture
+target. Each pass can reserve up to 128 frame slots. The default capture
+budget is 262,144 pixels per slot with nearest sampling. Use
+`budget.scale`, `budget.maxPixels`, or `budget.filter: "linear"` to tune
+history resolution and filtering. Coverage masks still resolve at output
+resolution.
+
+[Tideline Repeater](../examples/frame-age-mask.js) applies all three modes
+to a live camera-atlas tile next to the clean feed.
+
+```sh
+node cli/ink-studio.js clip examples/frame-age-mask.js --w 452 --h 215 \
+  --to 5 --fps 12 --feedback-fps 12 --out tideline-repeater.png
+```
+
+## Frame banks with selective refresh
+
+A `frameBank` starts with its current source. Each later frame replaces
+only the pixels whose refresh rule is due. All other pixels keep their
+last stored image. Use one bank for multiple independent rules.
+
+```js
+const graph = { passes: [
+  { id: 'subject', type: 'mask', raster: { slot: 'labels', match: 7 } },
+  { id: 'manual', type: 'mask', raster: { slot: 'refresh' } },
+  { id: 'bank', type: 'frameBank', fps: 12, cameraMotion: 'keep',
+    tiles: { size: [24, 16], every: 8, step: 1 },
+    regions: [{ mask: 'subject', every: 3 }, { rect: [0, 92, 150, 12], every: 1 }],
+    refresh: 'manual' }
+] };
+```
+
+- `fps` sets the bank's tick rate, from 1 to 120. The first observation
+  initializes the whole bank and starts the clock at tick zero. Repeating
+  a timestamp keeps the last contents. When a host skips a tick, any
+  elapsed refreshes write the newest observed frame.
+- `tiles.size` sets width and height in output pixels. Tiles at the right
+  and bottom edges can be partial. `every` is the period in ticks and
+  `phase` is the base offset. `step` advances the phase per tile in
+  row-major order, wrapping at the period. Defaults are 4, 0, and 1
+  respectively, with step zero for a period of one tick.
+- Add up to eight `regions` with independent `every` and `phase`.
+  A rule can use a rectangle, an earlier `mask` pass, or both. A rule
+  with neither refreshes the entire bank. Region schedules default to
+  every tick. Periods are 1 to 4096 whole ticks.
+- A `refresh` mask applies on every new observed timestamp, including
+  between scheduled ticks. An empty mask writes nothing. Where
+  refreshes overlap, the strongest coverage wins. Partial coverage
+  mixes premultiplied RGBA and full coverage can replace pixels with
+  transparency.
+
+To use a tracked region, connect `fx.trackRegions.labels` to a named
+`renderGraphInputs` slot. Use `raster.match` on a mask pass to select
+that exact numeric ID, including IDs above 255. This is a screen-space
+bank. As the tracked footprint moves, older pixels stay where they were
+written until a refresh reaches them. Add a whole-frame rule for
+periodic cleanup. A rule with a missing tracked ID writes nothing.
+
+`source` can be an earlier image pass and defaults to `input`. The
+pass-level `mask`, `select`, `depth`, and `opacity` gate where the stored
+image is displayed. The bank and its source still cover the frame.
+CPU and WebGL share the same schedule and screen-history reset rules.
+By default a camera move starts a fresh bank. Set `cameraMotion: "keep"`
+for screen-space continuity during camera motion. A cut, rewind, or size
+change starts a new bank. Use `budget.scale` or `budget.maxPixels` to
+store at a lower resolution and `budget.filter` to control playback sampling.
+
+Use [the graph raster node](headless-authoring.md#selectively-refresh-a-frame-bank)
+for image inputs outside the scene renderer. Its optional history feeds
+[per-pixel time remapping](headless-authoring.md#per-pixel-time). Run
+`node examples/frame-banks.cjs signal-loom.html` to try the tile,
+mask, and tracked-region modes.
+
+## Motion-smeared frame history
+
+`motionSmear` starts with the clean image. Each following step samples
+the retained image upstream along the local motion vector, mixes that
+sample with the current clean pixel, and retains the result for the next
+step. A longer `halfLife` keeps old fragments visible through more steps.
+Stop the motion while leaving the field active to let displaced pixels
+recover in place.
+
+```js
+const smear = {
+  id: 'signal-breakup',
+  type: 'motionSmear',
+  input: 'camera',
+  field: 'block-vectors',
+  fieldScale: [180, 90],
+  blockSize: [12, 6],
+  halfLife: .45,
+  refresh: 'telemetry',
+  cameraMotion: 'keep'
+};
+```
+
+- Set `field` to an earlier image pass such as an isolated raster layer.
+  Its red and green bytes encode signed X and Y motion, with 128 neutral,
+  1 or 0 fully negative, and 255 fully positive. Multiply by
+  `fieldScale` (default `[120, 120]`) for screen pixels per second.
+  Positive Y moves down. The blue byte and alpha control the fraction
+  of history retained at that pixel. For example, `[255, 128, 255, 255]`
+  applies full positive X motion and allows the normal half-life.
+- `blockSize` sets the width and height in output pixels. Each block
+  samples the field at its center. Use `[1, 1]` (the default) for
+  per-pixel vectors. Set `velocity` to a uniform XY bias in pixels per
+  second. A pass with just `velocity` uses that vector everywhere.
+- Use `refresh` to reference an earlier mask. Full coverage replaces
+  the retained pixel with the clean pixel immediately, including its
+  alpha. Outside-image samples also use the clean pixel. The regular
+  `mask`, `select`, `depth`, and `opacity` control where the smear appears.
+- The history budget controls the retained resolution. Full-resolution
+  nearest sampling is the default within the budget. Set
+  `budget.filter: "linear"` for interpolated history samples.
+  Captures use the existing CPU `renderHistory` session or the WebGL
+  renderer's GPU history. A cut or rewind restores the clean input.
+  Camera motion resets the pass by default. Use `"keep"` to carry the
+  screen-space history through a camera move.
+
+### Feed signed motion
+
+Use `motion` to bind a raw, two-channel raster through
+`renderGraphInputs`. Its XY samples align with the current image,
+including when it comes from a render pass captured on an earlier take.
+The encoded image `field` remains available for authored velocity maps.
+
+```js
+{
+  id: 'mosh', type: 'motionSmear', input: 'camera',
+  motion: { slot: 'vectors', valid: 'visibleMotion' },
+  blockSize: [8, 4], halfLife: 0.8, refresh: 'intra'
+}
+```
+
+- Native `scene.pass` motion `data` and `anim.visualSample.motion`
+  describe current minus previous position. This is the default.
+  Connect their corresponding `valid` or `motionValid` outputs to the
+  validity slot. Zero validity replaces the affected history with the
+  current image.
+- To use `warp.opticalFlow`, estimate `direction: "backward"` and set
+  that same direction in the motion binding. Backward vectors point
+  from the current pixel to its donor in the previous image.
+  Add its optional `confidence` raster by naming another slot.
+  Confidence in [0, 1] weights carry. `minConfidence` cuts off weak samples.
+- Raw motion is in `pixels/frame` by default. Each new observation
+  applies the supplied displacement once. Use `units: "pixels/second"`
+  to scale vectors by elapsed time. Raw vectors default to
+  `fieldScale: [1, 1]`. `velocity` stays in pixels per second.
+- A `null` vector slot restores the clean frame. Supply a refresh mask
+  to clear only selected pixels, or adjust `halfLife` to control how
+  long history survives elsewhere. A clip cut starts a fresh history.
+
+Use [`anim.datamosh`](headless-authoring.md#transport-image-history-with-signed-motion)
+to combine raw motion and live or recorded images outside the scene renderer.
+
+Run `node examples/datamosh.cjs crosswind.html` to try the signed-motion
+study with adjustable half-life and selective refresh.
+
+[Packet Drift](../examples/motion-smear.js) runs the same animated feed
+through clean and motion-smeared image branches. The motion field follows
+the probe's movement with different offsets in neighboring blocks.
+
+```sh
+node cli/ink-studio.js clip examples/motion-smear.js --w 420 --h 204 \
+  --to 6.5 --fps 12 --feedback-fps 12 --out packet-drift.png
+```
+
+## Fixed-step playback and exports
+
+The CLI runs `clip` and `sheet` exports containing feedback, frame age, or
+motion smear at 24 history steps per second by default. `--feedback-fps` sets that rate
+independently of output `--fps`. Choose a history step rate that matches
+or is a multiple of the frame-age capture rate to sample every tick.
+The CLI replays history from scene time zero before a trimmed export.
+An output between history steps holds the latest completed frame.
+Use `--feedback-cuts 2.5,4` to clear history at the first step at or after
+each scene time.
 
 ```sh
 node cli/ink-studio.js clip examples/render-feedback.js --w 408 --h 216 --to 7.2 --fps 16 --feedback-fps 24 --out phosphor-relay.png

@@ -153,11 +153,13 @@
     const { tracks, base } = entry;
     const data = world.data.slice(), normals = world.renderMetadata?.normals?.slice();
     const pix = world.pix?.slice(), fine = world.fine?.slice(), surfaceData = world.surfaceData?.slice();
+    const brushFrames=world.splatFootprints?.frames?.slice();
     const painted = new Map(), poses = new Map(), hidden = new Set();
     const move = (i, carry, rotation, transpose) => {
       const q = i * 16;
       data.set(carry(point(data, i)), q);
       if (!rotation) return;
+      if(brushFrames&&i*6+6<=brushFrames.length)SplatFootprints.carryFrame(brushFrames,i*6,world.splatFootprints.frames,i*6,rotation);
       const shape = SplatFrames.covariance(data, q, rotation, M, transpose);
       data[q + 4] = shape[0]; data[q + 5] = shape[1]; data[q + 6] = shape[2];
       data[q + 8] = shape[4]; data[q + 9] = shape[5]; data[q + 10] = shape[8];
@@ -217,6 +219,7 @@
     const result = { ...world, data, pix, fine, surfaceData, paintCorrections, paintDecals,
       reconstructionPose: { base, poses },
       renderMetadata: normals ? { ...world.renderMetadata, normals } : world.renderMetadata };
+    if(brushFrames)SplatFootprints.setFrames(result,brushFrames);
     if (world.pix) {
       if (entry.anchors === undefined) {
         const { count, detail, pix, pats, pixAnchors = K.pixel.anchors } = world;

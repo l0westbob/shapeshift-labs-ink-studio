@@ -6,6 +6,11 @@ musical positions, and cue intents. Resource names are opaque identifiers for
 the host. The same score can run in a world recording or through the
 standalone `KIT.music.create(config)` clock.
 
+Use [tempo maps](scene-timeline.md#beat-bar-and-phrase-timing) to place authored visual keys and scene cues on beats, bars, and phrases.
+
+[Procedural scores](procedural-score.md) use the same musical grid for
+chord events, native synthesis, and visual or simulation controls.
+
 ## Author a score
 
 See [the storm score](../examples/world-adaptive-music.json) for a complete

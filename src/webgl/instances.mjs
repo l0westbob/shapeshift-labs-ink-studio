@@ -76,6 +76,22 @@ function placement(raw, prototypes, old) {
     swatches:swatches.map(([a,b])=>[hex(a),hex(b)]), mask:damage&&Float32Array.from([...damage.center,damage.radius ** 2]) };
 }
 
+function joinFootprints(parts){
+  if(!parts.some(p=>p.splatFootprints))return undefined;
+  const styles=[],dictionary=new Map(),count=parts.reduce((n,p)=>n+p.count,0),indices=new Uint16Array(count),frames=parts.some(p=>p.splatFootprints?.frames)?new Float32Array(count*6):undefined;let offset=0;
+  for(const p of parts){const b=p.splatFootprints;if(b){
+    const remap=b.styles.map(style=>{const key=JSON.stringify(style);if(!dictionary.has(key)){if(styles.length>=64)throw new RangeError('Instances exceed 64 footprint styles');dictionary.set(key,styles.push(style));}return dictionary.get(key)});
+    for(let i=0;i<p.count;i++){const id=b.indices[i]??0;indices[offset+i]=id?remap[id-1]:0;}
+    if(b.frames)frames.set(b.frames,offset*6);
+  }offset+=p.count;}
+  return Object.freeze({version:1,styles:Object.freeze(styles),indices,...(frames&&{frames})});
+}
+export function expandedEngraving(base,plan){
+ const parts=[base,...plan.rows.map(r=>r.asset)];if(!parts.some(p=>p.engraving))return undefined;
+ const count=parts.reduce((n,p)=>n+p.count,0),styles=[],keys=new Map(),indices=new Uint16Array(count),anchors=new Float32Array(count*3),restFrames=new Float32Array(count*6);let offset=0;
+ for(const p of parts){const b=p.engraving;if(b){const remap=b.styles.map(s=>{const key=JSON.stringify(s);if(!keys.has(key)){if(styles.length>=16)throw new RangeError('Instances exceed 16 engraving styles');keys.set(key,styles.push(s));}return keys.get(key);});b.indices.forEach((id,i)=>indices[offset+i]=id?remap[id-1]:0);anchors.set(b.anchors,offset*3);restFrames.set(b.restFrames,offset*6);}offset+=p.count;}
+ return {version:1,styles,indices,anchors,restFrames};
+}
 export function instancePlan(group) {
   const plan = plans.get(group);
   if (!plan) throw new TypeError('Expected instances from createSplatInstances');
@@ -104,7 +120,9 @@ export function createSplatInstances(prototypes, instances) {
           world.opticalSplats.length !== world.count * 12))
         throw new TypeError('Instance optical materials must match the prototype splat count');
       asset = { offset:sharedCount, count:world.count, data,
+        engraving:world.engraving&&{...world.engraving,indices:world.engraving.indices.slice(),anchors:world.engraving.anchors.slice(),restFrames:world.engraving.restFrames.slice()},
         opticalSplats: world.opticalSplats?.slice(0, world.count * 12),
+        splatFootprints: world.splatFootprints && {version:1,styles:world.splatFootprints.styles.map(v=>JSON.parse(JSON.stringify(v))),indices:world.splatFootprints.indices.slice(),...(world.splatFootprints.frames&&{frames:world.splatFootprints.frames.slice()})},
         normals: world.renderMetadata?.normals?.slice(0, world.count * 3),
         materialPixelStyles: sourceStyles?.slice(0, world.count * 4), ...bounds(data,world.count) };
       sharedCount += asset.count;
@@ -126,7 +144,18 @@ export function createSplatInstances(prototypes, instances) {
   }
   const plan = { rows, assets:[...unique.values()], count, sharedCount, revision:0, orderRevision:0,
     hasOpticalSplats: rows.some(row => row.asset.opticalSplats),
+    hasSplatFootprints: rows.some(row=>row.asset.splatFootprints),
     hasMaterialPixelStyles: rows.some(row => row.asset.materialPixelStyles) };
+  function commit(i, next) {
+    const old = rows[i];
+    next.start = old.start;
+    next.index = old.index;
+    next.version = ++plan.revision;
+    if (next.authored.visible !== old.authored.visible || !!next.authored.opacity !== !!old.authored.opacity ||
+        next.at.some((n,j)=>n!==old.at[j]) || next.matrix.some((n,j)=>n!==old.matrix[j])) plan.orderRevision++;
+    rows[i] = next;
+    return next.authored;
+  }
   const api = Object.freeze({
     count:instances.length, splats:count, sharedSplats:sharedCount,
     get(id) { return rows[ids.get(id)]?.authored; },
@@ -135,14 +164,28 @@ export function createSplatInstances(prototypes, instances) {
       if (!old || !patch || typeof patch !== 'object' || Array.isArray(patch) ||
           Object.hasOwn(patch, 'id') || Object.hasOwn(patch, 'prototype'))
         throw new TypeError('Updates need an existing instance and editable placement fields');
-      const next = placement(patch, assets, old);
-      next.start = old.start;
-      next.index = old.index;
-      next.version = ++plan.revision;
-      if (next.authored.visible !== old.authored.visible || !!next.authored.opacity !== !!old.authored.opacity ||
-          next.at.some((n,i)=>n!==old.at[i]) || next.matrix.some((n,i)=>n!==old.matrix[i])) plan.orderRevision++;
-      rows[i] = next;
-      return next.authored;
+      return commit(i, placement(patch, assets, old));
+    },
+    updateTransforms(poses) {
+      if (!Array.isArray(poses) || poses.length > rows.length)
+        throw new TypeError('Expected a bounded list of instance transforms');
+      const selected = new Set(), changed = [];
+      for (const pose of poses) {
+        const i = ids.get(pose?.id);
+        if (i === undefined || selected.has(i)) throw new TypeError('Instance transforms need distinct existing IDs');
+        selected.add(i);
+        const old = rows[i], patch = {};
+        for (const key of ['position', 'rotation', 'scale']) {
+          if (!Object.hasOwn(pose, key) || pose[key] === undefined || pose[key] === old.authored[key]) continue;
+          const value = pose[key], previous = old.authored[key];
+          if (Array.isArray(previous) && Array.isArray(value) && value.length === previous.length &&
+              previous.every((n,j) => n === value[j])) continue;
+          patch[key] = value;
+        }
+        if (Object.keys(patch).length) changed.push([i, placement(patch, assets, old)]);
+      }
+      for (const [i, row] of changed) commit(i, row);
+      return changed.length;
     },
     owner(logicalIndex, baseCount = 0) {
       const local = logicalIndex - baseCount;
@@ -217,6 +260,14 @@ function stampInstanceNormals(out, { asset, authored: { rotation } }, start) {
   }
 }
 
+export function expandedFootprints(base,plan){
+  return joinFootprints([base,...plan.rows.map(({asset,matrix})=>{
+    const b=asset.splatFootprints;if(!b?.frames)return asset;
+    const frames=b.frames.slice();for(let i=0;i<frames.length;i+=3){const x=frames[i],y=frames[i+1],z=frames[i+2];for(let a=0;a<3;a++)frames[i+a]=matrix[a*3]*x+matrix[a*3+1]*y+matrix[a*3+2]*z;}
+    return {...asset,splatFootprints:{...b,frames}};
+  })]);
+}
+
 function flattened(base, plan) {
   validateSize(base.count, plan);
   const count = base.count + plan.count, data = new Float32Array(count * 16);
@@ -239,6 +290,9 @@ function flattened(base, plan) {
     for (const row of plan.rows) stampInstanceNormals(normals, row, base.count + row.start);
   }
   const result = { ...base, count, data, renderMetadata };
+  const engraving=expandedEngraving(base,plan);if(engraving)result.engraving=engraving;
+  const footprints=expandedFootprints(base,plan);
+  if(footprints)result.splatFootprints=footprints;
   if (base.opticalSplats || plan.hasOpticalSplats) {
     const profiles = result.opticalSplats = new Float32Array(count * 12);
     if (base.opticalSplats) profiles.set(base.opticalSplats.subarray(0, base.count * 12));

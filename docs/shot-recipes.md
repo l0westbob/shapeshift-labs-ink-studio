@@ -1,5 +1,8 @@
 # Reproducible shot recipes
 
+Use [shot approval](shot-approval.md) to run checks over an export range and
+generate a command that reproduces its first failing frame.
+
 Add `--recipe <shot.json>` to `render`, `clip`, `transition-review`, or `sim render` to save the inputs behind a review. The recipe records the effective camera at each rendered sample, scene and sky times, profile pins, seed, frame rate, and native art dimensions and pixel scale.
 
 ```sh

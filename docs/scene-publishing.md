@@ -17,7 +17,16 @@ Set the motion interval with `--from`, `--to`, and `--fps`. The endpoint is excl
 
 Add `--loop-join` to a moving export to record the last-to-first transition and compare the excluded endpoint with the start. The manifest identifies the PNG and JSON evidence. [Loop authoring](loop-authoring.md)
 
+Add `--audio soundtrack.json` to publish aligned WAV stems and a stereo
+mix. An optional `--mux` adapter produces a review video with that mix.
+Publish a native world or a take directly to use committed spatial cues
+and its adaptive score. [Scene soundtrack exports](scene-audio.md)
+
 ## Replay and embed
+
+Use the [standalone playback build](build-profiles.md#play-baked-frames) to
+mount a recording in your own page. The same frame sampling and playback
+code is used by the self-contained embed.
 
 `ink-studio scene-replay <recording.json> --at <elapsed-seconds> --out <frame.png>` extracts the original PNG for that playback time. Add the recording's `start` to the frame offset to recover its source scene time. Use `--embed --out <embed.html>` to regenerate the player from the recording.
 

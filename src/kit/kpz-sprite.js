@@ -189,6 +189,7 @@
         )
       })
     );
+  K.pixelStamps = PixelStamps;
   K.sprite = {
     atlas: AtlasSprites.compile,
     placeAtlas: AtlasSprites.place,

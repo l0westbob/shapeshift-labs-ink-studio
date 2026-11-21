@@ -16,6 +16,11 @@ test('water capture bindings use existing optics, stable plane slots and both GP
     assert.deepEqual(mapped.reflectionPlanes,['mirror']);
     assert.deepEqual([...mapped.pack().data.slice(base*4,base*4+4)],[1,3,.5,0]);
     assert.equal(Boolean(packed.uniforms.u_waterAtlas),styled);
+    const detailed=water.scene([body('lake',{...binding,plane:'mirror',
+      detail:{core:.75,stretch:[2,.5],distance:[5,10],cluster:4}},styled)]).pack();
+    const config=detailed.uniforms.u_waterReflectionBase, offset=detailed.data[config*4+3];
+    assert(offset>config);
+    assert.deepEqual([...detailed.data.slice(offset*4,offset*4+8)],[.75,2,.5,1,5,10,4,0]);
   }
   for(const reflection of [{plane:''},{plane:'a',distortion:-1},{plane:'a',blur:17}])assert.throws(()=>body('a',reflection),/reflection/);
   const dry=water.scene([body('plain')]).pack();

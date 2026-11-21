@@ -9,6 +9,7 @@
 
   G.operations = Object.freeze({
     'proc.noise': {
+      seed: 'options',
       inputs: { definition: input('record', { type: 'simplex', axes: ['x', 'y'] }), options },
       ...value('field', ({ definition, options }, context) => G.noise(definition, seeded(options, context)))
     },
@@ -17,11 +18,22 @@
       inputs: { source: 'field', options }, time: true,
       ...value('raster', ({ source, options }, { time }) => G.sample(source, { time, ...options }))
     },
+    'proc.plasma': {
+      description: 'Combine independently animated oscillators and map the result to indexed color.',
+      inputs: { geometry: input('array<record>', P.generatorSupport.plasmaGeometry), motion: options,
+        palette: input('palette', P.generatorSupport.plasmaPalette), options },
+      outputs: { value: 'displayRaster', indices: 'raster', palette: 'palette', field: 'raster' }, time: true,
+      run({ geometry, motion, palette, options }, { time }) {
+        return G.plasma({ time, ...options, geometry, motion, palette });
+      }
+    },
     'proc.scatter': {
+      seed: 'options',
       inputs: { options }, outputs: { value: 'points', samples: 'array<record>', report: 'record' }, time: true,
       run: ({ options }, context) => G.scatter(timed(options, context))
     },
     'proc.reaction': {
+      seed: 'options',
       inputs: { steps: input('number', 400), options },
       outputs: { value: 'raster', u: 'raster', report: 'record' },
       run: ({ steps, options }, context) => G.reaction({ ...seeded(options, context), steps })
@@ -31,6 +43,7 @@
       ...value('raster', ({ source, options }) => G.repeat(source, options))
     },
     'proc.tiles': {
+      seed: 'options',
       inputs: { definitions: 'array<record>', options },
       ...value('record', ({ definitions, options }, context) => G.tiles(definitions, seeded(options, context)))
     },
@@ -42,24 +55,34 @@
       inputs: { points: 'points', options }, outputs: { value: 'path', points: 'points', length: 'number' },
       run: ({ points, options }) => G.path(points, options)
     },
+    'proc.smpteColorBars': { inputs: { options }, ...value('raster', ({ options }) => G.smpteColorBars(options)) },
+    'proc.tvStatic': {
+      seed: 'options',
+      inputs: { options }, time: true,
+      ...value('raster', ({ options }, context) => G.tvStatic(timed(options, context)))
+    },
     'proc.rain': {
+      seed: 'options',
       inputs: { options }, outputs: { value: 'raster', particles: 'array<record>' }, time: true,
       run: ({ options }, context) => G.rain(timed(options, context))
     },
     'proc.sparks': {
+      seed: 'options',
       inputs: { options }, outputs: { value: 'raster', particles: 'array<record>' }, time: true,
       run: ({ options }, context) => G.sparks(timed(options, context))
     },
     'proc.plume': {
+      seed: 'options',
       inputs: { options }, outputs: { value: 'raster', recipe: 'record' }, time: true,
       run: ({ options }, context) => G.plume(timed(options, context))
     },
     'proc.tree': {
+      seed: 'options',
       inputs: { options }, outputs: { value: 'raster', branches: 'array<record>', leaves: 'points' },
       run: ({ options }, context) => G.tree(seeded(options, context))
     },
     'proc.cable': {
-      inputs: { start: 'vec3', end: 'vec3', options },
+      inputs: { start: 'worldPosition', end: 'worldPosition', options },
       outputs: { value: 'raster', path: 'path', length: 'number' },
       run: ({ start, end, options }) => G.cable(start, end, options)
     },

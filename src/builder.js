@@ -137,11 +137,18 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     expanded.set(data);
     data = expanded;
   }
+  let colorOverride;
   const moving = [],
     back = [],
     cidx = [],
     nrms = [];
-  let curN = null;
+  let footprintRecorder, engravingRanges;
+  function describeEngraving(first,end,spec,frame) {
+    if(first>=end||spec===undefined)return;
+    const prepared=Engraving.prepare(spec);engravingRanges??=[];const last=engravingRanges.at(-1);
+    if (!frame && last && !last[3] && last[1] === first && last[2] === prepared) last[1] = end;
+    else engravingRanges.push([first, end, prepared, frame]);
+  }
   let ownerRows, materialRows, targetRows, muteEmission, materialAlbedo, materialPixelStyles, opticalSplats;
   let unnamedOwners = new WeakMap(), unnamedMaterials = new WeakMap();
   const ownerIds = new Map(), materialIds = new Map();
@@ -171,6 +178,11 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
       materialAlbedo = next;
     }
     materialAlbedo.fill(rgb + 1, first, end);
+  }
+  function describeFootprint(first, end, definition, frame) {
+    if (first >= end || definition === undefined) return;
+    footprintRecorder ??= SplatFootprints.recorder();
+    footprintRecorder.record(first,end,definition,frame);
   }
   function describePixelStyle(first, end, style, pair) {
     if (first === end || !style.edge && !style.mode && !style.steps) return;
@@ -396,7 +408,7 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     fine[o + 10] = vz;
     fine[o + 11] = 1;
   };
-  function push(x, y, z, c00, c01, c02, c11, c12, c22, col, a, an) {
+  function push(x, y, z, c00, c01, c02, c11, c12, c22, col, a, an, normal = null) {
     reserveRow();
     if (attrN) {
       if (!attr || attr.length < cap * 4) {
@@ -429,6 +441,7 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     if (fine && fine[n * 12 + 11] === 1)
       fine[n * 12 + 11] = 2; // the tile laid for this dab is now its own
     else if (fine && n * 12 < fine.length) fine.fill(0, n * 12, n * 12 + 12);
+    if(colorOverride){col=typeof colorOverride==='function'?colorOverride(col,[x,y,z]):colorOverride;if(!Array.isArray(col)||col.length!==3||!col.every(v=>Number.isFinite(v)&&v>=0&&v<=255))throw new TypeError('Color transform must return finite RGB bytes');}
     const o = n * 16;
     data[o] = x;
     data[o + 1] = y;
@@ -442,7 +455,7 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     data[o + 9] = c12;
     data[o + 10] = c22;
     cidx.push(P.indexOf(col));
-    nrms.push(curN);
+    nrms.push(normal);
     if (an) {
       if (renderMetadata && an.em && an.emission === false) {
         if (!muteEmission || muteEmission.length < cap) {
@@ -488,29 +501,42 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     const v = s * s;
     push(x, y, z, v, 0, 0, v, 0, v, col, a, an);
   }
-  function axial(x, y, z, ax, sa, sp, col, a, an) {
+  function axial(x, y, z, ax, sa, sp, col, a, an, recordNormal = false) {
+    if (ax?.length !== 3 || !Number.isFinite(ax[0]) || !Number.isFinite(ax[1]) || !Number.isFinite(ax[2]))
+      throw new TypeError('Splat axis needs three finite numeric components');
+    let u = ax[0], v = ax[1], w = ax[2];
+    const lengthSquared = u * u + v * v + w * w;
+    if (Math.abs(lengthSquared - 1) > 4 * Number.EPSILON) {
+      // Scale before taking the norm so finite axes also work at extreme magnitudes.
+      const scale = Math.max(Math.abs(u), Math.abs(v), Math.abs(w));
+      if (scale === 0) throw new RangeError('Splat axis must be nonzero');
+      u /= scale;
+      v /= scale;
+      w /= scale;
+      const inverseLength = 1 / Math.sqrt(u * u + v * v + w * w);
+      u *= inverseLength;
+      v *= inverseLength;
+      w *= inverseLength;
+    }
     const p = sp * sp,
       d = sa * sa - p;
     push(
       x,
       y,
       z,
-      p + d * ax[0] * ax[0],
-      d * ax[0] * ax[1],
-      d * ax[0] * ax[2],
-      p + d * ax[1] * ax[1],
-      d * ax[1] * ax[2],
-      p + d * ax[2] * ax[2],
+      p + d * u * u,
+      d * u * v,
+      d * u * w,
+      p + d * v * v,
+      d * v * w,
+      p + d * w * w,
       col,
       a,
-      an
+      an,
+      recordNormal ? [u, v, w] : null
     );
   }
-  const disc = (x, y, z, nrm, st, sn, col, a, an) => {
-    curN = nrm;
-    axial(x, y, z, nrm, sn, st, col, a, an);
-    curN = null;
-  };
+  const disc = (x, y, z, nrm, st, sn, col, a, an) => axial(x, y, z, nrm, sn, st, col, a, an, true);
   const stick = (x, y, z, ax, sl, sw, col, a, an) => axial(x, y, z, ax, sl, sw, col, a, an);
   /* a dab that is longer one way across the surface than the other (S.follow lays these along the form): nrm the way the surface
      faces, e the long way (across the surface), sa and sb its two half-widths, sn its thickness */
@@ -521,7 +547,6 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
       A = sa * sa,
       Bq = sb * sb,
       C = sn * sn;
-    curN = nrm;
     push(
       x,
       y,
@@ -534,9 +559,9 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
       A * e[2] * e[2] + Bq * fz * fz + C * nrm[2] * nrm[2],
       col,
       a,
-      an
+      an,
+      nrm
     );
-    curN = null;
   };
 
   let Lv = norm([-0.45, 0.75, 0.5]);
@@ -1067,6 +1092,7 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
             Float32Array.from({ length: n * OpticalMaterials.STRIDE }, (_, i) => opticalSplats[i] ?? 0) :
             opticalSplats.slice(0, n * OpticalMaterials.STRIDE)
         }),
+        ...(footprintRecorder && { splatFootprints: footprintRecorder.finish(n) }),
         ...(materialPixelStyles && { materialPixelStyles: materialPixelStyles.slice(0, n * 4) }),
         ...(shadowLod && { shadowLod: shadowLod.length >= n * ShadowArt.stride ? shadowLod.slice(0, n * ShadowArt.stride) :
           Float32Array.from({ length: n * ShadowArt.stride }, (_, i) => shadowLod[i] || 0) }),
@@ -1094,6 +1120,12 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
       },
       meta
     );
+    if(engravingRanges||world.look?.screenPrint!==undefined&&world.look.screenPrint!==false||world.look?.engraving!==undefined&&world.look.engraving!==false){
+      const assignments=[];if(world.look?.engraving!==undefined&&world.look.engraving!==false)assignments.push(['all',world.look.engraving]);
+      if(world.look?.screenPrint!==undefined&&world.look.screenPrint!==false)assignments.push(['all',KIT.screenPrint.chart(world.look.screenPrint)]);
+      if(engravingRanges)for(const [first,end,spec,frame]of engravingRanges)assignments.push([Array.from({length:end-first},(_,i)=>first+i),spec??false,frame]);
+      Engraving.bindMany(world,assignments);
+    }
     if (detailBudgets !== undefined)
       world.look = { ...world.look, detailBudgets: detailBudget?.rules ?? false };
     if (shadowSettings !== undefined)
@@ -1108,11 +1140,17 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
       world.look = { ...world.look, colorStack: ColorStack.normalize(world.look.colorStack) };
     if (world.celestialTracks) world.celestialTracks = CelestialTracks.compile(world.celestialTracks);
     if (world.areaLights !== undefined) AreaLights.prepare(world.areaLights);
+    if (world.shotLighting !== undefined) ShotLighting.prepare(world.shotLighting);
     if (world.bounceProbes !== undefined && world.bounceProbes !== false) world.bounceProbes = KIT.bounceProbes.bake(world);
     if (world.relighting !== undefined) SplatRelighting.settings(world.relighting);
     if (world.atmosphereEmitters) world.atmosphereEmitters = KIT.atmosphere.emitters.compile(world.atmosphereEmitters);
     if (world.splatFields) world.splatFields = KIT.splatFields.compile(world.splatFields);
     if (world.surfaceEffects) world.surfaceEffects = KIT.splatEffects.context(world.surfaceEffects);
+    if (world.pixelStamps !== undefined) {
+      const placed = PixelStamps.placements(world.pixelStamps, { scenePalette: world.pal, paletteRoles: world.paletteRoles });
+      const atlases = world.spriteAtlases === false ? [] : world.spriteAtlases ?? [];
+      world.spriteAtlases = [...atlases, ...placed];
+    }
     return world;
   }
   // hand over everything pushed so far and start again empty
@@ -1134,6 +1172,8 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     bounced = 0;
     cidx.length = 0;
     nrms.length = 0;
+    footprintRecorder = undefined;
+    engravingRanges=undefined;
     ownerRows = materialRows = muteEmission = materialAlbedo = materialPixelStyles = opticalSplats = undefined;
     unnamedOwners = new WeakMap();
     unnamedMaterials = new WeakMap();
@@ -1168,6 +1208,10 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     return out;
   };
   return {
+    withColor(color,draw) {
+      if(typeof draw!=='function'||typeof color!=='function'&&(!Array.isArray(color)||color.length!==3||!color.every(v=>Number.isFinite(v)&&v>=0&&v<=255)))throw new TypeError('withColor needs RGB bytes or a transform and a drawing function');
+      const previous=colorOverride;colorOverride=color;try{return draw();}finally{colorOverride=previous;}
+    },
     detailBudget,
     seed,
     shadowArt,
@@ -1185,6 +1229,9 @@ function makeBuilder(seed, hex, { renderMetadata = true, initialCapacity = 1 << 
     describeSplats: renderMetadata ? describeSplats : undefined,
     describeAlbedo,
     describePixelStyle,
+    describeFootprint,
+    describeEngraving,
+    describeScreenPrint:(first,end,spec)=>describeEngraving(first,end,KIT.screenPrint.chart(spec)),
     describePrecipitation,
     born: v => (bornV = v === undefined || v === null || !isFinite(v) ? null : v),
     wet: v => (wetV = v === undefined || v === null || !isFinite(v) ? null : v),

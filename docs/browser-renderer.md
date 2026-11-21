@@ -48,6 +48,7 @@ tone mapping, and grading are inactive. Pass `reuseOrder: false` or
 | --- | --- |
 | `raw` | Show the directly blended RGB instead of the palette resolve. |
 | `renderGraph` | Run ordered, scoped screen passes after the scene draw. See [the render graph](render-graph.md). |
+| `renderGraphInputs` | Bind named procedural rasters to render graph image and mask slots. See [raster bindings](render-graph.md#connect-procedural-rasters). |
 | `composite` | Choose independent resolutions for the world and ordered screen layers. See [mixed-resolution compositing](mixed-resolution.md). |
 | `colored` | Use higher-resolution contours over native-size interiors. On by default for scenes without per-pixel materials. |
 | `outline`, `dither`, `tone` | Control outline and palette treatment. Use `tone: false` to disable an authored tone. |
@@ -78,6 +79,16 @@ The WebGL and headless entry points accept the same authored camera and time set
 Sampling is continuous by default. Authored cadence and live time domains determine the corresponding sample times and leave the camera and interface clocks independent. A pixel look that used WebGL's old implicit stepping can set `stepAnimation: true` to request 10 fps in both backends. An explicitly authored scene cadence takes precedence.
 
 The shared palette pipeline resolves tone and palette overrides, animation grades, curves, LUTs, and color stacks. `ignoreLookGrade` bypasses the animation grade. WebGL also evaluates ordered `material` and `lit` color stacks and uniform palette policies on baked splat colors with the same target selectors, albedo references, and look inputs used headlessly.
+
+An active tone uses the single-sample art grid, takes precedence over
+`colored`, and leaves the tone dots out of palette history damping. Tone colors
+come from its own output ramp. Set `tone: false` to restore the scene palette.
+
+WebGL's scene palette includes slots 0–63 across contour resolve, material
+ramps, carried-light lookup, and palette history. When an authored scene
+palette is larger, the renderer warns once per palette and uses its first 64
+swatches for resolve. For oversized palettes, `raw: true` draws the baked
+colors directly. Tone ramps and local palette policies have their own limits.
 
 Use `studio.describeRenderFrame(world, frame)` in Node or `renderer.describeFrame(world, frame)` in WebGL to inspect the versioned camera, clock samples, palette input under `palette`, palette mode, and stage issues. The description samples the scene without advancing simulation. Describe and draw at the same native art size for framing comparisons.
 
@@ -115,6 +126,11 @@ damage sphere hides splats whose local centers lie inside it. Clear the sphere
 with `damage: null`. Transforms update only the placement table and draw order.
 Palette and damage edits preserve the order when the camera stays still.
 `changedRows` still describes rows edited in the **base** world.
+
+Use `copies.updateTransforms(poses)` for a batch of ID-addressed position,
+rotation and uniform scale patches. It applies the validated batch atomically
+and returns the number of changed placements. Poses can come from the
+[stale transform sampler](headless-authoring.md#hold-or-duplicate-instance-transforms).
 
 `copies.get(id)` returns the authored placement. `copies.owner(index, terrain.count)`
 maps a logical renderer splat index to the stable placement ID, prototype ID,

@@ -188,6 +188,17 @@
       cache.set(id, value);
       return value;
     }
+    function advanceTake(take) {
+      const timing = K.procedural.takeTime.requireFrame(take);
+      const row = requireClock('simulation'), s = row.settings;
+      check(take.start >= wall && take.start - wall <= 1e6,
+        'restore time domains before seeking to an earlier take frame');
+      check(s.step === timing.dt && s.parent === null && s.start === 0 && s.rate === 1 &&
+        !s.paused && s.backlog === 'retain' && near(row.requested, wall) && row.tick <= take.tick &&
+        !cues.some(cue => cue.enabled && cue.domain === 'simulation'),
+        'take simulation needs a matching locked root clock with retained backlog');
+      return advanceToTime(take.start, 0, take.tick);
+    }
     function advance(seconds) {
       check(
         Number.isFinite(seconds) && seconds >= 0 && seconds <= 1e6 && time(wall + seconds),
@@ -196,6 +207,9 @@
       const wallDelta = seconds - wallCompensation,
         end = wall + wallDelta,
         nextWallCompensation = end - wall - wallDelta;
+      return advanceToTime(end, nextWallCompensation);
+    }
+    function advanceToTime(end, nextWallCompensation, takeTick) {
       const drafts = new Map(
           [...rows].map(([id, r]) => [
             id,
@@ -227,7 +241,9 @@
               next = row.requested + correction;
             row.compensation = next - row.requested - correction;
             row.requested = next;
-            const targetTick = floor(row.requested / s.step);
+            const estimated = floor(row.requested / s.step);
+            const targetTick = takeTick !== undefined && id === 'simulation'
+              ? j === points.length - 1 ? takeTick : Math.min(takeTick, estimated) : estimated;
             check(Number.isSafeInteger(targetTick), 'fixed tick budget exceeded');
             const due = Math.max(0, targetTick - row.tick),
               count = running ? Math.min(due, row.budget) : 0;
@@ -430,6 +446,7 @@
       ids: () => Array.from(rows.keys()),
       read,
       advance,
+      advanceTake,
       configure,
       add(id, raw = {}) {
         check(name(id) && !rows.has(id) && rows.size < 256, 'invalid or duplicate clock ID');
@@ -470,15 +487,21 @@
   }
   function renderFrame(world, options = {}) {
     const clocks = options.timeDomains ?? world?.timeDomains;
-    if (!clocks) return options;
-    check(typeof clocks.read === 'function', 'expected a live time-domain set');
+    const take = options.take;
+    if (!clocks && take === undefined) return options;
+    if (take !== undefined) {
+      K.procedural.takeTime.requireFrame(take);
+      check(!clocks || clocks.wall === take.start, 'advance the time domains to the take frame first');
+    }
+    check(!clocks || typeof clocks.read === 'function', 'expected a live time-domain set');
     return {
       ...options,
       timeDomains: clocks,
-      time: options.time ?? clocks.read('animation').sampleTime,
-      cameraTime: options.cameraTime ?? clocks.read('camera').sampleTime,
-      interfaceTime: options.interfaceTime ?? clocks.read('interface').sampleTime,
-      simulationTime: options.simulationTime ?? clocks.read('simulation').time,
+      time: options.time ?? clocks?.read('animation').sampleTime ?? take.start,
+      cameraTime: options.cameraTime ?? clocks?.read('camera').sampleTime ?? take.start,
+      interfaceTime: options.interfaceTime ?? clocks?.read('interface').sampleTime ?? take.start,
+      simulationTime: options.simulationTime ?? clocks?.read('simulation').time ?? take.simulationTime,
+      ...(take?.cut && { resetRenderHistory: true }),
       stepAnimation: options.stepAnimation ?? false
     };
   }
@@ -531,6 +554,7 @@
   }
   K.timeDomains = Object.freeze({
     create,
+    take: K.procedural.takeTime.create,
     restore: saved =>
       create({
         domains: Object.fromEntries(Object.entries(saved.domains).map(([id, r]) => [id, r.settings])),

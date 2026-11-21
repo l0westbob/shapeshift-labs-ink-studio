@@ -4,6 +4,9 @@ const PassQuality = require('../src/pass-quality.js');
 // Draws a world without a browser: motion kinds, projection of each splat's covariance to a screen ellipse,
 // blending from far to near, low-resolution sampling, dithering and palette quantization.
 const FOV = (38 * Math.PI) / 180;
+const RenderGrid = require('../src/render-grid.js');
+const SplatFootprints = require('../src/splat-footprints.js');
+const Engraving=require('../src/engraving.js');
 const PixelLook = require('../src/pixel-look.js');
 const RenderStages = require('../src/render-stages.js');
 const LookInputs = require('../src/look-inputs.js');
@@ -21,6 +24,8 @@ const ContactShadows = require('../src/contact-shadows.js');
 const ContactDepth = require('./contact-shadows.js');
 const RenderGraph = require('../src/render-graph.js');
 const runGraph = require('./render-graph.js');
+const Exposure = require('../src/programmable-exposure.js');
+const Shutter = require('./programmable-exposure.js');
 const FrameComposite = require('../src/frame-composite.js');
 const CameraStaging = require('../src/camera-staging.js');
 const CameraLens = require('../src/camera-lens.js');
@@ -29,8 +34,10 @@ const CameraImpulses = require('../src/camera-impulses.js');
 const SplatOrder = require('../src/splat-order.js');
 const Cutaway = require('../src/cutaway.js');
 const { blendLayers } = require('./translucent-layers.js');
+const DeepComposite = require('./deep-composite.js');
 const OpticalMaterials = require('../src/optical-materials.js');
 const SplatRelighting = require('../src/splat-relighting.js');
+const ColorClusters = require('../src/color-clusters.js');
 const MaterialPixelStyle = require('../src/material-pixel-style.js');
 const EffectPalettes = require('../src/effect-palettes.js');
 const ArtEffects = require('../src/art-effects.js');
@@ -38,6 +45,7 @@ const ArtStability = require('../src/art-stability.js');
 const { ditherFootprint } = require('./dither-footprint.js');
 const StableDetail = require('../src/stable-detail.js');
 const EdgeFilter = require('../src/edge-filter.js');
+const TranslucentSilhouettes = require('../src/translucent-silhouettes.js');
 const SdfAssist = require('../src/sdf-assist.js');
 const SdfRaster = require('./sdf-assist.js');
 const { footprint, exportOffsets, sampledDepth } = require('./splat-sampling.js');
@@ -66,6 +74,7 @@ const LightSchedule = require('../src/light-schedule.js');
 const LiveSun = require('./live-sun.js');
 const ProbeLighting = require('./bounce-probes.js');
 const AreaLights = require('../src/area-lights.js');
+const ShotLighting = require('../src/shot-lighting.js');
 const EmissiveFinishes = require('../src/emissive-finishes.js');
 const AreaRaster = require('./area-lights.js');
 const surfaceShading = require('./surface-shading.js');
@@ -103,6 +112,9 @@ const scopedGlowPass = Symbol('emissive glow pass');
 const subjectFocusPass = Symbol('subject focus pass');
 const probeCamera = Symbol('reflection probe camera');
 const probeCaptures = Symbol('reflection probe captures');
+const deepScope = Symbol('deep capture budget');
+const deepReflection = Symbol('deep reflection plane');
+const shutterPlan = Symbol('shutter plan');
 
 function cameraCapture(options, receive) {
   return { [captureCamera](camera) {
@@ -111,9 +123,27 @@ function cameraCapture(options, receive) {
   } };
 }
 
+function sequenceHistory(kit) {
+  return {
+    artHistory: ArtEffects.history({ frames: 24 }),
+    afterimageHistory: kit.afterimages.history(),
+    renderHistory: kit.renderGraph.history(),
+    volumeHistory: kit.atmosphere.history(),
+    transparencyHistory: kit.stableTransparency.history()
+  };
+}
+
 function render(world, o, preparedPalettes) {
   o = RenderContract.options(world, o, (w, frame) => require('../index.js').load().KIT.timeDomains.frame(w, frame));
   if (o.strictContract) RenderContract.requirePortable(world, o);
+  if (o[shutterPlan] === undefined && (o.shutter ?? world.look?.shutter) !== undefined) {
+    o[shutterPlan] = Exposure.prepare(o.shutter ?? world.look?.shutter);
+    if (o[shutterPlan]?.passes.size && !(o.renderGraph ?? world.look?.renderGraph))
+      throw new RangeError('Pass shutters need a render graph');
+  }
+  if (o[deepScope] === undefined && (o.deepComposite ?? world.look?.deepComposite) !== undefined) {
+    o[deepScope] = DeepComposite.settings(o.deepComposite ?? world.look?.deepComposite);
+  }
   if (o?.cameraGuides && !o.samples && !o.captureCoverage) {
     const staging = o.cameraStaging ?? world.look?.cameraStaging;
     return CameraStaging.overlay(render(world, { ...o, cameraGuides: false, cameraStaging: staging || true }, preparedPalettes));
@@ -165,8 +195,19 @@ function render(world, o, preparedPalettes) {
     if (result.renderStats) result.renderStats.frameMs = performance.now() - start;
     return result;
   }
-  const graph = o?.samples || o?.captureCoverage ? null : RenderGraph.prepare(o?.renderGraph ?? world.look?.renderGraph);
-  if (graph?.passes.length) {
+  const grid = o?.samples || o?.captureCoverage ? null : RenderGrid.prepare(o?.renderGrid ?? world.look?.renderGrid);
+  if (grid) {
+    const start = o?.renderStats ? performance.now() : 0;
+    RenderGrid.dimensions(grid, o?.w ?? o?.width ?? 900, o?.h ?? o?.height ?? 620);
+    const base = render(world, { ...o, renderGrid: false }, preparedPalettes);
+    const result = RenderGrid.apply(base, grid);
+    if (result.renderStats) result.renderStats.frameMs = performance.now() - start;
+    return result;
+  }
+  const graphDefinition = o.renderGraph ?? world.look?.renderGraph;
+  const graph = o.samples || o.captureCoverage ? null : RenderGraph.prepare(graphDefinition, o.renderGraphCapture);
+  const branches = graph && Shutter.graphBranches(o[shutterPlan], graph, graphDefinition);
+  if (graph?.passes.length || graph?.captures.size) {
     RenderGraph.resources(graph, o.w ?? o.width ?? 900, o.h ?? o.height ?? 620);
     const start = o?.renderStats ? performance.now() : 0;
     const requested = ArtPasses.select(o?.passes);
@@ -174,11 +215,24 @@ function render(world, o, preparedPalettes) {
     const passes = diagnostic ? [...new Set([...requested, ...(graph.needsOwner ? ['splatId'] : []),
       ...(graph.needsDepth ? ['depth'] : [])])] : o?.passes;
     let camera;
-    const base = render(world, { ...o, renderGraph: false, renderHistory: undefined, passes,
+    const base = render(world, { ...o, renderGraph: false, renderGraphCapture: undefined, renderHistory: undefined, passes,
       ...(graph.needsCamera && cameraCapture(o, view => { camera ??= view; })) }, preparedPalettes);
     const time = o?.interfaceTime ?? o?.t ?? world.lookSnapshot?.time ?? 0;
     const kit = require('../index.js').load().KIT;
-    const frame = { ...base, ...runGraph(graph, base, world, time, kit.poly2.text, camera, (spec,ctx) => kit.annotations.anchor(spec,{ ...ctx,sceneTime:o?.t }), { ...o, renderHistoryKey: o?.renderHistoryKey ?? o?.[reconstructionSource] }) };
+    const bindings = o[deepScope]?.bindings;
+    const renderGraphInputs = bindings?.length ? {
+      ...o.renderGraphInputs,
+      ...Object.fromEntries(bindings.map(([slot, channel, query]) => [slot, DeepComposite.layer(base, query, channel)]))
+    } : o.renderGraphInputs;
+    const exposedPasses = branches.length ? Shutter.graphPasses(o[reconstructionSource] ?? world, o, o[shutterPlan], branches,
+      base.w, base.h, (sample, settings) => render(sample, { ...settings,
+        [shutterPlan]: null, [captureCamera]: undefined, [probeCaptures]: undefined, [deepScope]: undefined,
+        [reconstructionSource]: undefined, [sampledPresentation]: false, [afterimageRows]: undefined
+      }, preparedPalettes), kit) : o[Shutter.passImages];
+    const frame = { ...base, ...runGraph(graph, base, world, time, kit.poly2.text, camera,
+      (spec,ctx) => kit.annotations.anchor(spec,{ ...ctx,sceneTime:o?.t }),
+      { ...o, renderGraphInputs, [Shutter.passImages]: exposedPasses,
+        renderHistoryKey: o.renderHistoryKey ?? o[reconstructionSource] }, kit.procedural) };
     if (base.passes && diagnostic) {
       if (requested.length) frame.passes = ArtPasses.subset(base.passes, requested);
       else delete frame.passes;
@@ -203,13 +257,21 @@ function render(world, o, preparedPalettes) {
     if (frame.renderStats) frame.renderStats.frameMs = performance.now() - start;
     return frame;
   }
+  if (o[shutterPlan] && !o.samples && !o.captureCoverage) {
+    const kit = require('../index.js').load();
+    return Shutter.scene(o[reconstructionSource] ?? world, o, o[shutterPlan], (sample, settings, nominal) =>
+      render(sample, { ...settings, [shutterPlan]: null, [reconstructionSource]: undefined, [probeCaptures]: undefined,
+        ...(!nominal && { [captureCamera]: undefined, [deepScope]: undefined, [sampledPresentation]: false })
+      }, preparedPalettes), kit);
+  }
   if (!o?.renderStats) return renderFrame(world, o, preparedPalettes);
   const start = performance.now();
   const counters = {
     rasterPasses:0, reflectionProbeFaces:0, fragments:0, translucentFragments:0, peakDeferredFragments:0, deferredFlushes:0,
     planarCaptures:0, planarPixels:0, reflectionProbePixels:0, splatRows:0, omittedBackgroundRows:0, omittedParticleRows:0,
     volume:{ traces:0, boundsTests:0, boundsCacheHits:0, mediaQueries:0, mediaCacheHits:0, fullFogCacheHits:0, emptyFogIntervals:0, raySamples:0,
-      analyticSegments:0, marchSteps:0, densitySamples:0, skipTests:0, skippedSteps:0, cloudTraces:0, cloudSamples:0 }
+      analyticSegments:0, marchSteps:0, densitySamples:0, skipTests:0, skippedSteps:0,
+      cloudTraces:0, cloudSamples:0, cloudShadowRays:0, cloudShadowSamples:0 }
   };
   const frame = renderFrame(world, { ...o, renderStats:false, counters }, preparedPalettes);
   frame.renderStats = { ...counters, frameMs:performance.now()-start };
@@ -226,6 +288,7 @@ function renderFrame(world, o, preparedPalettes) {
   const cutaway = Cutaway.prepare(o.cutaway ?? look.cutaway);
   const detailBudget = !o.raw && DetailBudgets.prepare(look.detailBudgets);
   const motion = RenderContract.clock(world, o), { direction, time: sceneTime, scene: t } = motion;
+  const shutterRows = world[Shutter.rows];
   const protection = SilhouetteProtection.prepare(look.silhouetteProtection,o.silhouetteProtection);
   const passQuality = PassQuality.prepare(o.passQuality ?? look.passQuality);
   const subject = protection?.bind(world);
@@ -243,17 +306,21 @@ function renderFrame(world, o, preparedPalettes) {
   const transparent = !!o.transparent && !o.captureCoverage;
   const integrateFootprint = o.splatFilter === 'footprint';
   const edgeStrengthAt = !o.captureCoverage && EdgeFilter.prepare(o.edgeFilter ?? look.edgeFilter)?.bind(world);
+  const silhouettes = TranslucentSilhouettes.prepare(o.translucentSilhouettes ?? look.translucentSilhouettes);
   const stableDetail = StableDetail.prepare(o.stableDetail ?? look.stableDetail);
   const coverageMode = ContributionRules.coverageMode(o.splatCoverage ?? look.splatCoverage);
   const contactSettings = ContactShadows.prepare(o.contactShadows ?? look.contactShadows);
   const orderMode = o.splatOrder ?? look.splatOrder ?? 'center';
   const sdfSettings = SdfAssist.prepare(o.sdfAssist ?? look.sdfAssist);
   const areaLights = AreaLights.prepare(o.areaLights === true ? world.areaLights : o.areaLights ?? world.areaLights,{time:t});
+  const shotLighting = ShotLighting.frame(world.shotLighting, o.shotLighting, t);
   const probeView = o[probeCamera];
   const useSdf = sdfSettings && world.renderSdfs?.length && !o.reflectionPlane?.select && !probeView?.allow;
   const transparency = SplatOrder.transparency(o.stableTransparency ?? look.stableTransparency);
   const blendDepth = transparency?.mode === 'blend' ? transparency.depthTolerance : 0;
-  const sortedSurfaces = orderMode === 'surface' || blendDepth > 0;
+  const planarFootprints=(o.splatFootprints??look.splatFootprints)!==false&&world.splatFootprints?.styles?.some(p=>p.depth==='plane');
+  const deepPlan = o[deepScope];
+  const sortedSurfaces = Boolean(deepPlan) || orderMode === 'surface' || blendDepth > 0 || planarFootprints;
   const fragmentBudget = o.fragmentBudget ?? 500000;
   if (!['center', 'surface'].includes(orderMode) ||
       ((sortedSurfaces || useSdf || areaLights.length) && (!Number.isSafeInteger(fragmentBudget) || fragmentBudget < 1 || fragmentBudget > 2e6)))
@@ -275,6 +342,8 @@ function renderFrame(world, o, preparedPalettes) {
   const coverageAware = !o.raw && (o.coverageAware ?? look.coverageAware ?? Boolean(optics || scopedReflection)) === true;
   const retainContributions = coverageAware || Boolean(stages || optics);
   const legacyLook = styled && !retainContributions;
+  const clusters = styled && !o.reflectionPlane && !probeView &&
+    ColorClusters.prepare(o.colorClusters ?? look.colorClusters);
   const effectPaletteSettings = styled ? EffectPalettes.prepare(
     o.effectPalettes === true ? look.effectPalettes : o.effectPalettes ?? look.effectPalettes, world.pal, world.paletteRoles
   ) : !o.raw && !o.captureCoverage ? o.effectPaletteCapture : null;
@@ -297,6 +366,7 @@ function renderFrame(world, o, preparedPalettes) {
   if (captureStages) passSelection.add('splatId');
   const readabilitySelectors = !o.samples && !o.captureCoverage && o.readabilitySelectors;
   if (readabilitySelectors) passSelection.add('splatId');
+  if (clusters) for (const channel of ['splatId', 'protected', 'emission', 'paletteOwner']) passSelection.add(channel);
   const paletteDiagnostic = passSelection.has('paletteOwner');
   if (paletteDiagnostic && !o.raw) passSelection.add('materialId');
   let lookPass;
@@ -310,9 +380,11 @@ function renderFrame(world, o, preparedPalettes) {
   if (effects) for (const channel of ArtEffects.channels) passSelection.add(channel);
   if (effects?.smear && o.artHistory) passSelection.add('emissionMotion');
   if (ink) for (const channel of ArtInk.channels) passSelection.add(channel);
+  if (ink?.painted) for (const channel of ['position', 'objectPosition']) passSelection.add(channel);
   if (effectPaletteSettings) {
     for (const channel of ['coverage', 'depth']) passSelection.add(channel);
-    if (effectPaletteSettings.ramps.has('emission')) passSelection.add('emission');
+    if (effectPaletteSettings.ramps.has('emission') || effectPaletteSettings.ramps.has('darks')) passSelection.add('emission');
+    if (effectPaletteSettings.ramps.has('darks')) passSelection.add('splatId');
     if (effectPaletteSettings.objects.size) passSelection.add('objectId');
     if (effectPaletteSettings.materials.size) passSelection.add('materialId');
     if (effectPaletteSettings.ramps.has('bounce') || effectPaletteSettings.ramps.has('shadow'))
@@ -358,7 +430,7 @@ function renderFrame(world, o, preparedPalettes) {
         ...(frame.alpha && {alpha:frame.alpha.slice()}) };
     }
     if (captureQuantization && legacyLook) capture(beforePalette, 'legacy');
-    if (ink) frame = ArtInk.apply(frame, passes, ink, world.pal, fog, { world, depthOffset, inspect:paletteTrace });
+    if (ink) frame = ArtInk.apply(frame, passes, ink, world.pal, fog, { world, time:t, depthOffset, inspect:paletteTrace });
     if (effects) frame = ArtEffects.apply(frame, passes, effects, t, {
       history: o.artHistory, world: o[reconstructionSource] ?? world, palette: world.pal, motionReference: frame.motionReference,
       haloSource: passes.scopedEmission && (p => emissive.profiles[passes.scopedEmission.slots[p]-1]?.glow === undefined)
@@ -391,7 +463,19 @@ function renderFrame(world, o, preparedPalettes) {
       RenderStages.finish(frame, stages, passes, t, visit, audit, ditherAt, stable, graded, paletteTrace, frameGrade);
       if (effectSignals) frame = ArtEffects.paletteUse(frame,world.pal);
     }
-    if (captureQuantization && !legacyLook) capture(graded ?? frame.rgb.slice(), 'frame');
+    ownership?.finish();
+    const unclustered = clusters && captureQuantization && !legacyLook && !graded ? frame.rgb : undefined;
+    if (clusters) {
+      const before = frame.rgb;
+      const { rgb, ...report } = ColorClusters.apply(frame, passes, clusters, world);
+      frame.colorClusters = report;
+      if (rgb !== before) {
+        frame = ArtEffects.paletteUse({ ...frame, rgb }, world.pal);
+        if (paletteTrace) paletteTrace.cluster(before, rgb);
+        if (frame.quantization) frame.quantization.resolved = rgb.slice();
+      }
+    }
+    if (captureQuantization && !legacyLook) capture(graded ?? (unclustered ?? frame.rgb).slice(), 'frame');
     if (captureStages) {
       const {w,h,alpha}=frame, base={w,h,rgb:new Uint8Array(w*h*3),alpha:new Uint8Array(w*h)};
       for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
@@ -408,7 +492,6 @@ function renderFrame(world, o, preparedPalettes) {
     }
     if (paletteTrace) frame.palettePixel = paletteTrace.finish(frame,passes);
     if (readabilitySelectors) frame.readabilityMask = selectVisibleSubjects(world,passes.splatId,readabilitySelectors);
-    ownership?.finish();
     if (paletteDiagnostic && !passes?.paletteOwner)
       passes = { ...passes,w:frame.w,h:frame.h,paletteOwner:new Uint32Array(frame.w*frame.h),paletteOwners:[null] };
     if (framing) frame.cameraStaging = {
@@ -430,7 +513,8 @@ function renderFrame(world, o, preparedPalettes) {
           for (const color of style.ramp ?? []) declared.add(color);
           for (const key of ['silhouette','crease','boundary']) {
             const line = style[key];
-            for (const color of [line?.color,line?.highlight,line?.shadow]) if (color !== undefined) declared.add(color);
+            for (const color of [line?.color,line?.highlight,line?.shadow,line?.contrast?.dark,line?.contrast?.light])
+              if (color !== undefined) declared.add(color);
           }
         }
         for (const layer of [effects?.halo,effects?.emitter,effects?.reflection,effects?.trail,effects?.smear,...(effects?.cycles ?? [])])
@@ -441,6 +525,7 @@ function renderFrame(world, o, preparedPalettes) {
     if (o.captureScenePalette) frame.scenePalette = legacyLook && !tone ? basePalette : null;
     if (!o.captureMotion) delete frame.motionReference;
     if (requestedPasses.length) frame.passes = ArtPasses.subset(passes, requestedPasses);
+    if (readabilitySelectors && frame.readabilityMask) o.captureReadabilityFrame?.(frame);
     return frame;
   };
   if (look.pixelSize !== undefined && (!Number.isSafeInteger(look.pixelSize) || look.pixelSize < 1))
@@ -482,7 +567,7 @@ function renderFrame(world, o, preparedPalettes) {
       passes:['depth','emission',...(protection.focus.detail < 1 ? ['objectId','materialId'] : [])],
       captureSilhouetteProtection:true, captureMotion:false, lookAudit:false, fragmentProbe:undefined, pick:undefined,
       reflections:false, atmosphere:false, precipitation:false, rainImpacts:false, captureFog:false, volumeHistory:null,
-      [captureCamera]:undefined
+      [captureCamera]:undefined, [deepScope]:null
     })));
   if (legacyLook && (specializedResolve || (o.colored && !tone))) {
     const native = render(world, Object.assign({}, o, { colored: false, samples: true, worked: true, px, passes: [...passSelection], [scopedGlowPass]: trackGlow, artInkActive: !!ink,
@@ -503,6 +588,7 @@ function renderFrame(world, o, preparedPalettes) {
         h: H * px,
         reflectionScale: 2,
         artGridScale: 2,
+        [deepScope]: null,
         volumeHistory: null,
         artInkActive: !!ink,
         [subjectFocusPass]:focus,
@@ -539,6 +625,7 @@ function renderFrame(world, o, preparedPalettes) {
       evaluatedPalette && !local && { palette: evaluatedPalette },
       !specializedResolve && native.detail && { detail: native.detail },
       native.motionReference && { motionReference: native.motionReference },
+      native.deep && { deep: native.deep },
       native.silhouetteMask && { silhouetteMask:native.silhouetteMask },
       native.alpha && { alpha: native.alpha },
       (native.orderFallback || samples.orderFallback) && { orderFallback: true },
@@ -546,6 +633,8 @@ function renderFrame(world, o, preparedPalettes) {
       o.captureFog && native.fog && { fog: native.fog }), native.passes, native.fog, native.effectSignals, native.color,
       native.paletteState,native.paletteInventory,reference,native.paintStage);
   }
+  const spriteAtlases = AtlasSprites.placements(world.spriteAtlases, o.spriteAtlases);
+  const deep = DeepComposite.capture(W, H, deepPlan, world.renderMetadata, o[deepReflection], spriteAtlases);
   const paintStage = o.captureColorStages===true && !o.raw && !o.captureCoverage &&
     (!o.samples || o.worked) && o[subjectFocusPass]!==false ? new Uint32Array(W*H) : undefined;
   function baseReference(i) {
@@ -569,7 +658,7 @@ function renderFrame(world, o, preparedPalettes) {
     asp = W / H,
     baseCount = world.count;
   if(!o.reflectionPlane&&!probeView)o.cameraFrame?.({time:camera.time,pose:CameraLens.fromView(V),motion:camera.motion});
-  if (!o.reflectionPlane && !probeView) o[captureCamera]?.({view: V, tangent: ortho ? oh : tangent, aspect: asp, ortho,
+  if (!o.reflectionPlane && !probeView) o[captureCamera]?.({width: W, height: H, view: V, tangent: ortho ? oh : tangent, aspect: asp, ortho,
     clipNear: near, clipFar: 400, distance: eyeD, setback: eyeD - dist, depthRange: [eyeD - R, eyeD + R],
     eye: [-(V[0]*V[12]+V[1]*V[13]+V[2]*V[14]), -(V[4]*V[12]+V[5]*V[13]+V[6]*V[14]), -(V[8]*V[12]+V[9]*V[13]+V[10]*V[14])]});
   const hex = i => {
@@ -675,7 +764,6 @@ function renderFrame(world, o, preparedPalettes) {
   const aerial = o.atmosphere !== false && !o.captureCoverage ?
     SkyEnvironment.aerial(world.aerialPerspective, o.aerialPerspective, environment?.parameters) : null;
   const cloudShadow = clouds?.shadow;
-  const spriteAtlases=AtlasSprites.placements(world.spriteAtlases,o.spriteAtlases);
   const planeClip = reflectionPlane && (p=>SceneOptics.planeDistance(reflectionPlane,...p)>reflectionPlane.bias);
   const cutoffDepth = eyeD-dist;
   const sectionAt = cutaway && (p => Cutaway.margin(cutaway,...p,
@@ -698,13 +786,14 @@ function renderFrame(world, o, preparedPalettes) {
   const emitterHits = areaLights.length && AreaRaster.rasterize(areaLights, { w:W, h:H, rayAt, near, capture:!!(reflectionPlane || probeView), clip:geometryClip });
   if (emitterHits) for (const hit of emitterHits) if (hit) surfaceFragments.push(hit);
   const surfaceDepth=surfaceFragments.length?new Float32Array(W*H).fill(Infinity):null;
-  for(const sample of surfaceFragments)surfaceDepth[sample.p]=Math.min(surfaceDepth[sample.p],sample.z);
+  for (const sample of surfaceFragments) if (!deep || sample.alpha >= 1)
+    surfaceDepth[sample.p] = Math.min(surfaceDepth[sample.p], sample.z);
   const sprites=AtlasRaster.rasterize(spriteAtlases,{
     eye,V,W,H,focal,ortho,near,rayAt,time:t,override:o.spriteAtlasMode,sun,
-    objectDither: anchorSpaces.has('object'),
+    objectDither: anchorSpaces.has('object'), shutterTime: shutterRows?.atlasTime,
     subject: protection?.match,
     visibility:(position)=>(cloudShadow?.(...position)??1)*(exposure?.light?.(...position)??1),
-    clip:geometryClip
+    clip:geometryClip, captureIds:Boolean(deep)
   });
   for(const sample of surfaceFragments)if(!sample.sdf)sprites.push(sample);
   sprites.sort((a,b)=>b.z-a.z);
@@ -774,7 +863,7 @@ function renderFrame(world, o, preparedPalettes) {
     ? Airflow.frame(world.volumeWind).velocity : null;
   const volumeFlow = volumes.some(v => v.type === 'field' || v.depthBand?.wind) && (volumeWind && exposure?.wind
     ? WindField.create(WindField.settings(true), { ambient:() => volumeWind, exposure }) : flow)?.frame(skyTime);
-  const waterWind = windResponse?.water && ((x,y,z) => windGain(windResponse.water,gustTime('water', motion.water),x,y,z));
+  const waterWind = windResponse?.water ? (x,y,z) => windGain(windResponse.water,gustTime('water', motion.water),x,y,z) : undefined;
   const atmosphereOptions = () => {
     const quality = atmosphereQuality({ ...world.volumeQuality, ...o.volumeQuality });
     quality.wind = volumeWind ?? wind.velocity;
@@ -801,6 +890,8 @@ function renderFrame(world, o, preparedPalettes) {
               pick: undefined,
               lookInputSession: lookInputs,
               reflectionPlane: plane,
+              [deepScope]: deepPlan?.reflections.has(plane.id) ? deepPlan : null,
+              [deepReflection]: plane.id,
               captureCoverage: true,
               passes: reflectionTint ? ['emission'] : false,
               reflectionTint,
@@ -812,6 +903,7 @@ function renderFrame(world, o, preparedPalettes) {
               reflections: false,
               edges: false
             });
+            deep?.route(plane.id, capture.deep);
             if (counters) {
               counters.planarCaptures++;
               counters.planarPixels += capture.w * capture.h;
@@ -821,7 +913,7 @@ function renderFrame(world, o, preparedPalettes) {
           V,
           eye,
           o.reflectionScale ?? 1,
-          { quality: passQuality, width: W, height: H }
+          { quality: passQuality, width: W, height: H, focal, ortho, detail:o.reflectionDetail!==false }
         )
       : null;
   let definitions = useLocalReflections ? ReflectionProbes.prepare(world.reflectionProbes) : [];
@@ -842,7 +934,7 @@ function renderFrame(world, o, preparedPalettes) {
       target:probe.at, dist:1, yaw:0, pitch:0, fov:Math.PI/2, lensScale:1, lockCamera:true, ortho:false,
       w:probe.size, h:probe.size, px:1, artGridScale:1, raw:false, samples:false, worked:false, colored:false,
       captureCoverage:true, lookInputSession:lookInputs, pick:undefined, passes:false, lookAudit:false,
-      fragmentProbe:undefined, captureMotion:false, cutaway:false, reflectionPlane:undefined,
+      fragmentProbe:undefined, captureMotion:false, cutaway:false, reflectionPlane:undefined, [deepScope]:null,
       atmosphere:false, water:false, reflections:false, edges:false, transparencyHistory:undefined
     });
   }, o[probeCaptures]) : null;
@@ -889,7 +981,12 @@ function renderFrame(world, o, preparedPalettes) {
   const surfaceGlint = surface ? new Uint8Array(W * H) : null;
   const focusPixel = SubjectFocus.raster(focus,W,H);
   const fallingCoverage = focus && focus.settings.detail < 1 ? new Float32Array(W*H) : null;
-  const layerPalettes = surface?.palettes ?? [];
+  const layerPalettes = [...(surface?.palettes ?? [])];
+  const spritePalettes = new Map();
+  if (!o.raw) for (const { swatches } of sprites) {
+    if (!swatches || spritePalettes.has(swatches)) continue;
+    spritePalettes.set(swatches,layerPalettes.push(swatches));
+  }
   const localConstraints = paletteRules
     ? Object.assign(Array(layerPalettes.length).fill(undefined), surface?.constraints).concat(paletteRules.palettes)
     : surface?.constraints;
@@ -907,7 +1004,7 @@ function renderFrame(world, o, preparedPalettes) {
     layerPalettes.length, fallbackSlot, Array.from(world.pal, (_, i) => hex(i)), grade) : null;
   const composedEffects = effectRules && [...effectRules.ramps.values()].some(ramp=>ramp.combine);
   const lightingEffects = effectRules && (effectRules.ramps.has('shadow') || effectRules.ramps.has('bounce'));
-  const paletteCapture = !o.raw && (paletteDiagnostic || composedEffects) && PaletteComposition.capture(
+  const paletteCapture = !o.raw && (paletteDiagnostic || composedEffects || effectRules?.ramps.has('darks')) && PaletteComposition.capture(
     W,H,localPalettes,localConstraints,Array.from(world.pal,(_,i)=>hex(i)),!tone && grade,
     {diagnostic:paletteDiagnostic,lit:composedEffects && lightingEffects});
   const paletteClaim = (paletteCapture || paletteTrace) ? (p,i,layer,r,g,b,steps) => {
@@ -942,8 +1039,10 @@ function renderFrame(world, o, preparedPalettes) {
     add = new Float32Array(N),
     wet = new Float32Array(N);
   const sampleWithdrawal = SampleCoverage.amount(o.sampleWithdrawal ?? world.sampleWithdrawal ?? 0);
+  const sceneMotion = motion;
   for (let i = 0, q = 0; i < N; i++, q += 16) {
     if (qualityRows && !qualityRows.keep[i]) continue;
+    const motion = shutterRows?.clock(i) ?? sceneMotion, t = motion.scene;
     let x = d[q],
       y = d[q + 1],
       z = d[q + 2],
@@ -1078,8 +1177,8 @@ function renderFrame(world, o, preparedPalettes) {
   const spillLights = o.areaLights === false ? [] : EmissiveFinishes.spillLights(emissive, { x:X, y:Y, z:Z, alpha:AL });
   const spotLighting = Array.isArray(volumeLighting?.spots) && volumeLighting.spots.some(light => light?.surfaceIntensity !== undefined)
     ? prepareVolumeLight() : undefined;
-  const directLight = (areaLights.length || spillLights.length || spotLighting?.surfaceSpots.length) &&
-    AreaRaster.createLighting([...areaLights,...spillLights],world,d,AL,{ spots:spotLighting?.surfaceSpots, shadow:spotLighting?.shadow });
+  const directLight = AreaRaster.createLighting([...areaLights,...spillLights],world,d,AL,
+      { spots:spotLighting?.surfaceSpots, shadow:spotLighting?.shadow, shot:shotLighting });
   const diffuseFrames = (directLight || probes) && sampleFrames(world,t), diffuseNormals = [];
   function diffuseNormal(i) {
     return diffuseNormals[i] ?? (diffuseNormals[i] = receivesDiffuse(i) && diffuseFrames(i).normal || false);
@@ -1094,12 +1193,12 @@ function renderFrame(world, o, preparedPalettes) {
   let mn = Infinity;
   for (let i = 0; i < N; i++) if ((!qualityRows || qualityRows.keep[i]) && (i < baseCount || AL[i] > 0) && depth[i] < mn) mn = depth[i];
   const mediumHorizon = aerial ? Math.max(horizon, -mn + R) : horizon;
-  const backRows = blendDepth && world.back?.length ? new Set(world.back) : null;
+  const backRows = (deep || blendDepth) && world.back?.length ? new Set(world.back) : null;
   if (world.back) for (let j = 0; j < world.back.length; j++) depth[world.back[j]] = mn;
   const order = new Uint32Array(qualityRows?.submitted ?? N);
   for (let i = 0, j = 0; i < N; i++) if (!qualityRows || qualityRows.keep[i]) order[j++] = i;
   order.sort((a, b) => depth[a] - depth[b]);
-  if (transparency && !blendDepth) {
+  if (transparency && !blendDepth && !deep) {
     const { depthTolerance: tolerance } = transparency;
     const depthAt = i => depth[i];
     const back = world.back?.length ? new Set(world.back) : null;
@@ -1122,12 +1221,12 @@ function renderFrame(world, o, preparedPalettes) {
         sameSpan });
     } else SplatOrder.stabilize(order, tolerance, depthAt, transparentAt, undefined, sameSpan);
   }
-  const mediaOptions = (water || aerial || cloudView || blendDepth && volumes.length) && atmosphereOptions();
+  const mediaOptions = (water || aerial || cloudView || (deep || blendDepth) && volumes.length) && atmosphereOptions();
   const hazeCoverage = effectRules?.ramps.get('fog')?.geometry && world.fog.max > 0 && new Float32Array(W * H);
-  const rayMedia = mediaOptions && mediaSampler(volumes, water, rayAt, W, mediumHorizon, {
-    ...mediaOptions, reflection, reflectionBackground: bg, waterTransition: blendDepth
-  }, air);
-  const retainLayers = retainContributions || Boolean(rayMedia);
+  const rayMedia = mediaOptions ? mediaSampler(volumes, water, rayAt, W, mediumHorizon, {
+    ...mediaOptions, reflection, reflectionBackground: bg, reflectionDetail:o.reflectionDetail, waterTransition: blendDepth, deep: Boolean(deep)
+  }, air) : null;
+  const retainLayers = retainContributions || Boolean(rayMedia || deep);
   const col = new Float32Array(W * H * 3),
     dep = new Float32Array(W * H),
     gls = new Float32Array(W * H);
@@ -1145,6 +1244,7 @@ function renderFrame(world, o, preparedPalettes) {
     }
     if (backdropCloud) backdropCloud[i] = cloudSignal[0];
     const backdrop = rayMedia ? rayMedia.shade(i, horizon, background, false) : background;
+    if (deep && rayMedia) deep.reflect(i, rayMedia.reflected(), 1);
     col[i * 3] = backdrop[0];
     col[i * 3 + 1] = backdrop[1];
     col[i * 3 + 2] = backdrop[2];
@@ -1162,8 +1262,14 @@ function renderFrame(world, o, preparedPalettes) {
     for(let i=0;i<baseCount;i++)if(Math.round(d[i*16+11])&32768){if(!copy){PIX=PIX.slice();copy=true;}PIX[i*8]=0;}
   }
   const win = PIX ? new Int32Array(W * H).fill(-1) : null;
+  const footprintPlan = (o.splatFootprints ?? world.look?.splatFootprints) === false ? null : SplatFootprints.plan(world);
+  const engraved=o.engraving!==false&&world.engraving?Engraving.validate(world):null;
+  if(PIX&&engraved){PIX=PIX.slice();for(let i=0;i<engraved.indices.length;i++)if(engraved.indices[i])PIX[i*8]=0;}
   const materialStyles = o.raw ? null : world.materialPixelStyles;
   const artScale = o.artGridScale || 1;
+  const silhouetteWeight = silhouettes?.weight(Math.min(W,H)/artScale) ?? 0;
+  const silhouetteAt = silhouetteWeight && silhouettes.bind(world);
+  const silhouetteBackground = silhouetteAt && world.back?.length ? new Set(world.back) : null;
   // Keep later translucent coats when the opaque receiver is recoloured per pixel.
   let surfaceOverlay = null;
   const bend = world.refract === undefined ? 6 : world.refract;
@@ -1217,6 +1323,9 @@ function renderFrame(world, o, preparedPalettes) {
     FPAL = FN ? world.pal.map((h, i) => hex(i)) : null;
   let deferred = sortedSurfaces || sdf || emitterHits ? new Map() : null, deferredCount = 0, orderFallback = false;
   function countDeferred() {
+    if(planarFootprints&&deferredCount>=fragmentBudget)throw new RangeError('Surface-plane rendering exceeded the fragment budget. Raise fragmentBudget or reduce resolution.');
+    if (deep && deferredCount >= fragmentBudget)
+      throw new RangeError('Deep compositing exceeded the fragment budget. Raise fragmentBudget or reduce resolution.');
     if (blendDepth && deferredCount >= fragmentBudget)
       throw new RangeError('Layered transparency exceeded the fragment budget. Raise it or reduce the art resolution.');
     deferredCount++;
@@ -1250,7 +1359,13 @@ function renderFrame(world, o, preparedPalettes) {
     if (rule && rule.contrast !== 1 && (i < 0 ? !sprite?.emission : !(d[i*16+11] & 32)))
       [pr,pg,pb] = subjectColor(rule,pr,pg,pb);
     environmentPasses?.fragment?.(p, i, a, pr, pg, pb, reflected, wd && a > .5);
-    if (rayMedia) [pr, pg, pb] = rayMedia.shade(p, opticalDepth, [pr, pg, pb], true, rule?.fogScale);
+    if (deep) {
+      const kind = glass ? 'glass' : sprite?.sdf ? 'splat' : sprite ? 'sprite' : sectionEdge ? 'ink' : 'splat';
+      const shaded = rayMedia?.shade(p, opticalDepth, [pr, pg, pb], true, rule?.fogScale);
+      deep.fragment(p, opticalDepth, a, pr, pg, pb, i, kind, rayMedia?.transfer, sprite);
+      deep.reflect(p, rayMedia?.reflected(), a);
+      if (shaded) [pr, pg, pb] = shaded;
+    } else if (rayMedia) [pr, pg, pb] = rayMedia.shade(p, opticalDepth, [pr, pg, pb], true, rule?.fogScale);
     if (retainLayers && glass && bend && !contributions) contributions = contributionLayers(col, captured, W, H, false, bend);
     if (contributions) contributions.before(p, pr, pg, pb, a, wd && a > .5, glass && !wd, dn, refraction);
     edgePatterns?.before(p, pr, pg, pb, a, wd && a > .5, false, dn);
@@ -1308,7 +1423,7 @@ function renderFrame(world, o, preparedPalettes) {
     const rule = i<0 ? protection : subject?.(i);
     const dn=normalizedDepth(z), fogMix=world.fog.max>0&&world.fog.start<1 ?
       targetFog(sstep(world.fog.start,1,dn)*world.fog.max*(exposure?.fog?.(...position)??1),rule) : 0;
-    let color=sprite.color, highlight=0, paletteId=0, reflected, claim, stageBase;
+    let color=sprite.color, highlight=0, paletteId=spritePalettes.get(sprite.swatches) ?? 0, reflected, claim, stageBase;
     if (i>=0) {
       const packed=d[i*16+7];
       color=live?.albedo(i) ?? [(packed&255)/255, (packed>>8&255)/255, (packed>>16)/255];
@@ -1324,7 +1439,7 @@ function renderFrame(world, o, preparedPalettes) {
         live.gains(i,...position,sunGains);
         color=color.map((v,k)=>v*sunGains[k]);
       }
-      if (directLight && diffuseNormal(i)) color = directLight(sprite.p, position, sprite.normal, color);
+      if (directLight?.receives(i) && diffuseNormal(i)) color = directLight(sprite.p, position, sprite.normal, color, undefined, 0, i);
       if (!live?.normal(i) && probeReceiver(i))
         color = probes.shade(position,sprite.normal,color,undefined,0,probeAlbedo(i));
       if (surface?.has(i) && !PIX?.[i*8]) {
@@ -1348,7 +1463,7 @@ function renderFrame(world, o, preparedPalettes) {
       }
       if (staged?.lit) color=RenderStages.apply(staged.lit,color,sample,undefined,claim?.[4] && paletteTrace.forStage(claim[4]));
     }
-    if(i<0&&sprite.surface&&!sprite.emission&&directLight&&sprite.normal)color=directLight(sprite.p,position,sprite.normal,color);
+    if(i<0&&sprite.surface&&!sprite.emission&&directLight?.receives(-1)&&sprite.normal)color=directLight(sprite.p,position,sprite.normal,color);
     const ink = cutaway?.edge ? Cutaway.edgeWeight(cutaway.edge,sectionAt(position)) : 0;
     const rgb=color.map((value,c)=>{
       const shaded=value+(fog[c]-value)*fogMix;
@@ -1362,7 +1477,7 @@ function renderFrame(world, o, preparedPalettes) {
     while (spriteIndex<sprites.length && sprites[spriteIndex].z>=through) {
       const sprite=sprites[spriteIndex++], sample=spriteSample(sprite);
       if (deferred && (queued || sdf?.hits[sprite.p] || emitterHits?.[sprite.p])) {
-        if (blendDepth) countDeferred();
+        if (deep || blendDepth) countDeferred();
         if (!deferred.has(sprite.p)) deferred.set(sprite.p,[]);
         deferred.get(sprite.p).push({ sort:sprite.z,index:spriteIndex-sprites.length-1,center:sprite.z,sample });
       } else composite(sprite.p,...sample);
@@ -1375,7 +1490,7 @@ function renderFrame(world, o, preparedPalettes) {
       if (sort) {
         layers.sort((a, b) => b.sort - a.sort || a.index - b.index);
         if (blendDepth) blendLayers(layers, blendDepth);
-        else if (transparency) SplatOrder.stabilize(layers, transparency.depthTolerance, entry => -entry.sort,
+        else if (transparency && !deep) SplatOrder.stabilize(layers, transparency.depthTolerance, entry => -entry.sort,
           entry => entry.transparent, entry => entry.index);
       } else if (sprites.length || sdf) {
         layers.sort((a,b)=>b.center-a.center || a.index-b.index);
@@ -1400,11 +1515,12 @@ function renderFrame(world, o, preparedPalettes) {
   // Carriers are below the original color fragments at the same traced depth.
   for (const sample of sdf?.samples ?? []) {
     if (sample.z > surfaceDepth[sample.p]+1e-5) continue;
-    if (blendDepth) countDeferred();
+    if (deep || blendDepth) countDeferred();
     deferred.set(sample.p,[{sort:sample.z,center:sample.z,index:-1e9,transparent:false,sample:spriteSample(sample)}]);
   }
   for (let n = 0; n < order.length; n++) {
     const i = order[n];
+    const motion = shutterRows?.clock(i) ?? sceneMotion, t = motion.scene;
     if ((!sortedSurfaces || !deferred) && spriteIndex<sprites.length) playSprites(-depth[i],false);
     const q = i * 16,
       al = AL[i],
@@ -1430,14 +1546,22 @@ function renderFrame(world, o, preparedPalettes) {
       s2 = SC[i] * SC[i],
       pk = d[q + 7];
     const fieldParticle = i >= baseCount;
-    const edgeStrength = edgeStrengthAt && !fieldParticle && !kind && !(kraw & (32 | 64 | 256 | 2048 | 32768)) &&
+    const correction = paint && d[q + 14] === paint.marker;
+    const translucent = al < 1 && d[q+3] < 1 || opticalActive || (kraw & 16) && (kraw & 256);
+    const silhouette = silhouetteAt && !fieldParticle && !correction && !(kraw & (64 | 2048)) &&
+      !silhouetteBackground?.has(i) && translucent ? silhouetteAt(i) : null;
+    const silhouetteFilter = silhouette ? silhouette.filter*silhouetteWeight : 0;
+    const edgeStrength = !silhouette && edgeStrengthAt && !fieldParticle && !kind && !(kraw & (32 | 64 | 256 | 2048 | 32768)) &&
       !opticalActive && !(paint && d[q + 14] === paint.marker) ? edgeStrengthAt(i) : 0;
-    const footprintMargin = integrateFootprint ? .25 : edgeStrength > 0 ? exportOffsets.at(-1) : 0;
+    const footprintMargin = silhouetteFilter ? exportOffsets.at(-1) :
+      integrateFootprint ? .25 : edgeStrength > 0 ? exportOffsets.at(-1) : 0;
+    const shapeMargin = silhouetteFilter ? footprintMargin : 0;
     const jStyle = i * 4, packedEdge = world.materialPixelStyles?.[jStyle] || 0;
     const edgeStyle = o.raw ? 0 : ContributionRules.materialEdge(packedEdge);
     const mode = ContributionRules.materialCoverage(packedEdge, coverageMode);
     const softCoverage = o.soft || mode === ContributionRules.softCoverage;
-    const continuousCoverage = !softCoverage && !fieldParticle &&
+    const shaped = footprintPlan?.styles[(world.splatFootprints.indices[i]??0)-1];
+    const continuousCoverage = !silhouette && !shaped && !softCoverage && !fieldParticle &&
       ContributionRules.continuous(mode, al, kraw, opticalActive || surface?.reveals(i));
     const filterVariance = continuousCoverage ? ContributionRules.continuousVariance * artScale * artScale : .15;
     const styleKey = (kraw & 32768) ? 0 : materialStyles?.[jStyle + 1] || 0;
@@ -1520,19 +1644,46 @@ function renderFrame(world, o, preparedPalettes) {
     const geometryDetail = stableDetail?.geometry && !fieldParticle && !opticalActive && StableDetail.strokeEligible(kraw) &&
       !(paint && d[q + 14] === paint.marker) && !world.effectParticles?.some(({first,count}) => i>=first && i<first+count);
     const projectedA = a0 * u0 + a1 * u1 + a2 * u2, projectedC = b0 * w0 + b1 * w1 + b2 * w2;
-    const A = projectedA + filterVariance,
+    let A = projectedA + filterVariance,
       Bq = b0 * u0 + b1 * u1 + b2 * u2,
       C = projectedC + filterVariance,
       det = A * C - Bq * Bq;
     if (det <= 0) continue;
+    let opacityGain = 1;
+    if (silhouette && !shaped) {
+      const fit = TranslucentSilhouettes.fit(silhouette,A,Bq,C,artScale,silhouetteWeight);
+      A=fit.a;
+      Bq=fit.b;
+      C=fit.c;
+      det=A*C-Bq*Bq;
+      opacityGain=fit.gain;
+    }
     const geometryWeight = geometryDetail ? StableDetail.weight(stableDetail.geometry,
       StableDetail.geometryPixels(projectedA,Bq,projectedC,artScale)) : 1;
     if (!geometryWeight) continue;
+    const frame=shaped&&SplatFootprints.posedFrame(shutterRows?.pose(i) ?? world,i,t,SC[i]);
+    const planeFrame=shaped?.depth==='plane'&&frame;
+    const projectedFrame=frame&&[a0*frame[0]+a1*frame[1]+a2*frame[2],b0*frame[0]+b1*frame[1]+b2*frame[2],a0*frame[3]+a1*frame[4]+a2*frame[5],b0*frame[3]+b1*frame[4]+b2*frame[5]];
+    // Scale has already been applied in posedFrame for native particle kinds.
+    const shapeMap = shaped && (projectedFrame?SplatFootprints.frameTransform(shaped,...projectedFrame):SplatFootprints.transform(shaped,A,Bq,C));
+    if(shaped&&!shapeMap)continue;
     const k0 = C / det,
       k1 = -Bq / det,
-      k2 = A / det,
-      ex = Math.min(3 * Math.sqrt(A) + footprintMargin, 2048),
-      ey = Math.min(3 * Math.sqrt(C) + footprintMargin, 2048);
+      k2 = A / det;
+    let ex = Math.min((shaped ? shaped.reach : 3) * Math.sqrt(A) + footprintMargin, 2048),
+      ey = Math.min((shaped ? shaped.reach : 3) * Math.sqrt(C) + footprintMargin, 2048);
+    if(projectedFrame){const reach=shaped.reach/SplatFootprints.half;ex=Math.min(2048,Math.max(ex,(Math.abs(projectedFrame[0])+Math.abs(projectedFrame[2]))*reach+shapeMargin));ey=Math.min(2048,Math.max(ey,(Math.abs(projectedFrame[1])+Math.abs(projectedFrame[3]))*reach+shapeMargin));}
+    const engravingId=(kraw&(32|256|32768))?0:(engraved?.indices[i]??0),engravingStyle=engravingId&&engraved.styles[engravingId-1];
+    let engrave;
+    if(engravingStyle&&(!engravingStyle.screenPrint||o.screenPrint!==false)&&(!engravingStyle.brushwork||o.brushwork!==false)){
+      const f=SplatFootprints.posedFrame(shutterRows?.pose(i) ?? world,i,t,SC[i]);
+      if(f){const map=SplatFootprints.frameTransform({matrix:[1,0,0,1]},a0*f[0]+a1*f[1]+a2*f[2],b0*f[0]+b1*f[1]+b2*f[2],a0*f[3]+a1*f[4]+a2*f[5],b0*f[3]+b1*f[4]+b2*f[5]);
+        if(map){const at=i*6,ru=engraved.restFrames.subarray(at,at+3),rv=engraved.restFrames.subarray(at+3,at+6),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],ex=Array.from(ru,(n,j)=>n*map[0]+rv[j]*map[2]),ey=Array.from(ru,(n,j)=>n*map[1]+rv[j]*map[3]);
+          engrave={point:engraved.anchors.subarray(i*3,i*3+3),ex,ey,normal:cross(f.slice(0,3),f.slice(3)),restNormal:cross(ru,rv),
+            restTangent:ru,footprint:Math.max(Math.hypot(...ex),Math.hypot(...ey))};
+        }
+      }
+    }
     let cutDx, cutDy, cutReach;
     if (cutaway) {
       // Condition the splat's axial depth on its screen position before testing the world-space boundary.
@@ -1546,6 +1697,16 @@ function renderFrame(world, o, preparedPalettes) {
     }
     let sx = ortho ? ((cx / (oh * asp)) * 0.5 + 0.5) * W : ((((tp / asp) * cx) / -cz) * 0.5 + 0.5) * W,
       sy = ortho ? ((cy / oh) * 0.5 + 0.5) * H : (((tp * cy) / -cz) * 0.5 + 0.5) * H;
+    if(planeFrame&&!ortho){
+      const reach=shaped.reach/SplatFootprints.half;
+      for(const a of [-1,1])for(const b of [-1,1]){
+        const p=[x,y,z].map((v,k)=>v+(frame[k]*a+frame[k+3]*b)*reach);
+        const q=[0,1,2].map(k=>V[k]*p[0]+V[k+4]*p[1]+V[k+8]*p[2]+V[k+12]);
+        if(q[2]>=-near){ex=ey=2048;continue;}
+        ex=Math.min(2048,Math.max(ex,Math.abs(W*.5+focal*q[0]/-q[2]-sx)+shapeMargin));
+        ey=Math.min(2048,Math.max(ey,Math.abs(H*.5+focal*q[1]/-q[2]-sy)+shapeMargin));
+      }
+    }
     if (kind === 1) {
       sx = Math.floor(sx) + 0.5;
       sy = Math.floor(sy) + 0.5;
@@ -1576,13 +1737,13 @@ function renderFrame(world, o, preparedPalettes) {
       .24 + .76 * exposure.light(x,y,z) : 1;
     const rule = subject?.(i);
     const contactReceiver = contact?.at(i);
-    const directReceiver = directLight && diffuseNormal(i);
+    const directReceiver = directLight?.receives(i) && diffuseNormal(i);
     const localProbe = !liveNormal && probeReceiver(i) && diffuseNormal(i);
     const localAlbedo = localProbe && probeAlbedo(i);
     const fogMix = !(flags & 2) && world.fog.max > 0 && world.fog.start < 1
       ? targetFog(sstep(world.fog.start,1,dn)*world.fog.max*(exposure?.fog?.(x,y,z)??1),rule) : 0;
     const reflectInRaster = (planar || localProbeReflection || reflectedSky) && !pixelSurface;
-    const finishBeforeFog = reflectInRaster || !pixelSurface && surface?.finishBeforeFog(i);
+    const finishBeforeFog = !!engrave || reflectInRaster || !pixelSurface && surface?.finishBeforeFog(i);
     const normal = fragmentSurface ? surface.surfaceNormal(i) : null;
     const centerFog = !opticalActive && !finishBeforeFog && !staged?.lit && !liveNormal && !splatFlash && !relit && coverGain === 1;
     if (fogMix && centerFog) {
@@ -1603,7 +1764,6 @@ function renderFrame(world, o, preparedPalettes) {
       if (!glassLooks.has(target)) glassLooks.set(target, optics.transform(target));
       glassLook = glassLooks.get(target);
     }
-    const correction = paint && d[q + 14] === paint.marker;
     const coat = !retainLayers && PIX && (opticalActive || correction || fieldParticle ||
       hasSurface && (!writesDepth || reflectInRaster || surface.reveals(i)));
     if (coat && !surfaceOverlay) surfaceOverlay = new Float32Array(W * H * 4);
@@ -1650,16 +1810,48 @@ function renderFrame(world, o, preparedPalettes) {
     const probeCenter = wantsDepth && [x, y, z];
     const probeReach = wantsDepth ? 3 * Math.sqrt(c00 + c11 + c22) : 0;
     const centerMark = lookPass && { ...lookPass.mark };
+    const shapeExponent = silhouette ? 1+(silhouette.falloff-1)*silhouetteWeight : 1;
+    const shapeGain = silhouette ? al*(1+(silhouette.opacity-1)*silhouetteWeight) : al;
+    const shapeCenter = planeFrame && [x,y,z];
+    const hard = solid && !softCoverage;
+    const gain = al*opacityGain;
+    function planeMask(sample) {
+      const [u,v]=sample.uv, m=shaped.matrix;
+      return SplatFootprints.coverage(shaped,m[0]*u+m[1]*v,m[2]*u+m[3]*v);
+    }
     for (let iy = y0; iy <= y1; iy++) {
       const dy = iy + 0.5 - sy;
       for (let ix = x0; ix <= x1; ix++) {
         const dx = ix + 0.5 - sx,
           pw = -0.5 * (k0 * dx * dx + k2 * dy * dy) - k1 * dx * dy;
-        const centerAlpha = ContributionRules.alpha(pw, al, solid && !softCoverage, edgeStyle, continuousCoverage);
+        const planeRay=planeFrame&&rayAt(ix+.5,iy+.5);
+        const planeHit=planeRay&&SplatFootprints.planeSample(shapeCenter,frame,planeRay.origin,planeRay.direction);
+        if(planeFrame&&!planeHit)continue;
+        const planeDepth=planeHit?planeHit.t*planeRay.axial:undefined;
+        if(planeHit&&planeDepth<near)continue;
+        const centerAlpha = shaped ? Math.min(.99,shapeGain*(planeHit?planeMask(planeHit):SplatFootprints.sample(shaped,shapeMap,dx,dy))**shapeExponent) :
+          ContributionRules.alpha(pw, gain, hard, edgeStyle, continuousCoverage);
         let a = centerAlpha;
-        if (integrateFootprint) a = footprint(dx, dy, k0, k1, k2, al, solid && !softCoverage, edgeStyle, continuousCoverage);
-        else if (edgeStrength > 0) {
-          const average = footprint(dx, dy, k0, k1, k2, al, solid && !softCoverage, edgeStyle, continuousCoverage, exportOffsets);
+        if (silhouetteFilter) {
+          let average;
+          if (!shaped) average=footprint(dx,dy,k0,k1,k2,gain,hard,edgeStyle,continuousCoverage,exportOffsets);
+          else {
+            let total=0;
+            for (const v of exportOffsets) for (const u of exportOffsets) {
+              let mask;
+              if (planeFrame) {
+                const ray=rayAt(ix+.5+u,iy+.5+v);
+                const hit=SplatFootprints.planeSample(shapeCenter,frame,ray.origin,ray.direction);
+                mask=hit && hit.t*ray.axial>=near ? planeMask(hit) : 0;
+              } else mask=SplatFootprints.sample(shaped,shapeMap,dx+u,dy+v);
+              total+=Math.min(.99,shapeGain*mask**shapeExponent);
+            }
+            average=total/(exportOffsets.length**2);
+          }
+          a+=(average-a)*silhouetteFilter;
+        } else if (!shaped && !silhouette && integrateFootprint) a = footprint(dx, dy, k0, k1, k2, al, hard, edgeStyle, continuousCoverage);
+        else if (!shaped && edgeStrength > 0) {
+          const average = footprint(dx, dy, k0, k1, k2, al, hard, edgeStyle, continuousCoverage, exportOffsets);
           a += (average - a) * edgeStrength;
         }
         const filteredEdge = edgeStrength > 0 && Math.abs(a - centerAlpha) >= edgeCoverageThreshold;
@@ -1671,7 +1863,7 @@ function renderFrame(world, o, preparedPalettes) {
         if (exact === false || exact && pixelSurface && PIX[exact.row.i*8]) continue;
         let sectionZ, sectionTint = 0;
         if (cutaway) {
-          sectionZ = exact?.z ?? -cz+clamp(cutDx*dx+cutDy*dy,-cutReach,cutReach);
+          sectionZ = exact?.z ?? planeDepth ?? -cz+clamp(cutDx*dx+cutDy*dy,-cutReach,cutReach);
           if (sectionZ < near) continue;
           let margin;
           if (exact) margin = Cutaway.margin(cutaway,...exact.position,sectionZ-cutoffDepth);
@@ -1760,7 +1952,7 @@ function renderFrame(world, o, preparedPalettes) {
         if (directReceiver || localProbe) {
           const n = exact?.normal ?? (directReceiver || localProbe);
           const point = exact?.position ?? surfacePoint(rayAt(ix+.5,iy+.5),n,x,y,z,-cz,3*Math.sqrt(c00+c11+c22));
-          if (directReceiver) [pr,pg,pb] = directLight(p,point,n,[pr,pg,pb],fog,centerFog ? fogMix : 0);
+          if (directReceiver) [pr,pg,pb] = directLight(p,point,n,[pr,pg,pb],fog,centerFog ? fogMix : 0,i);
           if (localProbe) [pr,pg,pb] = probes.shade(point,n,[pr,pg,pb],fog,centerFog ? fogMix : 0,localAlbedo);
         }
         const scoped = contribution?.applies(i, paletteId);
@@ -1770,6 +1962,13 @@ function renderFrame(world, o, preparedPalettes) {
           pg = (tint ? optical[opt + 5] : pg) * scatter + optical[opt + 9] * reflection;
           pb = (tint ? optical[opt + 6] : pb) * scatter + optical[opt + 10] * reflection;
           a *= optical[opt];
+        }
+        if(engrave){
+          const point=Array.from(engrave.point,(n,j)=>n+engrave.ex[j]*dx+engrave.ey[j]*dy);
+          [pr,pg,pb]=Engraving.shade(engravingStyle,point,engrave.normal,[pr,pg,pb],{
+            light:o.engravingLight??[-.45,.8,.55],footprint:engrave.footprint,artScale,
+            restNormal:engrave.restNormal,restTangent:engrave.restTangent,screen:[ix+.5,iy+.5]
+          });
         }
         const claim = paletteClaim?.(p,i,paletteId,pr,pg,pb,materialChoices);
         if (staged?.lit || scoped || glassLook) {
@@ -1803,7 +2002,7 @@ function renderFrame(world, o, preparedPalettes) {
           pg = Lightning.shade(pg, splatFlash[1]);
           pb = Lightning.shade(pb, splatFlash[2]);
         }
-        if (opticalActive || staged?.lit || (fragmentSurface && finishBeforeFog) || liveNormal || splatFlash || relit || coverGain < 1) {
+        if (engrave || opticalActive || staged?.lit || (fragmentSurface && finishBeforeFog) || liveNormal || splatFlash || relit || coverGain < 1) {
           pr += (fog[0] - pr) * fogMix;
           pg += (fog[1] - pg) * fogMix;
           pb += (fog[2] - pb) * fogMix;
@@ -1817,17 +2016,17 @@ function renderFrame(world, o, preparedPalettes) {
         a *= alpha;
         if (a < 0.004) continue;
         const wd = writesDepth && alpha === 1 && !exact;
-        const surfaceZ = sectionZ ?? exact?.z ?? (wantsDepth ?
+        const surfaceZ = sectionZ ?? exact?.z ?? planeDepth ?? (wantsDepth ?
           sampledDepth(rayAt(ix + .5, iy + .5), probeNormal, probeCenter, -cz, probeReach) : -cz);
         if (preciseDepth && surfaceDepth && surfaceZ>surfaceDepth[p]+1e-5) continue;
         if (probe) probe(p, i, -cz, surfaceZ, pr, pg, pb, a);
-        if (!blendDepth && deferred && deferredCount >= fragmentBudget) {
+        if (!deep && !blendDepth && !planarFootprints && deferred && deferredCount >= fragmentBudget) {
           playFragments(false,-cz);
           orderFallback = true;
         }
-        const opticalDepth = cutaway || blendDepth || aerial || cloudView || preciseDepth ? surfaceZ : undefined;
+        const opticalDepth = planeHit || cutaway || deep || blendDepth || aerial || cloudView || preciseDepth ? surfaceZ : undefined;
         if (deferred && (sortedSurfaces || preciseDepth)) {
-          const entry = { sort: (flags & 4 || blendDepth && backRows?.has(i)) ? Infinity : surfaceZ, index: n, center: exact?.z ?? -cz,
+          const entry = { sort: (flags & 4 || (deep || blendDepth) && backRows?.has(i)) ? Infinity : surfaceZ, index: n, center: exact?.z ?? -cz,
             transparent: !wd && !exact && !(flags & 4) && !(blendDepth && backRows?.has(i)), opacity: a,
             pane: blendDepth && glass && bend ? renderMeta?.objectIds?.[i] || -pk - 1 : 0,
             sample: [i, surfaceZ, normalizedDepth(surfaceZ), a, pr, pg, pb,
@@ -1837,7 +2036,7 @@ function renderFrame(world, o, preparedPalettes) {
           countDeferred();
           if (!deferred.has(p)) deferred.set(p, []);
           deferred.get(p).push(entry);
-        } else composite(p, i, sectionZ ?? exact?.z ?? -cz, sectionZ !== undefined || exact ? normalizedDepth(surfaceZ) : dn,
+        } else composite(p, i, sectionZ ?? exact?.z ?? planeDepth ?? -cz, sectionZ !== undefined || exact || planeHit ? normalizedDepth(surfaceZ) : dn,
           a, pr, pg, pb, wd, emits, highlight, paletteId, detailParticle, projected, coat, glass, lookPass?.mark, opticalDepth,
           undefined, fogMix, rule, reflected, filteredEdge, 1, sectionTint>0, claim, paintStage && paintColor(samplePaint));
       }
@@ -2128,10 +2327,11 @@ function renderFrame(world, o, preparedPalettes) {
           if (gain < 1) base = base.map(value => value * gain);
         }
         if (bounceTints && live.normal(i)) base = base.map((value, channel) => value * bounceTints[p * 3 + channel]);
-        const receiverNormal = (directLight || !live?.normal(i) && probeReceiver(i)) && diffuseNormal(i);
+        const receivesDirect = directLight?.receives(i);
+        const receiverNormal = (receivesDirect || !live?.normal(i) && probeReceiver(i)) && diffuseNormal(i);
         if (receiverNormal) {
           const exact = sdf?.hits[p], point = exact?.position ?? [HX[p],HY[p],HZ[p]], n = exact?.normal ?? receiverNormal;
-          if (directLight) base = directLight(p,point,n,base);
+          if (receivesDirect) base = directLight(p,point,n,base,undefined,0,i);
           if (!live?.normal(i) && probeReceiver(i)) base = probes.shade(point,n,base,undefined,0,probeAlbedo(i));
         }
         const finishedSurface = surface?.has(i);
@@ -2238,7 +2438,7 @@ function renderFrame(world, o, preparedPalettes) {
         A = AN.data,
         sprD = new Float32Array(W * H).fill(9),
         sprC = new Int16Array(W * H).fill(-1),
-        sprOwner = art || foreground || subject || relight ? new Int32Array(W * H) : null;
+        sprOwner = art || foreground || subject || relight || deep ? new Int32Array(W * H) : null;
       for (let a = 0; a < AN.n; a++) {
         const q0 = a * 12,
           ed = EP[A[q0 + 8]];
@@ -2346,6 +2546,12 @@ function renderFrame(world, o, preparedPalettes) {
         if (edgePixels) edgePixels[q] = 0;
         if (axialDepth) axialDepth[q] = eyeD - R + sprD[q] * 2 * R;
         if (art) art.sprite(q, sprOwner[q], eyeD - R + sprD[q] * 2 * R);
+        if (deep) {
+          const depth = eyeD - R + sprD[q] * 2 * R;
+          rayMedia?.shade(q, depth, c, true, rule?.fogScale);
+          deep.fragment(q, depth, 1, ...c, sprOwner[q], 'ink', rayMedia?.transfer);
+          deep.reflect(q, rayMedia?.reflected(), 1);
+        }
         if (paintStage) paintStage[q]=paintColor(baseReference(sprOwner[q]));
         if (q === paletteTrace?.bottom) paletteTrace.fragment = [];
         if (counters) counters.fragments++;
@@ -2362,7 +2568,9 @@ function renderFrame(world, o, preparedPalettes) {
       }
     }
   }
-  contributions?.refract(gls, dep, blendDepth > 0);
+  contributions?.refract(gls, dep, blendDepth > 0, deep && ((p, source, depth, sourceDepth, weight) =>
+    deep.transmit(p, source, eyeD - R + depth * 2 * R, eyeD - R + sourceDepth * 2 * R, weight)));
+  const deepFrame = deep?.finish();
   let atmosphere, volumeStats = mediaOptions?.stats ? rayMedia.stats : undefined;
   const captureFog = ink?.ramps.has('fog') || o.captureFog;
   const effectMedia = trackMedia && axialDepth && new Float32Array(W * H * 3);
@@ -2389,7 +2597,8 @@ function renderFrame(world, o, preparedPalettes) {
     if (fogPass) for (let p = 0; p < W*H; p++) fogPass[p] = 1 - atmosphere.fog[p];
     if (quality.stats) volumeStats = atmosphere.stats;
   }
-  const effectSignals = effectRules && { rules: effectRules, sky: showSky && !!sky, backdropCloud, media: effectMedia, haze: hazeCoverage };
+  const effectSignals = effectRules && { rules: effectRules, sky: showSky && !!sky, backdropCloud, media: effectMedia,
+    haze: hazeCoverage, darkAt: EffectPalettes.bindDarks(effectRules,world) };
   let passes = art?.finalize(world, t, { x: X, y: Y, z: Z, rayAt, span: R,
     detail, sprM, surfaceGlint, centers, motionFrom:o.surfaceMotionFrom ?? motionFrom,
     emissionMotionFrom:motionFrom, motionReference, ditherPixelStep: spatialFade ? artScale : 0 });
@@ -2407,7 +2616,7 @@ function renderFrame(world, o, preparedPalettes) {
       const rgb = reflectionLook([col[q] / coverage, col[q + 1] / coverage, col[q + 2] / coverage]);
       for (let channel = 0; channel < 3; channel++) col[q + channel] = rgb[channel] * coverage;
     }
-    return { w: W, h: H, rgb: col, coverage: captured };
+    return { w: W, h: H, rgb: col, coverage: captured, ...(deepFrame && { deep: deepFrame }) };
   }
   const alpha = transparent ? new Uint8Array(W * H) : null;
   if (alpha) {
@@ -2472,6 +2681,7 @@ function renderFrame(world, o, preparedPalettes) {
     }
     return {
       w: W, h: H, color: Uint8Array.from(c2, v => Math.round(clamp(v, 0, 1) * 255)), depth: dep, drawn,
+      ...(deepFrame && { deep: deepFrame }),
       ...(o.resolveDetailCleanup && pixelBudgets && { cleanDetail: cleanPixels }),
       ...(localAt && { localAt, localPalettes, localConstraints }), ...(detail && { detail }), ...(passes && { passes }), ...(motionReference && { motionReference }),
       ...(paletteState && {paletteState}),
@@ -2811,6 +3021,7 @@ function renderFrame(world, o, preparedPalettes) {
   if (paletteTrace) paletteTrace.steps.push(...paletteTrace.mask);
   return finishLook({
     w: W, h: H, px, rgb: out, drawn, use,
+    ...(deepFrame && { deep: deepFrame }),
     ...((localOutput || tone || evaluatedPalette) && { palette: localOutput?.packed || tone?.palette || evaluatedPalette }),
     ...(detail && { detail }), ...(motionReference && { motionReference }),
     ...(volumeStats && { volumeStats }), ...(silhouetteMask && {silhouetteMask}), ...(o.captureFog && atmosphere?.fog && { fog: atmosphere.fog }),
@@ -2912,4 +3123,4 @@ function grid(imgs, cols, labels) {
   });
   return out;
 }
-module.exports = { render, resize, pixelIndex, upscale, grid, label, viewMatrix, FOV, cameraCapture };
+module.exports = { render, resize, pixelIndex, upscale, grid, label, viewMatrix, FOV, cameraCapture, sequenceHistory };

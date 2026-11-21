@@ -1,18 +1,26 @@
 /* Ordered screen-space passes and named image and mask dependencies. */
 const RenderGraph = (() => {
-  let stacks, luts, targets, compositor, effects;
+  let stacks, luts, targets, compositor, effects, banks, smear, schedules, addressing;
   try {
     stacks = ColorStack;
     luts = ColorLUT;
     targets = TargetSelectors;
     compositor = FrameComposite;
     effects = RenderEffects;
+    banks = FrameBank;
+    smear = MotionSmear;
+    schedules = RasterSchedule;
+    addressing = TextureAddress;
   } catch {
     stacks = require('./color-stack.js');
     luts = require('./color-lut.js');
     targets = require('./target-selectors.js');
     compositor = require('./frame-composite.js');
     effects = require('./render-effects.js');
+    banks = require('./frame-bank.js');
+    smear = require('./motion-smear.js');
+    schedules = require('./raster-schedule.js');
+    addressing = require('./texture-address.js');
   }
   const operations = Object.freeze({
     mask: 1,
@@ -27,15 +35,25 @@ const RenderGraph = (() => {
     outline: 10,
     chromatic: 11,
     blocks: 12,
-    pixelSort: 13
+    pixelSort: 13,
+    frameAge: 14,
+    motionSmear: 15,
+    frameBank: 16,
+    rasterSchedule: 17,
+    textureAddress: 18
   });
   const fields = {
-    mask: ['rect', 'feather', 'invert', 'volume'],
+    mask: ['rect', 'feather', 'invert', 'volume', 'raster'],
     grade: ['stack', 'cubeSize'],
     reflection: ['source', 'axis', 'line'],
-    distortion: ['source', 'offset', 'amplitude', 'period', 'rate', 'phase', 'rows', 'depthThreshold', 'blend', 'wrap'],
+    distortion: ['source', 'offset', 'amplitude', 'period', 'rate', 'phase', 'rows', 'rowEdits', 'depthThreshold', 'blend', 'wrap'],
     composite: ['source', 'layer', 'blend', 'isolated'],
+    rasterSchedule: ['source', 'indices', 'schedule', 'palette', 'cycles', 'blend', 'wrap'],
+    textureAddress: ['source', 'field', 'filter', 'edge', 'edgeU', 'edgeV', 'blend'],
     history: ['mode', 'halfLife', 'cameraMotion'],
+    frameAge: ['fps', 'regions', 'source', 'cameraMotion'],
+    frameBank: ['fps', 'tiles', 'regions', 'refresh', 'source', 'cameraMotion'],
+    motionSmear: ['field', 'motion', 'fieldScale', 'velocity', 'blockSize', 'halfLife', 'refresh', 'cameraMotion'],
     ...Object.fromEntries(
       effects.types.map(type => [type, [...effects.fields[type], 'maskMode', 'depthThreshold', 'protectObjects']])
     ),
@@ -57,6 +75,7 @@ const RenderGraph = (() => {
     cubes = new WeakMap();
   const maxHistoryPasses = 4,
     maxHistoryPixels = 8388608;
+  const retainedTypes = ['history', 'feedback', 'frameAge', 'motionSmear', 'frameBank'];
   const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
   const tuple = (value, len) =>
     Array.isArray(value) && value.length === len && Array.from(value).every(Number.isFinite);
@@ -69,6 +88,63 @@ const RenderGraph = (() => {
   function finite(value, field) {
     if (!Number.isFinite(value)) throw new RangeError(field + ' must be finite');
     return value;
+  }
+
+  function slot(value, mask = false) {
+    record(value, mask ? ['slot', 'channel', 'range', 'match'] : ['slot'], 'render graph raster binding');
+    const { slot: name, channel, range = [0, 255], match } = value;
+    if (typeof name !== 'string' || !name.trim() ||
+        (channel !== undefined && !['alpha', 'luma', 'r', 'g', 'b'].includes(channel) &&
+          !(Number.isInteger(channel) && channel >= 0 && channel <= 3)) ||
+        !tuple(range, 2) || range[0] >= range[1] || !Number.isFinite(range[1] - range[0]) ||
+        (match !== undefined && (!Number.isSafeInteger(match) || match < 0 || match > 0xffffffff || value.range !== undefined)))
+      throw new TypeError('A raster binding needs a named slot, an optional channel, and an increasing finite range');
+    return { name, ...(mask && { channel, range: range.slice(), match }) };
+  }
+
+  function attachLayer(node, value) {
+    const layout = node.slot ? { ...value, source() {} } : value;
+    node.needsCamera = compositor.settings({ layers: [layout] }).needsCamera || node.needsCamera;
+    node.layer = value;
+  }
+
+  function imageLayer(node, value) {
+    if (plain(value?.source) && Object.hasOwn(value.source, 'slot')) node.slot = slot(value.source);
+    attachLayer(node, value);
+  }
+
+  function prepareFrameAge(pass, reference, input, select) {
+    const { fps = 12, regions, cameraMotion = 'reset' } = pass;
+    if (!Number.isFinite(fps) || fps < 1 || fps > 120 || !['reset', 'keep'].includes(cameraMotion) ||
+        !Array.isArray(regions) || regions.length < 1 || regions.length > 8)
+      throw new RangeError('Frame age needs 1 to 8 regions, a capture rate in [1, 120], and a camera policy');
+    const pins = new Set();
+    let lag = 0;
+    const timed = Array.from(regions, region => {
+      const mode = region?.mode;
+      if (!['delay', 'hold', 'replay'].includes(mode)) throw new TypeError('Invalid frame age mode');
+      record(region, ['mask', 'mode', ...(mode !== 'delay' ? ['start'] : []), ...(mode !== 'hold' ? ['frames'] : [])],
+        'frame age region');
+      const { start = 0, frames = 1 } = region;
+      if (!Number.isInteger(start) || start < 0 || start > 1e6 ||
+          !Number.isInteger(frames) || frames < 1 || frames > 64)
+        throw new RangeError('Frame age needs a start tick in [0, 1000000] and a length in [1, 64]');
+      if (mode === 'delay') lag = Math.max(lag, frames);
+      else for (let i = 0; i < frames; i++) pins.add(start + i);
+      const mask = region.mask === undefined ? undefined : reference(region.mask, 'mask');
+      return { mode, start, frames, mask };
+    });
+    const slots = pins.size + lag + 2;
+    if (slots > 128) throw new RangeError('Frame age exceeds 128 retained frame slots');
+    const source = reference(pass.source ?? input, 'image');
+    return {
+      fps, regions: timed, cameraMotion, source, lag, pins: [...pins], slots,
+      budget: effects.budget({ maxPixels: 262144, filter: 'nearest', ...pass.budget }),
+      needsCamera: cameraMotion === 'reset',
+      historyKey: JSON.stringify([
+        'frameAge', source, cameraMotion, select && Object.entries(select).sort(), fps, lag, [...pins].sort((a, b) => a - b)
+      ])
+    };
   }
 
   const identityRow = [0, 0, 1, 1, 0, 0, 0, 0];
@@ -101,10 +177,40 @@ const RenderGraph = (() => {
     });
   }
 
-  function rowTable(rows, width, height, time) {
-    if (!rows) return;
+  function prepareRowEdits(edits = []) {
+    if (!Array.isArray(edits) || edits.length > 4096)
+      throw new TypeError('Scanline edits need an array of up to 4096 ranges');
+    const coordinate = n => Number.isSafeInteger(n) && n >= 0 && n <= 65536;
+    return Array.from(edits, edit => {
+      record(edit, ['mode', 'start', 'count', 'source'], 'scanline edit');
+      const {mode, start, count = 1, source} = edit;
+      if (!['repeat', 'skip', 'blank'].includes(mode) || !coordinate(start) ||
+          !coordinate(count) || count === 0 || source !== undefined && (mode !== 'repeat' || !coordinate(source)))
+        throw new RangeError('Scanline edit needs a valid mode, start, count and optional repeat source');
+      return {mode, start, count, source: mode === 'repeat' ? source ?? Math.max(0, start - 1) : undefined};
+    });
+  }
+
+  function scanlineMap(edits, height) {
+    const skipped = new Uint8Array(height), addresses = new Int32Array(height).fill(-1);
+    for (const {mode, start, count} of edits) {
+      if (mode === 'skip') skipped.fill(1, start, start + count);
+    }
+    for (let row = 0, next = 0; row < height; row++) {
+      if (!skipped[row]) addresses[next++] = row;
+    }
+    for (const {mode, start, count, source} of edits) {
+      if (mode !== 'skip') addresses.fill(mode === 'repeat' && source < height ? source : -1, start, start + count);
+    }
+    return addresses;
+  }
+
+  function rowTable(rows, width, height, time, rowEdits) {
+    const edits = typeof rowEdits === 'function' ? prepareRowEdits(rowEdits({width, height, time})) : rowEdits;
+    if (!rows && !edits?.length) return;
     const table = new Float32Array(height * 8),
-      dynamic = typeof rows === 'function';
+      dynamic = typeof rows === 'function',
+      addresses = edits?.length && scanlineMap(edits, height);
     let left = 0;
     for (let y = 0; y < height; y++) {
       const v = height === 1 ? 0 : y / (height - 1),
@@ -112,22 +218,30 @@ const RenderGraph = (() => {
       if (dynamic) {
         const row = rows({ y, v, width, height, time });
         table.set(row === undefined ? identityRow : rowValues(row, ['offset', 'scale', 'tint']), index);
-      } else {
+      } else if (rows) {
         while (left + 1 < rows.length && v >= rows[left + 1].at) left++;
         const a = rows[left],
           b = rows[Math.min(left + 1, rows.length - 1)];
         const t = a === b ? 0 : clamp((v - a.at) / (b.at - a.at));
         for (let k = 0; k < 7; k++) table[index + k] = a.values[k] * (1 - t) + b.values[k] * t;
-      }
+      } else table.set(identityRow, index);
+      // Zero leaves the sample at the current row. Negative values blank it.
+      if (addresses && addresses[y] !== y) table[index + 7] = addresses[y] < 0 ? -1 : addresses[y] + 1;
     }
     return table;
   }
 
-  function prepare(value) {
+  function prepare(value, capture = []) {
+    if (!Array.isArray(capture) || capture.length > 33 || new Set(capture).size !== capture.length ||
+        !Array.from(capture).every(id => typeof id === 'string' && id.trim()))
+      throw new TypeError('Render graph captures need a list of distinct pass IDs');
     const readSnapshot = value?.[editorSnapshot];
     if (readSnapshot) value = readSnapshot();
-    if (value === undefined || value === false) return null;
-    if (compiled.has(value)) return compiled.get(value);
+    if (value === undefined || value === false) {
+      if (capture.length) throw new RangeError('Cannot capture passes without a render graph');
+      return null;
+    }
+    if (!capture.length && compiled.has(value)) return compiled.get(value);
     record(value, ['passes', 'output', 'budget'], 'render graph');
     if (!Array.isArray(value.passes) || value.passes.length > 32)
       throw new RangeError('A render graph needs up to 32 passes');
@@ -151,7 +265,7 @@ const RenderGraph = (() => {
           'select',
           'mask',
           'depth',
-          ...(['history', 'feedback', ...effects.types].includes(type) ? ['budget'] : []),
+          ...([...retainedTypes, ...effects.types].includes(type) ? ['budget'] : []),
           ...(type === 'mask' ? [] : ['input']),
           ...fields[type]
         ],
@@ -179,7 +293,7 @@ const RenderGraph = (() => {
       if (effects.types.includes(type)) Object.assign(node, effects.settings(pass));
       switch (type) {
         case 'mask': {
-          const { rect, feather = 0, invert = false, volume } = pass;
+          const { rect, feather = 0, invert = false, volume, raster } = pass;
           if (
             (rect !== undefined && (!tuple(rect, 4) || rect[2] <= 0 || rect[3] <= 0)) ||
             !Number.isFinite(feather) ||
@@ -188,6 +302,12 @@ const RenderGraph = (() => {
           )
             throw new TypeError('A mask needs a positive rectangle, nonnegative feather and boolean invert');
           Object.assign(node, { rect: rect?.slice(), feather, invert });
+          if (raster !== undefined) {
+            record(raster, ['slot', 'channel', 'range', 'match', 'rect', 'filter'], 'render graph raster mask');
+            const { rect, filter, ...binding } = raster;
+            node.slot = slot(binding, true);
+            attachLayer(node, { ...(rect !== undefined && { rect }), ...(filter !== undefined && { filter }) });
+          }
           if (volume !== undefined) {
             record(volume, ['at', 'extent', 'feather'], 'world reveal volume');
             const { at, extent, feather = 0.25 } = volume;
@@ -228,6 +348,7 @@ const RenderGraph = (() => {
             rate = 0,
             phase = 0,
             rows,
+            rowEdits,
             depthThreshold,
             blend = 'replace',
             wrap = false
@@ -250,10 +371,29 @@ const RenderGraph = (() => {
             phase: finite(phase, 'Distortion phase'),
             source: reference(pass.source ?? input, 'image'),
             rows: prepareRows(rows),
+            rowEdits: typeof rowEdits === 'function' ? rowEdits : prepareRowEdits(rowEdits),
             depthThreshold,
             blend,
             wrap
           });
+          break;
+        }
+        case 'rasterSchedule': {
+          const { indices, palette, cycles, schedule, wrap, blend = 'replace' } = pass;
+          if (!['replace', 'over'].includes(blend) || (indices !== undefined) !== (palette !== undefined) ||
+              indices !== undefined && pass.source !== undefined)
+            throw new TypeError('Raster schedule needs an image or an index slot with a palette, plus replace or over blending');
+          Object.assign(node, {
+            schedule: schedules.prepare({ schedule, palette, cycles, wrap }), blend,
+            ...(indices === undefined ? { source: reference(pass.source ?? input, 'image') } : { indices: slot(indices).name })
+          });
+          break;
+        }
+        case 'textureAddress': {
+          const { field, filter, edge, edgeU, edgeV, blend = 'replace' } = pass;
+          if (!['replace', 'over'].includes(blend)) throw new TypeError('Texture addressing needs replace or over blending');
+          Object.assign(node, { source: reference(pass.source ?? input, 'image'), addressSlot: slot(field).name,
+            address: addressing.settings({ filter, edge, edgeU, edgeV }), blend });
           break;
         }
         case 'history': {
@@ -274,6 +414,44 @@ const RenderGraph = (() => {
             cameraMotion,
             needsCamera: cameraMotion === 'reset',
             historyKey: JSON.stringify([input, mask, Object.entries(select).sort(), mode, cameraMotion])
+          });
+          break;
+        }
+        case 'frameAge':
+          Object.assign(node, prepareFrameAge(pass, reference, input, select));
+          break;
+        case 'frameBank': {
+          const { fps, tiles, regions, refresh, cameraMotion = 'reset' } = pass;
+          const bank = banks.prepare({ fps, tiles, regions, refresh });
+          for (const mask of bank.masks) reference(mask, 'mask');
+          if (cameraMotion !== 'reset' && cameraMotion !== 'keep') throw new RangeError('Invalid frame bank camera policy');
+          const source = reference(pass.source ?? input, 'image');
+          Object.assign(node, { bank, source, cameraMotion, needsCamera: cameraMotion === 'reset',
+            budget: effects.budget({ maxPixels: 262144, filter: 'nearest', ...pass.budget }),
+            historyKey: JSON.stringify([type, source, cameraMotion, bank.fps]) });
+          break;
+        }
+        case 'motionSmear': {
+          const { motion, cameraMotion = 'reset' } = pass;
+          if (!['reset', 'keep'].includes(cameraMotion)) throw new RangeError('Invalid motion smear camera policy');
+          const raw = motion !== undefined;
+          if (raw && pass.field !== undefined) throw new TypeError('Motion smear accepts an image field or a raw motion slot');
+          let binding;
+          if (raw) {
+            record(motion, ['slot', 'confidence', 'valid', 'direction', 'units', 'minConfidence'], 'raw motion binding');
+            const { slot: name, confidence, valid } = motion;
+            for (const key of [name, confidence, valid].filter((value, index) => index === 0 || value !== undefined))
+              if (typeof key !== 'string' || !key.trim()) throw new TypeError('Raw motion needs named raster slots');
+            binding = { name, confidence, valid, ...smear.convention(motion) };
+          }
+          const field = pass.field === undefined ? undefined : reference(pass.field, 'image');
+          const refresh = pass.refresh === undefined ? undefined : reference(pass.refresh, 'mask');
+          const controls = smear.settings({ ...pass, fieldScale: pass.fieldScale === undefined ? (raw ? [1, 1] : [120, 120]) : pass.fieldScale });
+          Object.assign(node, {
+            ...controls, ...(binding && { motion: binding, direction: binding.direction, units: binding.units }),
+            field, refresh, cameraMotion, needsCamera: cameraMotion === 'reset',
+            budget: effects.budget({ filter: 'nearest', ...pass.budget }),
+            historyKey: JSON.stringify([type, input, field, binding, cameraMotion])
           });
           break;
         }
@@ -305,7 +483,7 @@ const RenderGraph = (() => {
             throw new TypeError('Feedback accepts an image source or an emission layer');
           const layer = pass.layer;
           const source = layer === undefined ? reference(pass.source ?? input, 'image') : undefined;
-          const needsCamera = layer !== undefined && compositor.settings({ layers: [layer] }).needsCamera;
+          if (layer !== undefined) imageLayer(node, layer);
           if (pass.displayMask !== undefined && typeof pass.displayMask !== 'boolean')
             throw new TypeError('Feedback displayMask must be boolean');
           Object.assign(node, {
@@ -316,10 +494,9 @@ const RenderGraph = (() => {
             threshold: threshold?.slice(),
             filter,
             blend,
-            layer,
             source,
             warp: feedbackWarp(warp),
-            needsCamera: needsCamera || cameraMotion === 'reset',
+            needsCamera: Boolean(node.needsCamera || cameraMotion === 'reset'),
             historyKey: JSON.stringify([
               type,
               input,
@@ -339,8 +516,7 @@ const RenderGraph = (() => {
           node.isolated = pass.isolated === true;
           if (pass.layer !== undefined) {
             if (pass.blend !== undefined) throw new TypeError('Set layer blending on the layer');
-            node.needsCamera = compositor.settings({ layers: [pass.layer] }).needsCamera;
-            node.layer = pass.layer;
+            imageLayer(node, pass.layer);
           } else {
             const { blend = 'over' } = pass;
             if (blend !== 'over' && blend !== 'add') throw new TypeError('Composite blend must be over or add');
@@ -352,7 +528,8 @@ const RenderGraph = (() => {
       node.dependencies = [
         ...new Set(
           node.enabled
-            ? [node.isolated ? undefined : input, mask, node.source].filter(Boolean)
+            ? [node.isolated ? undefined : input, mask, node.source, node.field, node.refresh,
+                ...(node.regions?.map(region => region.mask) ?? []), ...(node.bank?.masks ?? [])].filter(Boolean)
             : [input].filter(Boolean)
         )
       ];
@@ -360,19 +537,25 @@ const RenderGraph = (() => {
       if (type !== 'mask') current = id;
       nodes.push(node);
     }
-    const output = reference(value.output ?? current, 'image'),
-      live = new Set([output]);
+    const output = reference(value.output ?? current, 'image');
+    const captures = new Map(capture.map(id => {
+      if (!outputs.has(id)) throw new RangeError('Unknown render graph capture: ' + id);
+      return [id, outputs.get(id)];
+    }));
+    const live = new Set([output, ...captures.keys()]);
     for (let i = nodes.length - 1; i >= 0; i--)
       if (live.has(nodes[i].id)) for (const dependency of nodes[i].dependencies) live.add(dependency);
     const passes = nodes.filter(node => live.has(node.id)),
       lastUse = new Map();
     passes.forEach((node, i) => node.dependencies.forEach(id => lastUse.set(id, i)));
-    const historyPasses = passes.filter(node => node.enabled && (node.type === 'history' || node.type === 'feedback'));
+    for (const id of [output, ...captures.keys()]) if (lastUse.has(id)) lastUse.set(id, passes.length);
+    const historyPasses = passes.filter(node => node.enabled && retainedTypes.includes(node.type));
     if (historyPasses.length > maxHistoryPasses)
       throw new RangeError('A graph supports up to four live screen history passes');
     const plan = {
       passes,
       output,
+      captures,
       lastUse,
       historyPasses,
       budget: graphBudget(value.budget),
@@ -380,7 +563,7 @@ const RenderGraph = (() => {
       needsOwner: passes.some(node => node.enabled && (node.select || node.effect || node.depth)),
       needsCamera: passes.some(node => node.enabled && node.needsCamera)
     };
-    if (readSnapshot) compiled.set(value, plan);
+    if (readSnapshot && !capture.length) compiled.set(value, plan);
     return plan;
   }
 
@@ -404,6 +587,7 @@ const RenderGraph = (() => {
       rows = [];
     let peak = full,
       historyPixels = 0,
+      historyBytes = 0,
       allocated = 1,
       scratchPeak = 0,
       work = 0;
@@ -422,6 +606,7 @@ const RenderGraph = (() => {
           : node.type === 'pixelSort'
             ? Math.min(node.span, budget.maxSamples)
             : (budget?.maxSamples ?? 1);
+      const age = node.type === 'frameAge';
       const cost =
         !node.enabled && node.type !== 'mask'
           ? 0
@@ -434,14 +619,23 @@ const RenderGraph = (() => {
                     ? samples
                     : 3) +
               full * 5
-            : full;
+            : age ? width * height + full * node.regions.length
+              : node.bank ? width * height * (1 + Number(Boolean(node.bank.grid)) + node.bank.rules.length +
+                Number(Boolean(node.bank.refresh))) + full
+              : node.type === 'motionSmear' ? width * height * 4 + full * 4 :
+                node.address ? full * (node.address.filter === 'linear' ? 5 : 2) : full;
       work += cost;
       if (node.enabled || node.type === 'mask') {
         const buffer = free.length ? free.pop() : allocated++;
         live.set(node.id, buffer);
-        scratchPeak = Math.max(scratchPeak, node.effect ? width * height : 0);
+        scratchPeak = Math.max(scratchPeak, node.effect ? width * height :
+          (node.motion || node.address) ? 4 * full : age && node.regions.length > 1 ? full : 0);
         peak = Math.max(peak, allocated * full + scratchPeak);
-        if (node.enabled && (node.type === 'history' || node.type === 'feedback')) historyPixels += width * height;
+        if (node.enabled && retainedTypes.includes(node.type)) {
+          const pixels = width * height * (age ? node.slots : 1);
+          historyPixels += pixels;
+          historyBytes += pixels * (age ? 4 : 8);
+        }
       } else live.set(node.id, live.get(node.input) ?? 0);
       rows.push({
         id: node.id,
@@ -471,7 +665,7 @@ const RenderGraph = (() => {
       transientPixels: peak,
       transientBytes: peak * 4,
       historyPixels,
-      historyBytes: historyPixels * 8,
+      historyBytes,
       work,
       limits
     };
@@ -596,18 +790,98 @@ const RenderGraph = (() => {
     return data;
   }
 
-  function layer(node, w, h, world, time, text, camera, resolve, gl) {
-    const plan = compositor.prepare({ layers: [node.layer] }, w, h);
+  function motionRaster(node, sources, width, height) {
+    const { name, confidence, valid, minConfidence } = node.motion;
+    function read(key) {
+      if (key === undefined) return null;
+      if (!sources || !Object.hasOwn(sources, key)) throw new RangeError('Missing render graph raster slot: ' + key);
+      return sources[key];
+    }
+    return smear.raw(read(name), { width, height, confidence: read(confidence), valid: read(valid), minConfidence });
+  }
+
+  function addressRaster(node, sources, width, height) {
+    const name = node.addressSlot;
+    if (!sources || !Object.hasOwn(sources, name)) throw new RangeError('Missing render graph raster slot: ' + name);
+    return addressing.raster(sources[name], width, height);
+  }
+
+  function indexedSchedule(node, sources, packet) {
+    const name = node.indices;
+    if (!sources || !Object.hasOwn(sources, name)) throw new RangeError('Missing render graph raster slot: ' + name);
+    return schedules.indexed(sources[name], packet.paletteSize);
+  }
+
+  function slotPixels(node, sources, raster) {
+    const { name, channel, range, match } = node.slot;
+    if (!sources || !Object.hasOwn(sources, name)) throw new RangeError('Missing render graph raster slot: ' + name);
+    const source = sources[name];
+    if (!range) {
+      const { width, height, data } = raster.rgba(source);
+      return { w: width, h: height, rgba: data };
+    }
+    const channels = source?.channels ?? source?.data?.length / (source?.width * source?.height);
+    const { width, height, data } = raster.channel(source, { channel: channel ?? (channels % 2 === 0 ? 'alpha' : 'luma') });
+    const rgba = new Uint8Array(width * height * 4);
+    for (let p = 0; p < data.length; p++)
+      rgba[p * 4 + 3] = match === undefined ? byte(clamp((data[p] - range[0]) / (range[1] - range[0]))) : data[p] === match ? 255 : 0;
+    return { w: width, h: height, rgba };
+  }
+
+  function layer(node, w, h, world, time, text, camera, resolve, gl, sources, raster) {
+    if (node.slot && node.layer.opacity === 0) return;
+    const input = node.slot ? { ...node.layer, source: slotPixels(node, sources, raster) } : node.layer;
+    const plan = compositor.prepare({ layers: [input] }, w, h);
     return compositor.layers(plan, world, time, text, camera, resolve, gl)[0];
   }
 
-  function history({ release = () => {} } = {}) {
+  function frameAgeClock(state, node, time, release) {
+    const tick = Math.floor((time - state.origin) * node.fps + 1e-8);
+    if (!Number.isSafeInteger(tick)) throw new RangeError('Frame age exceeds its capture tick range');
+    return {
+      capture: tick > state.tick,
+      spare: state.spare,
+      save(value) {
+        const before = state.frames;
+        const next = new Map();
+        const previous = before.get(state.tick);
+        // Missing capture ticks hold the latest observed image. Store only
+        // ticks reachable by the delay ring or an authored hold/replay.
+        function retain(at) {
+          if (at <= tick) next.set(at, at === tick ? value : before.get(at) ?? previous);
+        }
+        for (let at = Math.max(0, tick - node.lag); at <= tick; at++) retain(at);
+        for (const at of node.pins) retain(at);
+        const live = new Set(next.values());
+        const retired = new Set(before.values());
+        if (state.spare !== undefined) retired.add(state.spare);
+        state.spare = undefined;
+        for (const image of retired) if (!live.has(image)) {
+          if (state.spare === undefined) state.spare = image;
+          else release(image);
+        }
+        state.frames = next;
+        state.tick = tick;
+      },
+      sample({ mode, start, frames }) {
+        if (mode === 'delay') return state.frames.get(tick - frames);
+        if (mode === 'hold') return state.frames.get(start);
+        const elapsed = tick - start - frames;
+        if (elapsed >= 0) return state.frames.get(start + elapsed % frames);
+      }
+    };
+  }
+
+  function history({ release = () => {}, releaseAge = release } = {}) {
     const entries = new Map();
     let previousFrame;
     function drop(id) {
       const entry = entries.get(id);
       entries.delete(id);
-      if (entry) release(entry.value);
+      if (entry?.age) {
+        for (const image of new Set(entry.age.frames.values())) releaseAge(image);
+        if (entry.age.spare !== undefined) releaseAge(entry.age.spare);
+      } else if (entry) release(entry.value);
     }
     function clear() {
       for (const id of entries.keys()) drop(id);
@@ -637,16 +911,31 @@ const RenderGraph = (() => {
       previousFrame = { source, w, h, time, signature };
       return node => {
         const prior = entries.get(node.id);
+        if (node.bank) {
+          const step = banks.schedule(node.bank, time, prior?.clock);
+          return { ...step, value: prior?.value, save(value) {
+            if (prior && prior.value !== value) drop(node.id);
+            entries.set(node.id, { key: keys.get(node.id), clock: step.clock, value });
+          } };
+        }
+        if (node.type === 'frameAge') {
+          const age = prior?.age ?? { origin: time, tick: -1, frames: new Map(), spare: undefined };
+          if (!prior) entries.set(node.id, { key: keys.get(node.id), age });
+          return frameAgeClock(age, node, time, releaseAge);
+        }
+        const elapsed = prior ? time - prior.time : 0;
         return {
           value: prior?.value,
           capture: !prior || prior.time < time,
-          elapsed: prior ? time - prior.time : 0,
-          decay: prior ? 2 ** (-(time - prior.time) / node.halfLife) : 0,
+          elapsed,
+          sampleElapsed: elapsed || prior?.elapsed || 0,
+          decay: prior ? 2 ** (-elapsed / node.halfLife) : 0,
           save(value) {
             drop(node.id);
             entries.set(node.id, {
               key: keys.get(node.id),
               time,
+              elapsed,
               value
             });
           }
@@ -787,11 +1076,17 @@ const RenderGraph = (() => {
     cube,
     selection,
     layer,
+    motionRaster,
+    addressRaster,
+    scheduleTable: schedules.table,
+    indexedSchedule,
     history,
     feedbackMotion,
     replay,
     volumeCoverage,
-    rowTable
+    rowTable,
+    prepareRowEdits,
+    scanlineMap
   });
 })();
 if (typeof module !== 'undefined') module.exports = RenderGraph;

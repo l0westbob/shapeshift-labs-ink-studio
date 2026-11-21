@@ -65,16 +65,43 @@ const DrawingPrimitives = (() => {
     return value;
   }
 
+  // A fade uses output-space XY even when the geometry is in world space.
+  function falloff(raw) {
+    if (raw === undefined || raw === false) return null;
+    keys(raw, ['type', 'from', 'to', 'center', 'radii', 'opacity', 'curve'], 'drawing falloff');
+    const { type = 'linear', opacity = [1,0], curve = 'smooth' } = raw;
+    check(tuple(opacity,2) && opacity.every(value => bounded(value,0,1)) &&
+      (curve === 'linear' || curve === 'smooth'), 'Drawing falloff needs two opacities in [0, 1] and a linear or smooth curve');
+    let coordinate;
+    if (type === 'linear') {
+      check(raw.center === undefined && raw.radii === undefined, 'Linear falloff uses from and to');
+      const [x,y] = vector(raw.from,2,'Falloff start'), [tx,ty] = vector(raw.to,2,'Falloff end');
+      const dx = tx-x, dy = ty-y, distance = dx*dx+dy*dy;
+      check(distance >= 1e-16, 'Linear falloff needs distinct endpoints');
+      coordinate = (u,v) => ((u-x)*dx+(v-y)*dy)/distance;
+    } else {
+      check(type === 'radial' && raw.from === undefined && raw.to === undefined, 'Drawing falloff must be linear or radial');
+      const [x,y] = vector(raw.center,2,'Falloff center'), [inner,outer] = vector(raw.radii,2,'Falloff radii');
+      check(inner >= 0 && outer > inner, 'Radial falloff needs increasing nonnegative radii');
+      coordinate = (u,v) => (Math.hypot(u-x,v-y)-inner)/(outer-inner);
+    }
+    const [start,end] = opacity;
+    return (u,v) => {
+      const t = clamp(coordinate(u,v));
+      return start + (end-start)*(curve === 'smooth' ? t*t*(3-2*t) : t);
+    };
+  }
+
   function command(raw) {
     const { type, space = 'screen', widthUnits, width, color: tint } = raw ?? {};
     check(space === 'world' || space === 'screen', 'Primitive space must be world or screen');
     const axes = basis[space], n = axes.length;
-    const baseKeys = ['type', 'space', 'widthUnits', 'width', 'color'];
+    const baseKeys = ['type', 'space', 'widthUnits', 'width', 'color', 'falloff'];
     const headKeys = ['headUnits', 'headLength', 'headWidth'];
     const tickKeys = ['tickUnits', 'tickLength', 'labelSize'];
     const units = dimension(widthUnits, 'widthUnits', space);
     const style = { units, width: positive(width ?? (units === 'px' ? 1 : .02), 'Stroke width'), color: color(tint) };
-    const draw = { type, space, style, needsCamera: space === 'world' };
+    const draw = { type, space, style, needsCamera: space === 'world', falloff: falloff(raw.falloff) };
     switch (type) {
       case 'path': {
         keys(raw, [...baseKeys, 'points', 'closed'], 'path command');
@@ -86,8 +113,47 @@ const DrawingPrimitives = (() => {
         keys(raw, [...baseKeys, ...headKeys, 'from', 'to'], 'arrow command');
         return { ...draw, from: vector(raw.from, n, 'Arrow start'), to: vector(raw.to, n, 'Arrow tip'), head: head(raw, space) };
       }
+      case 'registrationGrid': {
+        keys(raw, [...baseKeys, 'origin', 'u', 'v', 'step', 'guides', 'crosses', 'omit', 'markColor', 'markWidth'],
+          'registration grid command');
+        const { origin, u = axes[0], v = axes[1], step: size = 1, guides = [], crosses = [], omit = [],
+          markColor, markWidth } = raw;
+        const U = unit(u,n,'Registration U axis'), V = unit(v,n,'Registration V axis');
+        check(Math.abs(U.reduce((sum,x,i) => sum+x*V[i],0)) <= 1e-6, 'Registration axes must be perpendicular');
+        const spacing = Array.isArray(size) ? vector(size,2,'Registration step') : [size,size];
+        spacing.forEach(value => positive(value,'Registration step'));
+        check(Array.isArray(guides) && guides.length <= 128 && Array.isArray(crosses) && crosses.length <= 128 &&
+          guides.length+crosses.length > 0 && Array.isArray(omit) && omit.length <= 32,
+          'Registration allows 128 guides, 128 crosses and 32 cutouts');
+        const cell = value => bounded(value,-4096,4096);
+        let segments = crosses.length*2;
+        const lines = Array.from(guides, guide => {
+          keys(guide,['axis','index','span','dash'],'registration guide');
+          const {axis, index, span, dash} = guide;
+          check((axis === 'u' || axis === 'v') && cell(index) &&
+            tuple(span,2) && span.every(cell) && span[1] > span[0],
+            'A guide needs a u or v axis, perpendicular index, and increasing span in cells');
+          check(dash === undefined || tuple(dash,2) && dash.every(value => bounded(value,1e-5,8192)),
+            'Guide dash on and off lengths must be positive');
+          segments += (dash ? Math.ceil((span[1]-span[0])/(dash[0]+dash[1])) : 1)+omit.length;
+          check(segments <= 4096,'Registration grid exceeds its segment budget');
+          return { axis, index, span: span.slice(), dash: dash?.slice() };
+        });
+        return { ...draw, origin: vector(origin,n,'Registration origin'), u: U, v: V, spacing, lines,
+          crosses: Array.from(crosses, mark => {
+            keys(mark,['at','size'],'registration cross');
+            check(tuple(mark.at,2) && mark.at.every(cell),'A registration cross needs cell coordinates');
+            return { at: mark.at.slice(), size: positive(mark.size,'Registration cross size') };
+          }),
+          omit: Array.from(omit, rect => {
+            check(tuple(rect,4) && rect.every(cell) && rect[2] > 0 && rect[3] > 0,
+              'A registration cutout needs cell coordinates and positive size');
+            return rect.slice();
+          }),
+          mark: { ...style, color: color(markColor ?? tint), width: positive(markWidth ?? style.width,'Registration mark width') } };
+      }
       case 'polygon': {
-        keys(raw, [...baseKeys, 'points', 'rings', 'fill', 'stroke'], 'polygon command');
+        keys(raw, [...baseKeys, 'points', 'rings', 'fill', 'stroke', 'fillFalloff', 'strokeFalloff'], 'polygon command');
         const { points: outline, rings, fill, stroke } = raw;
         check((outline === undefined) !== (rings === undefined), 'Polygon needs points or rings');
         const contours = rings ?? [outline];
@@ -96,10 +162,13 @@ const DrawingPrimitives = (() => {
         check(cooked.reduce((sum, ring) => sum + ring.length, 0) <= 4096, 'Polygon exceeds its vertex budget');
         check(fill !== false || stroke !== undefined && stroke !== false, 'Polygon needs a fill or stroke');
         return { ...draw, rings: cooked, fill: fill === false ? null : color(fill ?? tint),
+          fillFalloff: raw.fillFalloff === undefined ? draw.falloff : falloff(raw.fillFalloff),
+          strokeFalloff: raw.strokeFalloff === undefined ? draw.falloff : falloff(raw.strokeFalloff),
           stroke: stroke === undefined || stroke === false ? null : color(stroke) };
       }
       case 'grid': {
-        keys(raw, [...baseKeys, 'origin', 'u', 'v', 'step', 'counts', 'majorEvery', 'majorColor', 'majorWidth'], 'grid command');
+        keys(raw, [...baseKeys, 'origin', 'u', 'v', 'step', 'counts', 'majorEvery', 'majorColor', 'majorWidth',
+          'uFalloff', 'vFalloff'], 'grid command');
         const { origin, u = axes[0], v = axes[1], step: size = 1, counts, majorEvery = 5, majorColor, majorWidth } = raw;
         const spacing = Array.isArray(size) ? vector(size, 2, 'Grid step') : [size, size];
         spacing.forEach(value => positive(value, 'Grid step'));
@@ -108,7 +177,8 @@ const DrawingPrimitives = (() => {
           tuple(counts, 2) && counts.every(value => Number.isInteger(value) && bounded(value, 1, 256)) &&
           Number.isInteger(majorEvery) && bounded(majorEvery, 1, 256),
           'Grid needs perpendicular axes, 1 to 256 cells per side, and positive major spacing');
-        return { ...draw, origin: vector(origin, n, 'Grid origin'), u: U, v: V, spacing, counts: counts.slice(), majorEvery,
+        const axisFalloff = [raw.uFalloff,raw.vFalloff].map(value => value === undefined ? draw.falloff : falloff(value));
+        return { ...draw, origin: vector(origin, n, 'Grid origin'), u: U, v: V, spacing, counts: counts.slice(), majorEvery, axisFalloff,
           major: { ...style, width: positive(majorWidth ?? style.width, 'Major line width'), color: color(majorColor ?? tint) } };
       }
       case 'axes': {
@@ -140,7 +210,22 @@ const DrawingPrimitives = (() => {
           label: label(raw.label ?? (length + (lengthUnits === 'px' ? ' PX' : ' WU'))),
           labelSize: positive(raw.labelSize ?? 10, 'Label size') };
       }
-      default: throw new TypeError('Drawing commands support text, rect, path, arrow, polygon, grid, axes and scaleBar');
+      case 'rayFan': {
+        keys(raw, [...baseKeys, 'origin', 'u', 'v', 'angles', 'radii', 'count'], 'ray fan command');
+        const { origin, u = axes[0], v = axes[1], angles, radii, count = 48 } = raw;
+        const U = unit(u,n,'Ray fan U axis'), V = unit(v,n,'Ray fan V axis');
+        const [start,end] = vector(angles,2,'Ray fan angles');
+        const [inner,outer] = vector(radii,2,'Ray fan radii');
+        const span = end-start, turn = Math.PI*2;
+        check(Math.abs(U.reduce((sum,x,i) => sum+x*V[i],0)) <= 1e-6 &&
+          span !== 0 && Math.abs(span) <= turn+1e-10 && inner >= 0 && outer > inner &&
+          Number.isInteger(count) && bounded(count,2,256),
+          'Ray fan needs perpendicular axes, a sweep of up to one turn, increasing radii and 2 to 256 rays');
+        const full = Math.abs(span) >= turn-1e-10;
+        return { ...draw, origin: vector(origin,n,'Ray fan origin'), u: U, v: V, inner, outer, start,
+          count, interval: (full ? Math.sign(span)*turn : span)/(full ? count : count-1) };
+      }
+      default: throw new TypeError('Unknown drawing command type');
     }
   }
 
@@ -197,7 +282,7 @@ const DrawingPrimitives = (() => {
     const visible = world ? project.visible : () => true;
     const scaled = (n, units, p, direction = basis.screen[1]) =>
       units === 'world' ? n*project.pixelsPerUnit(p,direction) : n;
-    const batch = color => ({ color, lines: [], fills: [], labels: [] });
+    const batch = (color, falloff = draw.falloff) => ({ color, falloff, lines: [], fills: [], labels: [] });
     const result = [];
     function stroke(out, a, b, style = draw.style) {
       const pair = world ? project.line(a,b) : [a,b];
@@ -253,28 +338,32 @@ const DrawingPrimitives = (() => {
     if (draw.type === 'polygon') {
       const rings = draw.rings.map(ring => ring.map(view));
       if (draw.fill) {
-        const fill = batch(draw.fill);
+        const fill = batch(draw.fill,draw.fillFalloff);
         fill.fills.push(rings.map(ring => (world ? project.ring(ring) : ring).map(xy)).filter(ring => ring.length >= 3));
         result.push(fill);
       }
       if (draw.stroke) {
-        const outline = batch(draw.stroke);
+        const outline = batch(draw.stroke,draw.strokeFalloff);
         for (const ring of rings) polyline(outline,ring,true);
         result.push(outline);
       }
     }
     if (draw.type === 'grid') {
-      const major = draw.major.width === draw.style.width && draw.major.color.every((value,i) => value === out.color[i]) ?
-        out : batch(draw.major.color);
+      const sameStyle = draw.major.width === draw.style.width && draw.major.color.every((value,i) => value === out.color[i]);
+      const [uFalloff,vFalloff] = draw.axisFalloff;
+      const uLines = batch(out.color,uFalloff);
+      const vLines = vFalloff === uFalloff ? uLines : batch(out.color,vFalloff);
+      const uMajor = sameStyle ? uLines : batch(draw.major.color,uFalloff);
+      const vMajor = sameStyle ? vLines : vLines === uLines ? uMajor : batch(draw.major.color,vFalloff);
       const span = draw.counts.map((n,i) => n*draw.spacing[i]);
-      for (const [i, across, along] of [[0,draw.u,draw.v],[1,draw.v,draw.u]])
+      for (const [i, across, along, lines, major] of
+        [[0,draw.u,draw.v,vLines,vMajor],[1,draw.v,draw.u,uLines,uMajor]])
         for (let line = 0; line <= draw.counts[i]; line++) {
           const start = step(draw.origin,across,line*draw.spacing[i]);
           const big = line % draw.majorEvery === 0 || line === draw.counts[i];
-          stroke(big ? major : out, view(start), view(step(start,along,span[1-i])), big ? draw.major : draw.style);
+          stroke(big ? major : lines, view(start), view(step(start,along,span[1-i])), big ? draw.major : draw.style);
         }
-      result.push(out);
-      if (major !== out) result.push(major);
+      result.push(...new Set([uLines,vLines,uMajor,vMajor]));
     }
     if (draw.type === 'axes') {
       const from = view(draw.origin);
@@ -315,10 +404,57 @@ const DrawingPrimitives = (() => {
         }
       }
     }
+    if (draw.type === 'registrationGrid') {
+      const at = (u,v) => step(step(draw.origin,draw.u,u*draw.spacing[0]),draw.v,v*draw.spacing[1]);
+      for (const {axis,index,span,dash} of draw.lines) {
+        const parallelU = axis === 'u';
+        const point = x => view(parallelU ? at(x,index) : at(index,x));
+        let spans = [span];
+        for (const [x,y,w,h] of draw.omit) {
+          const across = parallelU ? y : x, thickness = parallelU ? h : w;
+          if (index <= across || index >= across+thickness) continue;
+          const start = parallelU ? x : y, end = start+(parallelU ? w : h);
+          spans = spans.flatMap(([lo,hi]) => {
+            if (end <= lo || start >= hi) return [[lo,hi]];
+            const parts = [];
+            if (lo < start) parts.push([lo,start]);
+            if (hi > end) parts.push([end,hi]);
+            return parts;
+          });
+        }
+        for (const [lo,hi] of spans) {
+          if (!dash) {
+            stroke(out,point(lo),point(hi));
+            continue;
+          }
+          const [length,gap] = dash, period = length+gap;
+          const count = Math.ceil((hi-span[0])/period);
+          for (let i = Math.floor((lo-span[0])/period); i < count; i++) {
+            const start = span[0]+i*period;
+            const from = Math.max(lo,start), to = Math.min(hi,start+length);
+            if (to > from) stroke(out,point(from),point(to));
+          }
+        }
+      }
+      const marks = batch(draw.mark.color);
+      for (const {at: coord,size} of draw.crosses) {
+        const center = at(...coord);
+        for (const direction of [draw.u,draw.v])
+          stroke(marks,view(step(center,direction,-size*.5)),view(step(center,direction,size*.5)),draw.mark);
+      }
+      return [out,marks];
+    }
+    if (draw.type === 'rayFan') {
+      for (let i = 0; i < draw.count; i++) {
+        const angle = draw.start+i*draw.interval, c = Math.cos(angle), s = Math.sin(angle);
+        const axis = draw.u.map((x,j) => x*c+draw.v[j]*s);
+        stroke(out,view(step(draw.origin,axis,draw.inner)),view(step(draw.origin,axis,draw.outer)));
+      }
+    }
     if (!['polygon','grid','axes'].includes(draw.type)) result.push(out);
     return result;
   }
 
-  return Object.freeze({ color, command, geometry, projector });
+  return Object.freeze({ color, command, falloff, geometry, projector });
 })();
 if (typeof module !== 'undefined') module.exports = DrawingPrimitives;

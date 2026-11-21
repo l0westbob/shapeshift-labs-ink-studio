@@ -33,6 +33,62 @@ directly from Node's typed arrays for floating-point coordinates.
 
 With [mixed-resolution compositing](mixed-resolution.md), the color export uses the output grid and diagnostic passes retain their own `w` and `h` on the world grid.
 
+## Deep compositing
+
+Use `render(world, { deepComposite: true })` to retain four fragments per
+art pixel in the headless renderer. The scene composites splats and world
+sprites at their sampled surface depths and evaluates the intervening media
+at each depth. Read a layer with `graphDeepLayer(frame, options)` in Node,
+or pass `scene.render.frame` into `scene.deepLayer` in a recipe graph.
+
+```js
+const frame = ink.render(world, {
+  w: 256, h: 144, px: 1,
+  deepComposite: { layers: 8, reflections: ['basin'] }
+});
+const lettering = ink.graphDeepLayer(frame, { view: 'transmitted', kind: 'sprite' });
+const reflected = ink.graphDeepLayer(frame, {
+  view: 'reflected', plane: 'basin', object: 'buoy'
+});
+```
+
+| View | Address |
+| --- | --- |
+| `camera` | The main camera ray. Uses front-to-back order and includes retained fragments with zero visible coverage. |
+| `transmitted` | Behind the first visible glass pane. Uses the dominant valid refraction tap where the compositor bends the view. |
+| `reflection` | The native mirrored camera grid for a named planar capture. |
+| `reflected` | The main camera grid where water samples the named plane. Uses the strongest contributing sample of the reflection filter and the water's visibility. |
+
+Use a zero-based `rank` after filtering by optional `kind`, `object`,
+and `material`. Kinds are `splat`, `glass`, `sprite`, and `ink` for
+cutaway ink and legacy edge sprites. Baked drawing strokes retain their
+splat object and material identities. Select a named ID or its number.
+A missing fragment yields zero coverage and an invalid sample.
+
+| Output | Data |
+| --- | --- |
+| `value`, `surface` | Straight RGBA8 in the selected view. `value` includes the medium between that sample and its camera. `surface` contains the shaded fragment before the medium. Both carry the fragment's own alpha. |
+| `mask`, `valid` | Floating-point visible coverage in [0, 1] and a byte validity mask. Visibility includes nearer layers and the optical receiver in transmitted and reflected views. |
+| `depth` | Camera-axis depth in world units. An empty sample uses `emptyDepth`, defaulting to 1e9. Reflected samples retain the mirrored camera's depth. |
+| `ids` | Four unsigned channels for kind, one-based splat index, object ID, and material ID. The report includes the kind and label tables. |
+| `scatter`, `transmission` | RGB in-scattering and transmission accumulated to the selected fragment. The media stage evaluates each channel as `scatter + transmission * surface` before color quantization. |
+
+Capture is opt-in. Set `layers` from 1 to 16 and request up to four
+`reflections` by name. The main image and rendered reflection captures
+share a two-million-slot limit. The usual `fragmentBudget` also applies to
+the sort. The retained-layer cap leaves final compositing intact.
+`frame.deep.count` reports the number of layers encountered per pixel,
+including layers beyond the cap. Coincident contributions from the same
+named object and material share a layer. Set `coalesce: false` to retain
+those contributions individually. Color is captured at the fragment stage
+ahead of final screen effects. With mixed resolutions, the capture remains
+on its native art grid.
+
+The headless renderer provides deep scene captures. A browser graph can
+consume the resulting rasters as regular input slots. Run
+`node examples/deep-composite.cjs tide-archive.html` for a preview of the
+transmission, reflection and fog rasters from one scene.
+
 ## Layered exports
 
 `ink-studio export-layers <scene> --t 0,1,2 --out directory` writes numbered image sequences and a `layers.json` manifest. Use the usual camera and render options and set `--w` and `--h` for the output size. Use `--px1` to keep the renderer's native color grid. A single frame at time zero is the default. Use `--from`, `--to`, and `--n` for evenly spaced samples.
@@ -133,9 +189,67 @@ const ink = {
 
 Use `--ink file.json` to apply a standalone ink profile through the CLI or `--ink off` to disable selective ink. The [aqueduct courier scene](../examples/selective-ink.js) shows a colored character contour in front of stonework that loses its ink over distance.
 
+Use an [indexed paint mask](pixel-stamps.md#marking-a-surface) to gate a
+line by rest-space marks. `silhouette.contrast` selects a dark or light
+swatch using neighboring background pixels.
+
 ```sh
 node cli/ink-studio.js render examples/selective-ink.js --w 318 --h 160 --px 1 --out aqueduct.png
 ```
+
+### Hold and lose edges by shot
+
+Set a line's `strength` from 0 to 1 to control how much ink it adds. Add
+`lost` to blend the edge itself into the adjacent rendered colour. Use the
+same controls on silhouettes, creases, and material boundaries.
+
+```js
+const ink = {
+  occlusionSilhouettes: true,
+  silhouette: { color: '#2b3144', strength: .8 },
+  targets: [
+    { select: { object: 'courier' }, silhouette: {
+      lost: { lightness: [.24, .42], contrast: [.055, .24] }
+    } },
+    { select: { surface: 'courier-face' }, silhouette: {
+      color: '#cc9488', strength: 1, lost: false
+    } },
+    { select: { surface: 'courier-hand' }, silhouette: {
+      color: '#f4c49a', strength: 1, lost: false
+    } },
+    { select: { tag: 'distance' }, silhouette: {
+      lost: { strength: .9, contrast: [.05, .24], distance: { near: 10, far: 17 } }
+    } }
+  ]
+};
+```
+
+- `lost.strength` controls the blend and defaults to 1. Use `lost: false`
+  on a more specific target to restore its edge. `strength: 0` on the
+  line makes the blend its only colour operation.
+- `lightness: [low, high]` limits the blend to shadows on the edge.
+  `contrast: [low, high]` limits it by the lightness difference across
+  the edge. Each gate is full through `low` and feathers to zero at
+  `high`. Lightness and contrast use the rendered colour in 0–1.
+- `lost.distance: { near, far }` introduces the blend between the
+  specified camera distances. All supplied gates multiply together.
+  The line's own `distance` range still controls its ink contribution.
+
+The headless renderer samples visible neighbours on the native art grid,
+with depth and ownership deciding which edge each neighbour belongs to.
+Merge samples use non-emissive surfaces and visible backgrounds.
+Reserved palettes retain precedence. Palette pixel inspection reports the
+neighbour's colour and blend weight as `lost-silhouette`, `lost-crease`,
+or `lost-boundary`.
+
+```sh
+node cli/ink-studio.js render examples/edge-hierarchy.js --w 320 --h 168 --px 1 --out last-signal.png
+```
+
+The [last signal scene](../examples/edge-hierarchy.js) keeps the face and
+lantern hand distinct while letting the cloak and far aqueduct soften.
+Author the profile in `finish.look.ink` or override it for a shot with
+`--ink file.json`. Use `--ink off` to bypass selective ink.
 
 See [Stable dithering and camera review](stable-dithering.md) for per-object anchors and native-resolution pan and orbit clips. Camera snapping applies to orthographic projection. World-space dithering samples at the visible surface. Object-space dithering maps the sample back to the splat's rest frame, using the rig transform where available. Screen-space dithering follows the art grid. Use `--ortho --snap`, `--dither-space screen|world|object`, and `--resolve native|coverage|clusters`. The coverage and cluster modes render four subpixels per art pixel and can protect named objects, materials, glints and small emissive details.
 

@@ -2,14 +2,51 @@
 (function(P) {
   const W=P.rasterWarp, {prepareTime}=P.rasterWarpSupport;
   const options={type:'record',default:{}}, mapped={value:'raster',field:'raster'};
+  const confidence={type:'any',default:null};
   W.operations=Object.freeze({
     'warp.field':{
       inputs:{width:'number',height:'number',matrix:{type:'array<vec3>',default:[[1,0,0],[0,1,0]]}},
       outputs:{value:'raster'},run(input){return {value:W.field(input)};}
     },
+    'warp.address':{
+      description:'Compose rotation, zoom, polar tunnel and Copper row transforms into one UV field.',
+      inputs:{width:'number',height:'number',transforms:{type:'array<record>',default:[]},options},
+      outputs:{value:'raster'},time:true,
+      run({width,height,transforms,options},{time}){return {value:W.addressField({width,height,transforms,time:options.time ?? time})};}
+    },
+    'warp.compose':{
+      description:'Chain authored or generated UV fields before sampling the source image.',
+      inputs:{fields:'array<raster>',options},outputs:{value:'raster'},
+      run({fields,options}){return {value:W.composeFields(fields,options)};}
+    },
     'warp.sample':{
       inputs:{source:'raster',field:'raster',options},outputs:{value:'raster'},
       run({source,field,options}){return {value:W.sample(source,field,options)};}
+    },
+    'warp.scanlines':{
+      description:'Deform source rows while preserving a registered pivot, named anchors and sprite maps.',
+      inputs:{source:'raster',anchors:options,maps:options,options},
+      outputs:{...mapped,anchors:'record',maps:'record'},time:true,
+      run({source,anchors,maps,options},{time}){return W.scanlines(source,{time,...options,anchors,maps});}
+    },
+    'warp.opticalFlow':{
+      inputs:{before:'raster',after:'raster',options},outputs:{value:'raster',confidence:'raster'},
+      run({before,after,options}){return W.opticalFlow(before,after,options);}
+    },
+    'warp.cameraMotion':{
+      inputs:{motion:'raster',confidence,mask:{type:'any',default:null},options},
+      outputs:{value:'raster',camera:'raster',field:'raster',inliers:'raster',transform:'record'},
+      run({motion,confidence,mask,options}){
+        return W.cameraMotion(motion,{...options,confidence:confidence ?? options.confidence,mask:mask ?? options.mask});
+      }
+    },
+    'warp.flow':{
+      inputs:{source:'raster',motion:'raster',confidence,options},outputs:mapped,
+      run({source,motion,confidence,options}){return W.flow(source,motion,{...options,confidence:confidence ?? options.confidence});}
+    },
+    'warp.flowPoints':{
+      inputs:{points:'array<vec2>',motion:'raster',confidence,options},outputs:{value:'array<vec2>'},
+      run({points,motion,confidence,options}){return {value:W.flowPoints(points,motion,{...options,confidence:confidence ?? options.confidence})};}
     },
     'warp.mesh':{
       inputs:{source:'raster',control:'record',options},outputs:mapped,
@@ -40,15 +77,20 @@
       run({source,options}){return W.frames(source,options);}
     },
     'warp.timeRemap':{
-      inputs:{frames:'array<raster>',map:'raster',options},outputs:{value:'raster'},time:true,
+      inputs:{frames:{type:'array<raster>',default:[]},history:{type:'any',default:null},map:'raster',
+        mask:{type:'any',default:null},valid:{type:'any',default:null},options},outputs:{value:'raster'},time:true,
       instantiate(){
-        let prepared,priorFrames,priorOptions;
-        return ({frames,map,options},{time})=>{
-          if (!prepared || priorFrames!==frames || priorOptions!==options) {
-            prepared=prepareTime(frames,options);
-            priorFrames=frames; priorOptions=options;
+        let prepared,priorSource,priorOptions,cache;
+        return ({frames,history,map,mask,valid,options},{time})=>{
+          if (history!=null && frames.length) throw new TypeError('Time remap needs frames or bank history');
+          const source=history ?? frames;
+          if (!prepared || priorSource!==source || priorOptions!==options) {
+            if (priorOptions!==options) cache=new WeakMap();
+            // Bank snapshots share immutable frames as the window advances.
+            prepared=prepareTime(source,options,history!=null && Object.isFrozen(history) ? cache : undefined);
+            priorSource=source; priorOptions=options;
           }
-          return {value:prepared(map,time)};
+          return {value:prepared(map,time,{mask,valid})};
         };
       }
     },

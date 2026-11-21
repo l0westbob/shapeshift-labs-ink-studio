@@ -7,6 +7,7 @@
   K.celestialTracks = CelestialTracks;
   K.clouds = CloudField;
   K.reflection = {
+    detail: ReflectionDetail,
     plane: SceneOptics.plane,
     probe: ReflectionProbes.probe,
     reflectedView: SceneOptics.reflectedView,

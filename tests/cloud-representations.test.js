@@ -3,6 +3,7 @@ const test=require('node:test');
 const ink=require('..');
 const { KIT:K, makeBuilder, makeSculpt }=ink.load();
 const { traceMedia }=require('../cli/scene-optics.js');
+const { compile:cutouts }=require('../src/volume-cutouts.js');
 const shape={
   bounds:{min:[-3,-4],max:[3,4]}, height:0, thickness:4, steps:28, opacity:.94,
   color:'#ccd5e5', resolution:[40,48],
@@ -101,5 +102,71 @@ test('Ink composites the cloud between near and far splats in both camera modes'
     }
     const transparent=ink.render(world,{...options,transparent:true});
     assert(transparent.alpha.some(a=>a>0 && a<240));
+  }
+});
+
+test('bounded cloud self-shadows follow the sun without changing extinction or baked views', () => {
+  const field = {
+    ...shape, bounds:{min:[-4,-4],max:[4,4]}, coverage:()=>1, color:'#20243d', velocity:[.8,.1],
+    lighting:{ ambient:.16,strength:.85,rim:0 }, lod:{resolution:24}
+  };
+  const selfShadows={steps:6,distance:4};
+  const cloud = K.clouds.compile({...field,selfShadows});
+  function trace({ x=0, direction=[0,.65,-.76], mode='volume', enabled, time=0, stop=100,
+    source=cloud, flash, cutout }={}) {
+    const eye=[x+time*.8,0,9+time*.1], view=source.frame(time,null,direction,undefined,mode,flash,cutout,undefined,enabled).view(eye);
+    const counters={cloudTraces:0,cloudSamples:0,cloudShadowRays:0,cloudShadowSamples:0};
+    return { sample:view.trace(eye,[0,0,-1],0,stop,[],counters), counters };
+  }
+  const lit=trace({enabled:false}), shadowed=trace();
+  assert(shadowed.sample[0] < lit.sample[0]-.09);
+  assert.equal(shadowed.sample[3],lit.sample[3]);
+  assert.equal(shadowed.counters.cloudSamples,lit.counters.cloudSamples);
+  assert(shadowed.counters.cloudShadowRays > 0 && shadowed.counters.cloudShadowRays <= shadowed.counters.cloudSamples);
+  assert(shadowed.counters.cloudShadowSamples > 0 &&
+    shadowed.counters.cloudShadowSamples <= selfShadows.steps*shadowed.counters.cloudShadowRays);
+  assert.deepEqual(lit,trace({source:K.clouds.compile(field)}));
+  assert.deepEqual(lit,trace({enabled:true,source:K.clouds.compile({...field,selfShadows:{strength:0}})}));
+  assert(trace({enabled:true,source:K.clouds.compile(field)}).counters.cloudShadowSamples > 0);
+  const short=trace({source:K.clouds.compile({...field,selfShadows:{...selfShadows,distance:.1}})});
+  assert(short.sample[0] > shadowed.sample[0]+.08 && short.sample[0] < lit.sample[0]);
+  for (const side of [-1,1]) {
+    const direction=[side*.96,.27,0];
+    const near=trace({x:side*3.4,direction}), far=trace({x:-side*3.4,direction});
+    assert(near.sample[0] > far.sample[0]+.06);
+    assert.equal(near.sample[3],far.sample[3]);
+  }
+  trace({time:4}).sample.forEach((channel,i)=>close(channel,shadowed.sample[i]));
+  assert.deepEqual(trace({stop:4}).sample,[0,0,0,1]);
+  assert.equal(trace({stop:4}).counters.cloudShadowSamples,0);
+  assert.deepEqual(trace({direction:[0,-1,0]}),trace({direction:[0,-1,0],enabled:false}));
+  for (const mode of ['card','impostor']) assert.deepEqual(trace({mode}),trace({mode,enabled:false}));
+  const gap=trace({cutout:cutouts({zones:[{type:'box', min:[-4,.0001,-4], max:[4,2,4],
+    affects:'cloud',feather:0}]}).frame().cloud});
+  assert.deepEqual(gap.sample,lit.sample);
+  assert.equal(gap.counters.cloudShadowSamples,0);
+  const flash=()=>[.1,.2,.3];
+  trace({flash}).sample.slice(0,3).forEach((value,i)=>{
+    close(value-shadowed.sample[i],(1-shadowed.sample[3])*flash()[i]);
+  });
+  assert.throws(()=>K.clouds.compile({...field,selfShadows:{steps:17}}),/1–16/);
+  assert.throws(()=>K.clouds.compile({...field,selfShadows:{distance:Infinity}}),/distance/);
+  assert.throws(()=>K.clouds.compile({...field,repeat:true,selfShadows:true}),/nonrepeating/);
+});
+
+test('cloud self-shadow render overrides and counters work in both camera projections', () => {
+  const cloudField=K.clouds.asset({...shape,color:'#253049',lighting:{ambient:.1,strength:.9,rim:0},
+    selfShadows:{steps:4,distance:4}},{resolution:24});
+  const world={...renderScene(),cloudField};
+  for (const ortho of [false,true]) {
+    const options={ortho,w:64,h:48,px:1,raw:true,renderStats:true,cloudRepresentation:'volume',
+      passes:['coverage','fogTransmittance','sky']};
+    const on=ink.render(world,options);
+    const off=ink.render(world,{...options,cloudSelfShadows:false});
+    assert.notDeepEqual(on.passes.sky,off.passes.sky);
+    assert.deepEqual(on.passes.coverage,off.passes.coverage);
+    assert.deepEqual(on.passes.fogTransmittance,off.passes.fogTransmittance);
+    assert(on.renderStats.volume.cloudShadowSamples > 0);
+    assert.equal(off.renderStats.volume.cloudShadowSamples,0);
   }
 });

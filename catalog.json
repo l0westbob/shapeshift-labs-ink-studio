@@ -1459,6 +1459,168 @@
       ]
     },
     {
+      "id": "kit.surfaceBrush",
+      "kind": "api",
+      "status": "ready",
+      "title": "Paint native surfaces with attached brush strokes",
+      "what": "Gouache, bristle, wash and ink profiles follow curvature, contours, axes or authored vector fields. Signed surface frames survive animation, deformation, copying, reconstruction, afterimages and CPU/WebGL rendering.",
+      "use": "S.ball([0,0,0], 1, {r:[2,3,4], brush:{style:'gouache', direction:'curvature'}})",
+      "where": "src/surface-brush.js, src/kit/p45-surface-brush.js, src/sculpt.js",
+      "example": "docs/surface-brush.md, examples/surface-brush.html",
+      "tags": [
+        "splat",
+        "paint",
+        "brush",
+        "surface",
+        "animation",
+        "render"
+      ]
+    },
+    {
+      "id": "kit.engraving",
+      "kind": "api",
+      "status": "ready",
+      "title": "Engrave native surfaces using nested tonal art maps",
+      "what": "Light-responsive hatching, cross engraving, woodcut and stippling over retained native-splat charts. Shared cached tone/scale maps follow bones, deformation, reconstruction, instances and afterimages in CPU and WebGL renderers.",
+      "use": "K.engraving.bind(world, 'all', {style:'engraving', projection:'triplanar'})",
+      "where": "src/engraving.js, src/webgl/engraving.mjs",
+      "example": "docs/engraving.md, examples/engraving.html",
+      "tags": [
+        "splat",
+        "engraving",
+        "hatching",
+        "tonal-map",
+        "render",
+        "animation"
+      ]
+    },
+    {
+      "id": "kit.mosaic",
+      "kind": "api",
+      "status": "ready",
+      "title": "Fitted polygon mosaics and stained-glass surfaces",
+      "what": "Authored, Voronoi and existing tiling cells become native triangle splats with real seams, bevels, thickness, shared material controls and optical transmission. Curved carriers, exact sampled attachment queries, provenance and native animation share one footprint profile.",
+      "use": "K.mosaic.emit(B, K.mosaic.mesh(cells, {gap:.02, bevel:.01, controls:{transmission:.6}}))",
+      "where": "src/kit/p47-mosaic-surfaces.js",
+      "example": "docs/mosaic-surfaces.md, examples/mosaic-surfaces.html",
+      "tags": [
+        "mosaic",
+        "stained-glass",
+        "splat",
+        "surface",
+        "tiling",
+        "optics",
+        "animation"
+      ]
+    },
+    {
+      "id": "kit.screenPrint",
+      "kind": "api",
+      "status": "ready",
+      "title": "Halftone and layered screen printing on native surfaces",
+      "what": "Area-calibrated circle, diamond and line screens, separately registered ink plates, mono/duotone/CMYK recipes, paper grain, overprint and knockout. Surface-attached or art-pixel coordinates share existing retained charts, native animation and CPU/WebGL sampling.",
+      "use": "K.screenPrint.bind(world, 'all', {...K.screenPrint.preset('duotone'), spacing:.2})",
+      "where": "src/screen-print.js, src/kit/p49-screen-print.js",
+      "example": "docs/screen-print.md, examples/screen-print.html",
+      "tags": [
+        "halftone",
+        "screen-print",
+        "color-separation",
+        "splat",
+        "render",
+        "animation"
+      ]
+    },
+    {
+      "id": "kit.stipple",
+      "kind": "api",
+      "status": "ready",
+      "title": "Adaptive stippling and pointillist surface marks",
+      "what": "Deterministic variable-radius native mark placement guided by silhouettes, curvature, lighting and focal regions. Bounded spatial selection, optional opaque support and palette pigment mixtures retain provenance and native animation.",
+      "use": "S.stipple = {views:[[0,0,1]], fine:.6, coarse:2.5}; S.bake()",
+      "where": "src/stippling.js, src/sculpt.js",
+      "example": "docs/stippling.md, examples/stippling.html",
+      "tags": [
+        "stippling",
+        "pointillism",
+        "sampling",
+        "splat",
+        "render"
+      ]
+    },
+    {
+      "id": "kit.contour",
+      "what": "Trace heightfields, SDF cross-sections and curved-surface scalar isolines into native ribbons; elevation materials, physical dashes and materialisation carriers.",
+      "where": "src/kit/p51-contour-ribbons.js",
+      "example": "docs/contour-ribbons.md, examples/contour-ribbons.html",
+      "tags": [
+        "contour",
+        "topography",
+        "ribbon",
+        "sdf",
+        "splat",
+        "materialisation"
+      ],
+      "title": "Contour ribbons and topographic rendering",
+      "kind": "api",
+      "status": "ready",
+      "use": "K.contour.heightfield / slices / surface / ribbons / draw / bands"
+    },
+    {
+      "id": "kit.facets",
+      "kind": "api",
+      "status": "ready",
+      "title": "Faceted native surface reconstruction",
+      "what": "Optional sized, oriented, flat-shaded SDF patches with per-object colour grouping, exact native triangle silhouettes and graph tooling.",
+      "use": "K.facets.fromSdf / fromMesh / appearance / draw / toMesh; sdf.facets; scene.object.options.facets",
+      "where": "src/kit/p76-faceted-surfaces.js, src/kit/p46-native-patches.js",
+      "example": "docs/faceted-surfaces.md, examples/faceted-surfaces.html, examples/faceted-surfaces.json",
+      "tags": [
+        "facets",
+        "low-poly",
+        "sdf",
+        "splat",
+        "flat-shading",
+        "graph"
+      ]
+    },
+    {
+      "id": "kit.paper",
+      "kind": "api",
+      "status": "ready",
+      "title": "Layered cut paper and relief",
+      "what": "Physical cutout sheets with holes, thickness, depth, coloured edges, SDF/ray queries, native bodies and optional crisp front paint with baked soft shadows.",
+      "use": "K.paper.stack / cut / relief / draw / world / shadows / raycast / sdf",
+      "where": "src/kit/p78-paper-relief.js",
+      "example": "docs/paper-relief.md, examples/paper-relief.html, examples/paper-relief.json",
+      "tags": [
+        "paper",
+        "cutout",
+        "relief",
+        "layers",
+        "shadows",
+        "sdf",
+        "splat"
+      ]
+    },
+    {
+      "id": "render.voxelSurface",
+      "kind": "api",
+      "status": "ready",
+      "title": "Voxel and relief-pixel surfaces",
+      "what": "Optionally sample signed fields into cubes, continuous columns, stepped slabs or shallow relief pixels. Native hard faces, hidden-face removal, per-block GPU transforms and existing destruction bindings.",
+      "use": "K.voxelSurface.fromSdf(sdf, {bounds, mode: \"cubes\", size: .2})",
+      "where": "src/kit/p80-voxel-surface.js",
+      "example": "examples/voxel-surface.html",
+      "tags": [
+        "voxel",
+        "relief",
+        "blocks",
+        "destruction",
+        "optional"
+      ]
+    },
+    {
       "id": "agent.ink_docs",
       "kind": "agent",
       "status": "ready",
@@ -2044,9 +2206,9 @@
       "id": "cli.shot",
       "kind": "cli",
       "status": "ready",
-      "title": "Verify and recreate the review render",
-      "what": "verify and recreate the review render",
-      "use": "ink-studio shot replay <shot.json> --out <image.png> [--root project]",
+      "title": "Verify the saved render",
+      "what": "verify the saved render",
+      "use": "ink-studio shot replay <shot-or-bundle.json> --out <image.png> [--root project | --shot ID]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",
@@ -2321,6 +2483,34 @@
       "generated": true
     },
     {
+      "id": "cli.splat-footprints",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio splat-footprints",
+      "what": "See ink-studio help.",
+      "use": "ink-studio splat-footprints <shape|profile.json> [--rotation n --stretch x,y --softness n --point x,y --preview file.png --out report.json]  inspect native splat silhouettes",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.render-grid",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio render-grid",
+      "what": "See ink-studio help.",
+      "use": "ink-studio render-grid <hex|triangle|diamond|settings.json> [--size 8 --point x,y --bounds x,y,w,h --out report.json]  inspect tessellating cells",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
       "id": "cli.render-graph",
       "kind": "cli",
       "status": "ready",
@@ -2335,12 +2525,26 @@
       "generated": true
     },
     {
+      "id": "cli.music",
+      "kind": "cli",
+      "status": "ready",
+      "title": "Compare audiovisual phrase variations",
+      "what": "compare audiovisual phrase variations",
+      "use": "ink-studio music audition <recipe.json> --out directory",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
       "id": "cli.graph",
       "kind": "cli",
       "status": "ready",
-      "title": "Validate and describe a headless graph",
-      "what": "validate and describe a headless graph",
-      "use": "ink-studio graph validate|plan <project.json> [--inputs values.json]",
+      "title": "List registered graph operations and their ports",
+      "what": "list registered graph operations and their ports",
+      "use": "ink-studio graph nodes [--json]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",
@@ -2411,6 +2615,20 @@
       "title": "ink-studio camera-rig",
       "what": "See ink-studio help.",
       "use": "ink-studio camera-rig <scene or world> [--at seconds --camera-shot ID --out report.json]  sample a shot and its clearance",
+      "where": "cli/ink-studio.js",
+      "tags": [
+        "cli",
+        "agent: ink_cli"
+      ],
+      "generated": true
+    },
+    {
+      "id": "cli.take",
+      "kind": "cli",
+      "status": "ready",
+      "title": "ink-studio take",
+      "what": "See ink-studio help.",
+      "use": "ink-studio take sample <take.json> --frame N [--resume checkpoint.json --checkpoint file.json --out report.json]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",
@@ -2534,9 +2752,9 @@
       "id": "cli.export-scene",
       "kind": "cli",
       "status": "ready",
-      "title": "Publish one scene in multiple formats",
-      "what": "publish one scene in multiple formats",
-      "use": "ink-studio export-scene <id> --out directory [--formats still,loop,replay,embed]",
+      "title": "ink-studio export-scene",
+      "what": "See ink-studio help.",
+      "use": "ink-studio export-scene <scene|world|take> --out directory [--formats still,loop,replay,embed]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",
@@ -2564,7 +2782,7 @@
       "status": "ready",
       "title": "ink-studio project",
       "what": "See ink-studio help.",
-      "use": "ink-studio project pack <scene.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]",
+      "use": "ink-studio project pack <scene-or-take.json> --out <bundle.json> [--root directory --revision n --asset-pack file --paint file --attachments file]",
       "where": "cli/ink-studio.js",
       "tags": [
         "cli",
