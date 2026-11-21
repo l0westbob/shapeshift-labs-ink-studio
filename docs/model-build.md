@@ -250,7 +250,11 @@ transforms of the default scene. Every triangle primitive becomes a part:
 
 `colourSpace` says how textures store colour: glTF says sRGB (the default), but trellis2mlx writes TRELLIS.2's linear
 albedo straight into its PNGs, which reads far too dark as sRGB, so pass `"linear"` for its output. `yaw` turns the model
-about the up axis first (radians), for generators that face their output another way.
+about the up axis first (radians), for generators that face their output another way. `"yaw": "auto"` with `reference`
+(the picture the generator was given) turns it for you: the model's silhouette, seen from the generated camera at a
+range of turns and heights, is matched against the picture's silhouette (scaled to the same area, centred on the centre
+of mass), first in 15 degree steps, then in 3. It takes a few seconds; the result reports the turn and how well the
+silhouettes overlap, and warns below 60%.
 
 Textures must be PNG: trellis2mlx, trimesh and Blender's exporter write PNG by default. Draco or meshopt compressed
 meshes and JPEG, WebP or KTX2 textures are refused with a hint to export again. Open meshes (holes left by a generator)
@@ -263,16 +267,16 @@ shaded pictures on a transparent background; flat vector art tends to come back 
 DINOv3 encoder).
 
 ```bash
-ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/studio/out/lantern","size":2,"colourSpace":"linear"}'
+ink-agent call model_build '{"source":"/abs/generated/lantern.glb","out":"/abs/studio/out/lantern","size":2,"colourSpace":"linear","yaw":"auto","reference":"/abs/generated/lantern.png"}'
 ```
 
 [examples/glb/tank-trellis.glb](../examples/glb/tank-trellis.glb) is a trellis2mlx preview (512, 8 steps, 68 s on an M5
 Ultra, 18 GB peak) made from [a render of the three.js tank](../examples/glb/tank-trellis-input.png); it is the TRELLIS.2
-entry in the method comparison (`colourSpace: "linear"`, `yaw: -1.5708`). For pixel art at the default `art` of 128, the 512 preview is enough: a
+entry in the method comparison (`colourSpace: "linear"`, `yaw: "auto"`). For pixel art at the default `art` of 128, the 512 preview is enough: a
 768 cascade with 4K maps (about 2 minutes, 33 to 41 GB peak) gives finer geometry that the sprite cannot show, and its
 paler colours drift towards khaki. At `art` 256 the detail run pays off: noise 0.144 against 0.185 for the preview,
-close to the hand-written three.js tank's 0.135. TRELLIS.2 does not face its output the same way every time, so check
-`yaw` per model.
+close to the hand-written three.js tank's 0.135. TRELLIS.2 does not face its output the same way every time, so use
+`yaw: "auto"` with the input picture.
 
 ## Depth maps (layered depth)
 

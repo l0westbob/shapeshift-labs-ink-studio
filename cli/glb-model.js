@@ -13,7 +13,9 @@
    averaged over its triangles and over half an art pixel around it, so detail finer than a pixel (a 4K map on a dense
    generated mesh) does not come back as speckle. Textures must be PNG (trellis2mlx, trimesh
    and Blender write PNG by default); compressed meshes (Draco, meshopt) and other image formats are refused with a hint.
-   colourSpace "linear" reads textures that hold linear values (trellis2mlx output); yaw turns the model about Y. */
+   colourSpace "linear" reads textures that hold linear values (trellis2mlx output); yaw turns the model about Y, and yaw
+   "auto" with a reference picture (the one an image-to-3D generator was given) picks the turn whose silhouette, seen
+   from the generated camera, matches the picture best. */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -297,6 +299,119 @@ function smoothColours(pos, colours, weight, radius) {
   return out;
 }
 
+/* --- orientation from the input picture ------------------------------------------------------------------------------- */
+
+const MASK = 96;
+
+/* the picture's silhouette (alpha, else everything unlike the corner colour) as a mask at most MASK cells across */
+function pictureMask(file) {
+  const { w, h, data, max } = require('./png.js').raster(fs.readFileSync(file));
+  const at = (x, y, k) => data[(y * w + x) * 4 + k] / max;
+  let alpha = false;
+  for (let i = 3; i < data.length && !alpha; i += 4) alpha = data[i] < max;
+  const corner = [0, 1, 2].map(k => at(0, 0, k));
+  const filled = (x, y) => (alpha ? at(x, y, 3) > 0.5 : [0, 1, 2].reduce((d, k) => d + (at(x, y, k) - corner[k]) ** 2, 0) > 0.01);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (filled(x, y)) (x0 = Math.min(x0, x)), (y0 = Math.min(y0, y)), (x1 = Math.max(x1, x)), (y1 = Math.max(y1, y));
+  if (x1 < 0) throw new Error('The reference picture is empty: give it a transparent background or a plain one');
+  const step = Math.max(x1 - x0 + 1, y1 - y0 + 1) / MASK, mw = Math.ceil((x1 - x0 + 1) / step), mh = Math.ceil((y1 - y0 + 1) / step);
+  const cells = new Uint8Array(mw * mh);
+  for (let y = 0; y < mh; y++)
+    for (let x = 0; x < mw; x++) cells[y * mw + x] = filled(Math.min(w - 1, Math.floor(x0 + (x + 0.5) * step)), Math.min(h - 1, Math.floor(y0 + (y + 0.5) * step))) ? 1 : 0;
+  return { w: mw, h: mh, cells };
+}
+
+/* the model turned by yaw (as partsOf turns it) seen from a camera at camYaw and pitch, orthographic, as a mask */
+function modelMask(parts, yaw, camYaw, pitch) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const d = [Math.cos(pitch) * Math.sin(camYaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(camYaw)];
+  /* the camera looks along -d; right is horizontal, up = d x right */
+  const right = [d[2], 0, -d[0]].map(v => v / Math.hypot(d[0], d[2]));
+  const up = [d[1] * right[2] - d[2] * right[1], d[2] * right[0] - d[0] * right[2], d[0] * right[1] - d[1] * right[0]];
+  const projected = parts.map(({ pos }) => {
+    const uv = new Float32Array((pos.length / 3) * 2);
+    for (let i = 0; i < pos.length / 3; i++) {
+      const [x, y, z] = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]], X = c * x + s * z, Z = -s * x + c * z;
+      uv[i * 2] = X * right[0] + y * right[1] + Z * right[2];
+      uv[i * 2 + 1] = -(X * up[0] + y * up[1] + Z * up[2]);
+    }
+    return uv;
+  });
+  let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+  for (const uv of projected) for (let i = 0; i < uv.length; i += 2) for (let k = 0; k < 2; k++) (lo[k] = Math.min(lo[k], uv[i + k])), (hi[k] = Math.max(hi[k], uv[i + k]));
+  const scale = (MASK - 1) / Math.max(hi[0] - lo[0], hi[1] - lo[1]), w = Math.ceil((hi[0] - lo[0]) * scale) + 1, h = Math.ceil((hi[1] - lo[1]) * scale) + 1;
+  const cells = new Uint8Array(w * h);
+  parts.forEach(({ index }, p) => {
+    const uv = projected[p], px = i => (uv[i * 2] - lo[0]) * scale, py = i => (uv[i * 2 + 1] - lo[1]) * scale;
+    for (let t = 0; t < index.length; t += 3) {
+      const ax = px(index[t]), ay = py(index[t]), bx = px(index[t + 1]), by = py(index[t + 1]), cx = px(index[t + 2]), cy = py(index[t + 2]);
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx))), x1 = Math.min(w - 1, Math.floor(Math.max(ax, bx, cx)));
+      const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy))), y1 = Math.min(h - 1, Math.floor(Math.max(ay, by, cy)));
+      if (x0 === x1 && y0 === y1) {
+        cells[y0 * w + x0] = 1;
+        continue;
+      }
+      const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+      if (Math.abs(area) < 1e-9) continue;
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++) {
+          const qx = x + 0.5, qy = y + 0.5;
+          const w0 = ((bx - qx) * (cy - qy) - (cx - qx) * (by - qy)) / area, w1 = ((cx - qx) * (ay - qy) - (ax - qx) * (cy - qy)) / area;
+          if (w0 >= -1e-6 && w1 >= -1e-6 && w0 + w1 <= 1 + 1e-6) cells[y * w + x] = 1;
+        }
+    }
+  });
+  return { w, h, cells };
+}
+
+/* overlap of two silhouettes once both have the same area and share their centre of mass (intersection over union) */
+function overlap(a, b) {
+  const stats = m => {
+    let n = 0, sx = 0, sy = 0;
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.cells[y * m.w + x]) (n++, (sx += x + 0.5), (sy += y + 0.5));
+    return { n, cx: sx / n, cy: sy / n };
+  };
+  const sa = stats(a), sb = stats(b);
+  if (!sa.n || !sb.n) return 0;
+  const k = Math.sqrt(sb.n / sa.n);
+  let both = 0;
+  for (let y = 0; y < a.h; y++)
+    for (let x = 0; x < a.w; x++) {
+      if (!a.cells[y * a.w + x]) continue;
+      const bx = Math.floor(sb.cx + (x + 0.5 - sa.cx) * k), by = Math.floor(sb.cy + (y + 0.5 - sa.cy) * k);
+      if (bx >= 0 && by >= 0 && bx < b.w && by < b.h && b.cells[by * b.w + bx]) both++;
+    }
+  return both / (2 * sa.n - both);
+}
+
+/* the yaw that makes the model, seen from the generated camera (yaw 0.6), look most like the picture it was made from.
+   Pitch is searched too, since the picture's camera height is unknown. Coarse 15 degree steps, then 3 degrees around
+   the best. */
+function orientTo(parts, reference, camYaw = 0.6) {
+  const target = pictureMask(reference), pitches = [0.1, 0.3, 0.5, 0.7];
+  let best = { score: -1 };
+  const tryYaw = (yaw, pitch) => {
+    const score = overlap(target, modelMask(parts, yaw, camYaw, pitch));
+    if (score > best.score) best = { yaw, pitch, score };
+  };
+  for (let i = 0; i < 24; i++) for (const pitch of pitches) tryYaw((i * Math.PI) / 12, pitch);
+  const coarse = best;
+  for (let d = -12; d <= 12; d += 3) if (d) for (const pitch of [coarse.pitch - 0.1, coarse.pitch, coarse.pitch + 0.1]) tryYaw(coarse.yaw + (d * Math.PI) / 180, pitch);
+  const yaw = Math.atan2(Math.sin(best.yaw), Math.cos(best.yaw));
+  return { yaw: Math.round(yaw * 1e4) / 1e4, pitch: Math.round(best.pitch * 100) / 100, overlap: Math.round(best.score * 1000) / 1000 };
+}
+
+/* turns parts about the up axis in place, the same way partsOf's yaw does */
+function turn(parts, yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  for (const { pos } of parts)
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i], z = pos[i + 2];
+      pos[i] = c * x + s * z;
+      pos[i + 2] = -s * x + c * z;
+    }
+}
+
 /* --- primitives to parts ----------------------------------------------------------------------------------------------- */
 
 const MODES = { 4: 'triangles', 5: 'strip', 6: 'fan' };
@@ -397,15 +512,23 @@ function partsOf(doc, { objectPixels = 84, colourSpace = 'srgb', yaw = 0 } = {})
   };
 }
 
-async function buildModel(file, { objectPixels, colourSpace, yaw, ...options }) {
+async function buildModel(file, { objectPixels, colourSpace, yaw, reference, ...options }) {
   const doc = documentOf(file);
-  const { parts, warnings } = partsOf(doc, { objectPixels, colourSpace, yaw });
+  if (yaw === 'auto' && !reference) throw new Error('yaw "auto" needs reference: the picture the model was made from');
+  const auto = yaw === 'auto';
+  const { parts, warnings } = partsOf(doc, { objectPixels, colourSpace, yaw: auto ? 0 : yaw });
+  let orientation;
+  if (auto) {
+    orientation = orientTo(parts, reference);
+    turn(parts, orientation.yaw);
+    if (orientation.overlap < 0.6) warnings.push('yaw "auto": the best view overlaps the reference picture only ' + Math.round(orientation.overlap * 100) + '%; check the turn');
+  }
   const split = parts.reduce((sum, part) => sum + (part.split ?? 0), 0), textured = parts.filter(part => part.split !== undefined).length;
   /* generated textures are mottled: with six families every blotch gets its own, three read cleaner (measured on TRELLIS.2
      tanks: noise 0.29 at six, 0.20 at three) */
   const hues = options.hues ?? (textured ? 3 : undefined);
   const report = await require('./model-core.js').buildFromParts(parts, { ...options, hues, prefix: 'glb', warnings });
-  return { ...report, glb: { generator: doc.gltf.asset?.generator, textured, splitTriangles: split, hues: hues ?? 6 } };
+  return { ...report, glb: { generator: doc.gltf.asset?.generator, textured, splitTriangles: split, hues: hues ?? 6, ...(orientation ? { orientation } : {}) } };
 }
 
-module.exports = { buildModel, partsOf, documentOf, refine };
+module.exports = { buildModel, partsOf, documentOf, refine, orientTo, overlap, pictureMask, modelMask };

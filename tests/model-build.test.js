@@ -781,3 +781,28 @@ test('the glb engine averages texture detail finer than an art pixel instead of 
   /* linear mean 0.5 shows as about 0.735 in sRGB */
   assert.ok(extreme / (mesh.vcol.length / 3) < 0.02, Math.round((100 * extreme) / (mesh.vcol.length / 3)) + '% of vertices kept a black or white texel');
 });
+
+test('yaw "auto" finds the turn whose silhouette matches the reference picture', async t => {
+  const dir = tempDir(t), png = require('../cli/png.js');
+  const { orientTo, modelMask } = require('../cli/glb-model.js');
+  /* a long hull with a gun sticking out at one end: no two turns look alike */
+  const box = ([cx, cy, cz], [hx, hy, hz]) => {
+    const pos = [], index = [];
+    for (let i = 0; i < 8; i++) pos.push(cx + (i & 1 ? hx : -hx), cy + (i & 2 ? hy : -hy), cz + (i & 4 ? hz : -hz));
+    for (const [a, b, c, d] of [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]) index.push(a, b, c, a, c, d);
+    return { pos: Float32Array.from(pos), index: Uint32Array.from(index) };
+  };
+  const parts = [box([0, 0.5, 0], [1.5, 0.5, 0.8]), box([0.3, 1.2, 0], [0.5, 0.25, 0.5]), box([1.6, 1.2, 0], [0.9, 0.08, 0.08])];
+  for (const truth of [0.4, 2.3, -1.9]) {
+    const mask = modelMask(parts, truth, 0.6, 0.45), rgba = new Uint8Array(mask.w * mask.h * 4);
+    mask.cells.forEach((on, i) => rgba.set(on ? [90, 110, 50, 255] : [0, 0, 0, 0], i * 4));
+    const file = path.join(dir, 'reference.png');
+    fs.writeFileSync(file, png.encode(mask.w, mask.h, rgba, 4));
+    const found = orientTo(parts, file);
+    const off = Math.abs(Math.atan2(Math.sin(found.yaw - truth), Math.cos(found.yaw - truth)));
+    assert.ok(off < 0.06, 'turn ' + truth + ' found as ' + found.yaw + ' (overlap ' + found.overlap + ')');
+    assert.ok(found.overlap > 0.9);
+  }
+  const source = glbOf(path.join(dir, 'crate.glb'), {});
+  assert.match(fails(await call({ source, out: path.join(dir, 'auto'), yaw: 'auto', preview: false }, {}), 'BUILD_FAILED').message, /needs reference/);
+});

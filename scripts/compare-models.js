@@ -33,7 +33,7 @@ const DEFAULT = [
   { method: 'splat', label: 'Capture (point cloud)', author: 'stand-in sampled from the CadQuery tank', source: 'examples/splat/tank.splat.json', group: TANK },
   { method: 'depth', label: 'Depth maps (front and back)', author: 'drawn from the voxel tank', source: 'examples/depth/tank.depth.json', group: TANK },
   { method: 'compose', label: 'Composition', author: 'CadQuery hull, voxel star, SDF sandbags', source: 'examples/compose/tank.compose.json', group: TANK },
-  { method: 'glb', label: 'TRELLIS.2 (image to 3D)', author: 'trellis2mlx preview from a render of the three.js tank, 68 s', source: 'examples/glb/tank-trellis.glb', group: TANK, options: { colourSpace: 'linear', yaw: -1.5708 } },
+  { method: 'glb', label: 'TRELLIS.2 (image to 3D)', author: 'trellis2mlx preview from a render of the three.js tank, 68 s', source: 'examples/glb/tank-trellis.glb', group: TANK, options: { colourSpace: 'linear', yaw: 'auto', reference: 'examples/glb/tank-trellis-input.png' } },
   { method: 'paint', label: 'Painting with splats', author: 'written in the session', source: 'examples/paint/tree.paint.json', group: OTHER },
   { method: 'grammar', label: 'L-system', author: 'written in the session', source: 'examples/grammar/tree.grammar.json', group: OTHER, out: 'lsystem' },
   { method: 'grammar', label: 'Split grammar', author: 'written in the session', source: 'examples/grammar/house.grammar.json', group: OTHER, out: 'split' },
