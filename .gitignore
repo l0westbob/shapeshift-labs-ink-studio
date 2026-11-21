@@ -4,3 +4,4 @@ node_modules/
 .validation/
 studio/snaps/
 evals/results/
+.venv/

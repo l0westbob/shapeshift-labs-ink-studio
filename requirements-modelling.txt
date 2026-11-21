@@ -1,0 +1,8 @@
+# Python tools for the modelling front ends and for image work around ink-studio.
+# Install: uv venv --python 3.12 .venv && uv pip install --python .venv -r requirements-modelling.txt
+pillow>=11          # composing comparison sheets
+numpy>=2
+trimesh>=4.5        # mesh inspection, repair, format conversion (STL/OBJ/GLB)
+manifold3d>=3       # robust mesh booleans (CSG) as one closed mesh
+cadquery>=2.5       # B-rep CAD in Python (fillets, chamfers, sweeps); exports STL/GLB
+build123d>=0.9      # B-rep CAD in Python, builder API on the same kernel
