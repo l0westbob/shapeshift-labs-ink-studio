@@ -806,3 +806,47 @@ test('yaw "auto" finds the turn whose silhouette matches the reference picture',
   const source = glbOf(path.join(dir, 'crate.glb'), {});
   assert.match(fails(await call({ source, out: path.join(dir, 'auto'), yaw: 'auto', preview: false }, {}), 'BUILD_FAILED').message, /needs reference/);
 });
+
+const hasCrucible = (() => {
+  try {
+    return fs.existsSync(path.join(root, 'node_modules', '@codepawlhq', 'crucible', 'package.json'));
+  } catch {
+    return false;
+  }
+})();
+
+test('the crucible engine builds a JSON recipe with bevels and booleans, a role per material, without code', { skip: hasCrucible ? false : 'Crucible is not installed (npm install @codepawlhq/crucible@0.22.0 manifold-3d@3.5.4)' }, async t => {
+  const dir = tempDir(t), source = path.join(dir, 'block.crucible.json');
+  const recipe = hole => ({
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [
+      { id: 'block', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: hole ? [{ op: 'boolean', operation: 'difference', cutter: { type: 'cylinder', segments: 24 }, scale: [0.25, 2, 0.25] }] : [] },
+      { id: 'knob', type: 'cylinder', segments: 16 }
+    ],
+    materials: [{ id: 'Rust Metal', color: [0.3, 0.05, 0.02] }, { id: 'brass', color: [0.58, 0.28, 0.03] }],
+    nodes: [
+      { id: 'block', geometry: 'block', material: 'Rust Metal', scale: [2, 1, 1] },
+      { id: 'knob', geometry: 'knob', material: 'brass', translation: [0, 0.75, 0], scale: [0.2, 0.5, 0.2] }
+    ]
+  });
+  fs.writeFileSync(source, JSON.stringify(recipe(false)));
+  const plain = ok(await call({ source, out: path.join(dir, 'plain'), preview: false }, {}));
+  assert.equal(plain.engine, 'crucible');
+  assert.deepEqual(plain.roles, ['rust-metal', 'brass'], 'material ids become roles');
+  assert.deepEqual(plain.parts.map(part => part.name), ['block', 'knob']);
+  const model = JSON.parse(fs.readFileSync(path.join(plain.directory, 'model.json'), 'utf8'));
+  const block = model.parts.find(part => part.name === 'block'), knob = model.parts.find(part => part.name === 'knob');
+  assert.ok(Math.abs(block.hi[0] - block.lo[0] - 2) < 0.01, 'the node scale reaches the mesh: ' + JSON.stringify(block));
+  assert.ok(Math.abs(knob.lo[1] - 1) < 0.01, 'the knob stands on the block (a cylinder is 1 high along Y): ' + JSON.stringify(knob));
+  assert.equal((await validate(plain.scene)).valid, true);
+
+  fs.writeFileSync(source, JSON.stringify(recipe(true)));
+  const drilled = ok(await call({ source, out: path.join(dir, 'drilled'), preview: false }, {}));
+  assert.ok(drilled.parts[0].triangles > plain.parts[0].triangles + 40, 'the boolean drilled a hole: ' + plain.parts[0].triangles + ' -> ' + drilled.parts[0].triangles);
+  assert.equal(drilled.parts[0].open, 0, 'the drilled block is closed');
+
+  fs.writeFileSync(source, JSON.stringify({ format: 'something else' }));
+  assert.match(fails(await call({ source, out: path.join(dir, 'bad'), preview: false }, {}), 'BUILD_FAILED').message, /crucible.scene/);
+  fs.writeFileSync(source, JSON.stringify({ ...recipe(false), geometries: [{ id: 'block', type: 'pyramid' }] }));
+  fails(await call({ source, out: path.join(dir, 'bad'), overwrite: true, preview: false }, {}), 'BUILD_FAILED');
+});

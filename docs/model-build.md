@@ -21,6 +21,7 @@ voxel model     ─┘
 | `grammar` | `.grammar.json`: an L-system or a split grammar | Rules instead of pieces: plants and branching things; buildings, shelves, fences. | no |
 | `stack` | `.stack.json` naming PNG slices | Sprite stacking: draw horizontal slices in a pixel editor, keep every colour exact. | no |
 | `splat` | `.ply` (Gaussian splats or a coloured point cloud), or `.splat.json` with settings | Real objects from photogrammetry or a splat trainer, turned into pixel art. | no |
+| `crucible` | `.crucible.json`: a [Crucible](https://github.com/codepawl/crucible) scene recipe | Hard surfaces with bevels, holes and booleans as plain data: lathes, extrusions, curves, BMesh-style mesh edits. | no |
 | `glb` | `.glb` or `.gltf`: a finished mesh, textured, vertex-coloured or with plain materials | Meshes made elsewhere: image-to-3D generators (TRELLIS.2, Hunyuan3D), photogrammetry, asset packs, other 3D tools. | no |
 | `depth` | `.depth.json`: a drawn sprite plus a grey depth map, mirrored, flat or with a drawn back | Pixel first with relief: one picture says what it looks like, one how far each pixel stands out. | no |
 | `terrain` | `.terrain.json`: a height picture or noise, colour bands, slope rock, water | Landscape tiles, islands, hills. | no |
@@ -232,6 +233,39 @@ continues as a voxel model. [examples/stack/](../examples/stack/) stacks the vox
   continues as a voxel model (`hard: false` by default, so it reads as one soft solid).
 - Captures come from your own photos (for example with OpenSplat, which runs on Apple GPUs) or any 3DGS trainer.
   [examples/splat/tank.ply](../examples/splat/tank.ply) is a stand-in: 28,000 points sampled from the CadQuery tank.
+
+## Crucible recipes
+
+[Crucible](https://github.com/codepawl/crucible) (MIT) is a 3D engine for agents whose scenes are JSON recipes. Its
+recipe builder runs in Node without a browser, so `model_build` turns a `.crucible.json` straight into parts: no code
+runs, and no code permission is needed. It is the data-only way to bevels, holes and booleans.
+
+```json
+{ "format": "crucible.scene", "schemaVersion": 1,
+  "geometries": [
+    { "id": "hull", "type": "extrude", "contour": [[-2.35, 0.45], [2.0, 0.45], [2.55, 0.8], [2.25, 1.1], [-2.3, 1.1]], "depth": 1.9, "bevel": 0.04 },
+    { "id": "turret", "type": "mesh", "base": { "type": "box", "bevel": 0 }, "edits": [
+      { "op": "transform_selection", "select": { "tag": "top" }, "scale": [0.78, 1, 0.8] },
+      { "op": "inset_region", "select": { "tag": "top" }, "thickness": 0.12, "name": "roof" },
+      { "op": "boolean", "operation": "union", "cutter": { "type": "cylinder" }, "scale": [0.06, 0.3, 0.05], "translation": [0.25, 0.55, -0.28] } ] },
+    { "id": "wheel", "type": "cylinder", "segments": 24, "bevel": 0.03 } ],
+  "materials": [{ "id": "olive", "color": [0.147, 0.195, 0.042] }],
+  "nodes": [{ "id": "hull", "geometry": "hull", "material": "olive", "translation": [0, 0, -0.95] }] }
+```
+
+- Geometry types: `box` and `cylinder` (with `bevel`), `sphere`, `torus`, `lathe`, `extrude` (holes, bevel), `tube`,
+  `curve` (Bezier with profile and taper, matched to Blender), `text`, `terrain`, and `mesh`: a base plus `edits`
+  (extrude, inset, transform selections by tag, normal or box, booleans on Manifold, bevel, loop cuts, ...) and a
+  modifier `stack`. Crucible's own docs (`node_modules/@codepawlhq/crucible/docs/agent-scene.md` and `mesh.md`) list
+  every field.
+- Sizes: a box is 1 across (-0.5 to 0.5), a cylinder has radius 1 and height 1 along Y, a sphere radius 1. Scale nodes
+  accordingly: a wheel of radius 0.3 and width 0.12 is a cylinder with `scale: [0.3, 0.12, 0.3]`, turned onto Z.
+- Nodes take `translation`, `rotation` (a quaternion `[x, y, z, w]`), `scale` and `parent`. Colours are linear RGB.
+- Every mesh node becomes a part; its material id becomes its role. Vertex colours are kept; material patterns and image
+  maps are not (the build warns).
+- Crucible is an optional peer dependency, pinned because it changes its API between minor versions before 1.0:
+  `npm install @codepawlhq/crucible@0.22.0 manifold-3d@3.5.4` (manifold-3d only for booleans). Without it the build
+  fails with that command. [examples/crucible/tank.crucible.json](../examples/crucible/tank.crucible.json) is the tank.
 
 ## Finished meshes (glTF)
 

@@ -1,0 +1,786 @@
+{
+ "format": "crucible.scene",
+ "schemaVersion": 1,
+ "geometries": [
+  {
+   "id": "hull",
+   "type": "extrude",
+   "contour": [
+    [
+     -2.35,
+     0.45
+    ],
+    [
+     2.0,
+     0.45
+    ],
+    [
+     2.55,
+     0.8
+    ],
+    [
+     2.25,
+     1.1
+    ],
+    [
+     -2.3,
+     1.1
+    ],
+    [
+     -2.5,
+     0.8
+    ]
+   ],
+   "depth": 1.9,
+   "bevel": 0.04,
+   "bevelSegments": 2
+  },
+  {
+   "id": "track",
+   "type": "extrude",
+   "contour": [
+    [
+     2.15,
+     0.04
+    ],
+    [
+     2.2674,
+     0.0586
+    ],
+    [
+     2.3734,
+     0.1126
+    ],
+    [
+     2.4574,
+     0.1966
+    ],
+    [
+     2.5114,
+     0.3026
+    ],
+    [
+     2.53,
+     0.42
+    ],
+    [
+     2.5114,
+     0.5374
+    ],
+    [
+     2.4574,
+     0.6434
+    ],
+    [
+     2.3734,
+     0.7274
+    ],
+    [
+     2.2674,
+     0.7814
+    ],
+    [
+     2.15,
+     0.8
+    ],
+    [
+     -2.15,
+     0.8
+    ],
+    [
+     -2.2674,
+     0.7814
+    ],
+    [
+     -2.3734,
+     0.7274
+    ],
+    [
+     -2.4574,
+     0.6434
+    ],
+    [
+     -2.5114,
+     0.5374
+    ],
+    [
+     -2.53,
+     0.42
+    ],
+    [
+     -2.5114,
+     0.3026
+    ],
+    [
+     -2.4574,
+     0.1966
+    ],
+    [
+     -2.3734,
+     0.1126
+    ],
+    [
+     -2.2674,
+     0.0586
+    ],
+    [
+     -2.15,
+     0.04
+    ]
+   ],
+   "depth": 0.55,
+   "bevel": 0.03,
+   "bevelSegments": 2
+  },
+  {
+   "id": "fender",
+   "type": "box",
+   "bevel": 0.02
+  },
+  {
+   "id": "wheel",
+   "type": "cylinder",
+   "segments": 24,
+   "bevel": 0.03,
+   "bevelSegments": 2
+  },
+  {
+   "id": "turret",
+   "type": "mesh",
+   "base": {
+    "type": "box",
+    "bevel": 0
+   },
+   "smoothAngle": 30,
+   "edits": [
+    {
+     "op": "transform_selection",
+     "select": {
+      "tag": "top"
+     },
+     "scale": [
+      0.78,
+      1,
+      0.8
+     ]
+    },
+    {
+     "op": "transform_selection",
+     "select": {
+      "tag": "front"
+     },
+     "scale": [
+      1,
+      0.85,
+      0.75
+     ]
+    },
+    {
+     "op": "inset_region",
+     "select": {
+      "tag": "top"
+     },
+     "thickness": 0.12,
+     "name": "roof"
+    },
+    {
+     "op": "extrude_face_region",
+     "select": {
+      "tag": "roof.cap"
+     },
+     "offset": 0.05,
+     "name": "roofplate"
+    },
+    {
+     "op": "boolean",
+     "operation": "union",
+     "cutter": {
+      "type": "cylinder",
+      "segments": 16
+     },
+     "scale": [
+      0.06,
+      0.3,
+      0.05
+     ],
+     "translation": [
+      0.25,
+      0.55,
+      -0.28
+     ],
+     "name": "periscope"
+    }
+   ]
+  },
+  {
+   "id": "cupola",
+   "type": "lathe",
+   "profile": [
+    [
+     0,
+     0
+    ],
+    [
+     0.3,
+     0
+    ],
+    [
+     0.3,
+     0.14
+    ],
+    [
+     0.24,
+     0.2
+    ],
+    [
+     0,
+     0.2
+    ]
+   ],
+   "segments": 32
+  },
+  {
+   "id": "hatch",
+   "type": "lathe",
+   "profile": [
+    [
+     0,
+     0
+    ],
+    [
+     0.2,
+     0
+    ],
+    [
+     0.2,
+     0.05
+    ],
+    [
+     0,
+     0.05
+    ]
+   ],
+   "segments": 24
+  },
+  {
+   "id": "mantlet",
+   "type": "box",
+   "bevel": 0.04
+  },
+  {
+   "id": "barrel",
+   "type": "cylinder",
+   "segments": 20,
+   "bevel": 0.01
+  },
+  {
+   "id": "brake",
+   "type": "cylinder",
+   "segments": 20,
+   "bevel": 0.02
+  },
+  {
+   "id": "antenna",
+   "type": "cylinder",
+   "segments": 8,
+   "bevel": 0
+  },
+  {
+   "id": "crate",
+   "type": "box",
+   "bevel": 0.03
+  }
+ ],
+ "materials": [
+  {
+   "id": "olive",
+   "color": [
+    0.147,
+    0.1946,
+    0.0423
+   ],
+   "roughness": 0.8
+  },
+  {
+   "id": "dark-olive",
+   "color": [
+    0.0723,
+    0.1022,
+    0.0232
+   ],
+   "roughness": 0.8
+  },
+  {
+   "id": "track",
+   "color": [
+    0.0232,
+    0.0232,
+    0.0232
+   ],
+   "roughness": 0.9
+  },
+  {
+   "id": "wheel",
+   "color": [
+    0.2542,
+    0.2961,
+    0.0802
+   ],
+   "roughness": 0.8
+  },
+  {
+   "id": "brass",
+   "color": [
+    0.5776,
+    0.2789,
+    0.0273
+   ],
+   "roughness": 0.5
+  },
+  {
+   "id": "steel",
+   "color": [
+    0.0423,
+    0.0452,
+    0.0395
+   ],
+   "roughness": 0.6
+  }
+ ],
+ "nodes": [
+  {
+   "id": "hull",
+   "geometry": "hull",
+   "material": "olive",
+   "translation": [
+    0,
+    0,
+    -0.95
+   ]
+  },
+  {
+   "id": "track-l",
+   "geometry": "track",
+   "material": "track",
+   "translation": [
+    0,
+    0,
+    -1.525
+   ]
+  },
+  {
+   "id": "fender-l",
+   "geometry": "fender",
+   "material": "dark-olive",
+   "translation": [
+    0.05,
+    0.86,
+    -1.25
+   ],
+   "scale": [
+    4.9,
+    0.06,
+    0.62
+   ]
+  },
+  {
+   "id": "wheel-l0",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -1.75,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-l1",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -1.05,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-l2",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -0.3500000000000001,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-l3",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    0.34999999999999964,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-l4",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    1.0499999999999998,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-l5",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    1.75,
+    0.4,
+    -1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "track-r",
+   "geometry": "track",
+   "material": "track",
+   "translation": [
+    0,
+    0,
+    0.975
+   ]
+  },
+  {
+   "id": "fender-r",
+   "geometry": "fender",
+   "material": "dark-olive",
+   "translation": [
+    0.05,
+    0.86,
+    1.25
+   ],
+   "scale": [
+    4.9,
+    0.06,
+    0.62
+   ]
+  },
+  {
+   "id": "wheel-r0",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -1.75,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-r1",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -1.05,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-r2",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    -0.3500000000000001,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-r3",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    0.34999999999999964,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-r4",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    1.0499999999999998,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "wheel-r5",
+   "geometry": "wheel",
+   "material": "wheel",
+   "translation": [
+    1.75,
+    0.4,
+    1.55
+   ],
+   "rotation": [
+    0.7071068,
+    0,
+    0,
+    0.7071068
+   ],
+   "scale": [
+    0.3,
+    0.12,
+    0.3
+   ]
+  },
+  {
+   "id": "turret",
+   "geometry": "turret",
+   "material": "olive",
+   "translation": [
+    -0.2,
+    1.42,
+    0
+   ],
+   "scale": [
+    1.9,
+    0.62,
+    1.5
+   ]
+  },
+  {
+   "id": "cupola",
+   "geometry": "cupola",
+   "material": "dark-olive",
+   "translation": [
+    -0.55,
+    1.77,
+    0.35
+   ]
+  },
+  {
+   "id": "hatch",
+   "geometry": "hatch",
+   "material": "brass",
+   "translation": [
+    -0.55,
+    1.97,
+    0.35
+   ]
+  },
+  {
+   "id": "mantlet",
+   "geometry": "mantlet",
+   "material": "dark-olive",
+   "translation": [
+    0.8,
+    1.38,
+    0
+   ],
+   "scale": [
+    0.3,
+    0.4,
+    0.5
+   ]
+  },
+  {
+   "id": "barrel",
+   "geometry": "barrel",
+   "material": "dark-olive",
+   "translation": [
+    2.15,
+    1.4,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.7071068,
+    0.7071068
+   ],
+   "scale": [
+    0.085,
+    2.6,
+    0.085
+   ]
+  },
+  {
+   "id": "brake",
+   "geometry": "brake",
+   "material": "track",
+   "translation": [
+    3.45,
+    1.4,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.7071068,
+    0.7071068
+   ],
+   "scale": [
+    0.13,
+    0.3,
+    0.13
+   ]
+  },
+  {
+   "id": "antenna",
+   "geometry": "antenna",
+   "material": "track",
+   "translation": [
+    -0.95,
+    2.3,
+    -0.5
+   ],
+   "scale": [
+    0.015,
+    1.4,
+    0.015
+   ]
+  },
+  {
+   "id": "crate",
+   "geometry": "crate",
+   "material": "dark-olive",
+   "translation": [
+    -1.95,
+    1.2,
+    0
+   ],
+   "scale": [
+    0.45,
+    0.2,
+    1.1
+   ]
+  }
+ ]
+}

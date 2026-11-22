@@ -42,13 +42,23 @@
   },
   "repository": "github:siliconjungle/shapeshift-labs-ink-studio",
   "devDependencies": {
+    "@codepawlhq/crucible": "0.22.0",
+    "manifold-3d": "3.5.4",
     "three": "^0.187.0"
   },
   "peerDependencies": {
-    "three": ">=0.160.0"
+    "three": ">=0.160.0",
+    "@codepawlhq/crucible": "0.22.0",
+    "manifold-3d": "3.5.4"
   },
   "peerDependenciesMeta": {
     "three": {
+      "optional": true
+    },
+    "@codepawlhq/crucible": {
+      "optional": true
+    },
+    "manifold-3d": {
       "optional": true
     }
   }
